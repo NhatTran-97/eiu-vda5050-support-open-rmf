@@ -69,15 +69,33 @@ void RobotCommandHandle::follow_new_path(
 {
   std::lock_guard<std::mutex> lock(_mutex);
 
-  _path_active       = true;
-  _arrival_estimator = std::move(next_arrival_estimator);
-  _path_finished_cb  = std::move(path_finished_callback);
-  _current_order_id  = _make_order_id();
+  _path_active         = true;
+  _arrival_estimator   = std::move(next_arrival_estimator);
+  _path_finished_cb    = std::move(path_finished_callback);
   _expected_node_count = waypoints.size();
 
+  // Replan detection: if the final waypoint graph index matches the active
+  // order's destination, this is a replan of the same task. Reuse the same
+  // orderId so the bridge treats it as an order-update rather than rejecting
+  // a "new order while route active".
+  const auto new_last_idx = waypoints.back().graph_index();
+  const bool is_replan =
+    !_current_order_id.empty() &&
+    new_last_idx.has_value() &&
+    _current_path_last_graph_idx.has_value() &&
+    new_last_idx.value() == _current_path_last_graph_idx.value();
+
+  if (!is_replan) {
+    _current_order_id            = _make_order_id();
+    _order_update_id             = 0;
+    _current_path_last_graph_idx = new_last_idx;
+    _last_reached_idx            = std::numeric_limits<std::size_t>::max();
+  }
+
   RCLCPP_INFO(rclcpp::get_logger(_robot_name),
-    "follow_new_path: %zu waypoints, order_id=%s",
-    waypoints.size(), _current_order_id.c_str());
+    "follow_new_path: %zu waypoints, order_id=%s (%s)",
+    waypoints.size(), _current_order_id.c_str(),
+    is_replan ? "replan-update" : "new-order");
 
   const auto order = _build_order(waypoints, _current_order_id);
   _publish(_order_topic, order);

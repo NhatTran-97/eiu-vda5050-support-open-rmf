@@ -17,13 +17,13 @@ struct FleetConfig
 {
   std::string fleet_name;
   std::string nav_graph_path;
-  std::string rmf_server_uri;    // ws://localhost:7878
+  std::string rmf_server_uri;   
 
-  std::string mqtt_broker_url;       // tcp://localhost:1883
-  std::string interface_name;        // uagv
+  std::string mqtt_broker_url;      
+  std::string interface_name;        
   std::string manufacturer;
   std::string serial_number;
-  std::string robot_start_waypoint;  // name of starting waypoint
+  std::string robot_start_waypoint;  
 
   // VDA5050 map name reported in order nodePositions. MUST match both the level
   // name in nav_graph.yaml and the map_id the robot reports in agvPosition,
@@ -37,8 +37,7 @@ struct FleetConfig
   double angular_accel     = 0.5;    // rad/s²
   double footprint_radius  = 0.3;    // m
 
-  // Battery / power model — kept out of code so the adapter stays vendor-agnostic.
-  // Defaults below describe a TurtleBot3 Burger; override per robot via params.
+  
   double battery_voltage          = 11.1;  // nominal voltage (V)
   double battery_capacity         = 1.8;   // capacity (Ah)
   double battery_charging_current = 0.5;   // charging current (A)

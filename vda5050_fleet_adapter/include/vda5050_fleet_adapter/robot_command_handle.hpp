@@ -79,6 +79,7 @@ private:
 
   int _header_id{0};
   int _order_update_id{0};
+  std::optional<std::size_t> _current_path_last_graph_idx;
 
   void _on_state(const nlohmann::json& state);
 
