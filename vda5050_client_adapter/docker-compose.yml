@@ -1,0 +1,29 @@
+services:
+
+  # ── MQTT Broker ─────────────────────────────────────────────────────────────
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    container_name: mqtt-broker
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    restart: unless-stopped
+
+  # ── VDA5050 Client Adapter ───────────────────────────────────────────────────
+  vda5050-adapter:
+    build:
+      context: ..                            
+      dockerfile: vda5050_client_adapter/Dockerfile
+    image: vda5050-client-adapter:latest
+    container_name: vda5050-adapter
+    depends_on:
+      - mqtt-broker
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    volumes:
+      - ./config/vda5050_params.yaml:/ros2_ws/install/vda5050_client_adapter/share/vda5050_client_adapter/config/vda5050_params.yaml
+    network_mode: host
+    restart: unless-stopped

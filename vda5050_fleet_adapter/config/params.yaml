@@ -1,0 +1,41 @@
+vda5050_fleet_adapter:
+  ros__parameters:
+
+    # Fleet identity
+    fleet_name: "tb3_fleet"
+
+    # Navigation graph (building YAML format from traffic_editor)
+    nav_graph_path: "install/vda5050_fleet_adapter/share/vda5050_fleet_adapter/maps/nav_graph.yaml"
+
+
+    rmf_server_uri: ""   # empty = disable BroadcastClient (no rmf_websocket server)
+
+    mqtt_broker_url: "tcp://localhost:1883"
+
+  
+    interface_name: "TB3"
+    manufacturer:   "ROBOTIS"
+    serial_number:  "0001"
+    robot_start_waypoint: "initial_wp"   # starting waypoint name from nav_graph
+
+
+    map_name: "tb3_world"
+
+    # Vehicle traits (TurtleBot3 Burger)
+    linear_velocity:  0.22   # m/s
+    angular_velocity: 1.82   # rad/s
+    linear_accel:     0.5    # m/s²
+    angular_accel:    1.0    # rad/s²
+    footprint_radius: 0.105  # m (TB3 Burger half-width)
+
+
+    battery_voltage:          11.1  
+    battery_capacity:         1.8   
+    battery_charging_current: 0.5   
+    mass:                     1.5    
+    moment_of_inertia:        0.01   
+    friction_coefficient:     0.1
+    ambient_power_draw:       5.0   
+    tool_power_draw:          0.0    
+    recharge_threshold:       0.2   
+    recharge_soc:             1.0   

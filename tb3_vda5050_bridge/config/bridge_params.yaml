@@ -1,0 +1,20 @@
+tb3_vda5050_bridge:
+  ros__parameters:
+    # Namespace prefix used to talk to vda5050_client_adapter.
+    adapter_ns: "/vda5050_client_adapter"
+
+    # TurtleBot3 telemetry topics.
+    odom_topic: "/odom"
+    amcl_pose_topic: "/amcl_pose"
+    battery_topic: "/battery_state"
+
+   
+    nav2_action_name: "navigate_to_pose"
+
+    map_id: "tb3_world"
+
+
+    nav2_frame_id: "map"
+
+   
+    position_covariance_threshold: 0.5
