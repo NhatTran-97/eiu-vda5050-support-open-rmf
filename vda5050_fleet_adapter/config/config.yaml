@@ -1,0 +1,64 @@
+# Fleet configuration for the VDA5050 fleet adapter.
+
+rmf_fleet:
+  name: "tb3_fleet"
+  limits:
+    linear: [0.5, 0.75]      # [v_max, a_max] m/s, m/s^2
+    angular: [0.6, 2.0]      # [w_max, alpha_max] rad/s, rad/s^2
+  profile:                    # robot footprint (circle radius, m)
+    footprint: 0.3
+    vicinity: 0.5
+  reversible: true
+  battery_system:
+    voltage: 12.0
+    capacity: 24.0
+    charging_current: 5.0
+  mechanical_system:
+    mass: 20.0
+    moment_of_inertia: 10.0
+    friction_coefficient: 0.22
+  ambient_system: {power: 20.0}
+  tool_system: {power: 0.0}
+  recharge_threshold: 0.10
+  recharge_soc: 1.0
+  publish_fleet_state: 10.0
+  account_for_battery_drain: true
+  task_capabilities:
+    loop: true
+    delivery: true
+  actions: ["dock"]
+  finishing_request: "park"   # park | charge | nothing
+
+  robots:
+    tb3_1:
+      charger: "wp1_charging" 
+
+      responsive_wait: false
+    # To add a second robot you need another is_charger waypoint in the nav graph,
+    # e.g. wp7_charging, then:
+    # tb3_2:
+    #   charger: "wp7_charging"
+    #   responsive_wait: true   # enable for multi-robot contention
+
+# --------------------------------------------------------------------------- #
+# VDA5050 / MQTT settings (consumed by vda5050_fleet_adapter, not RMF core)
+# --------------------------------------------------------------------------- #
+vda5050:
+  # MUST match the robot-side vda5050_client_adapter identity so both ends share
+  # the same MQTT topics:  {interface_name}/v2/{manufacturer}/{serial}/{topic}
+  # (their vda5050_params.yaml: interface_name=TB3, manufacturer=ROBOTIS, serial=0001)
+  interface_name: "TB3"
+  update_rate_hz: 10.0
+  mqtt:
+    host: "localhost"     
+    port: 1883
+    username: null
+    password: null
+  robots:
+    tb3_1:                 
+      manufacturer: "ROBOTIS"
+      serial: "0001"
+      transform:             
+        rotation: 0.0        
+        scale: 1.0
+        translation: [0.0, 0.0]
