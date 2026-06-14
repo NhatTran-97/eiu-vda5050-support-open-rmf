@@ -42,8 +42,11 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options)
     battery_topic_, rclcpp::QoS(10),
     std::bind(&BridgeNode::on_battery, this, _1));
 
+  // transient_local (latched) matches the client_adapter's order publisher so a
+  // late-subscribing or restarted bridge still receives the latest order, instead
+  // of silently missing it and leaving the client's order lifecycle deadlocked.
   order_sub_ = create_subscription<vda5050_msgs::msg::Order>(
-    adapter_topic("order"), rclcpp::QoS(10),
+    adapter_topic("order"), rclcpp::QoS(10).transient_local(),
     std::bind(&BridgeNode::on_order, this, _1));
 
   action_cancel_sub_ = create_subscription<std_msgs::msg::String>(
@@ -314,7 +317,10 @@ bool BridgeNode::try_complete_in_place(const NavigationTarget& target)
 
 void BridgeNode::send_navigation_goal(const NavigationTarget& target)
 {
-  if (!nav2_client_->wait_for_action_server(std::chrono::seconds(2))) {
+  // 10s (not 2s): with latched order QoS the bridge can receive an order the
+  // instant it starts, before its action client has discovered the Nav2 server.
+  // A short timeout then spuriously reports "action server not available".
+  if (!nav2_client_->wait_for_action_server(std::chrono::seconds(10))) {
     state_machine_.on_navigation_failed();
     publish_bridge_status();
     publish_navigation_error("Nav2 action server not available", target.node.node_id);
