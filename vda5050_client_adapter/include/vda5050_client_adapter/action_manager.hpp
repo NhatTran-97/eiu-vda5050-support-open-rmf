@@ -96,6 +96,10 @@ public:
   bool is_hard_blocked()    const;  ///< True if a HARD-blocking action is active.
   bool is_soft_blocked()    const;  ///< True if a SOFT-blocking action is active.
   bool has_active_actions() const;  ///< True if any action is INITIALIZING/RUNNING/PAUSED.
+  /// True if any active action is bound to an order node/edge. Instant actions
+  /// (cancelOrder, pause, stateRequest) are excluded, so they never block a
+  /// replacing order.
+  bool has_active_order_actions() const;
 
   void set_execute_callback(ActionExecuteCallback cb);
   void set_pause_callback(ActionPauseCallback cb);

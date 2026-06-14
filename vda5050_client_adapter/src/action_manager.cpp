@@ -444,11 +444,26 @@ bool ActionManager::is_soft_blocked() const
   return any_soft_running();
 }
 
-bool ActionManager::has_active_actions() const 
+bool ActionManager::has_active_actions() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
-  for (const auto& [id, rec] : actions_) 
+  for (const auto& [id, rec] : actions_)
   {
+    if (is_active_status(rec.status)) return true;
+  }
+  return false;
+}
+
+bool ActionManager::has_active_order_actions() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  for (const auto& [id, rec] : actions_)
+  {
+    // Only node/edge actions bind an order; instant actions (cancelOrder, pause,
+    // stateRequest) belong to the adapter lifecycle and must not block a
+    // replacing order.
+    if (rec.is_instant || rec.trigger_kind == TriggerKind::IMMEDIATE)
+      continue;
     if (is_active_status(rec.status)) return true;
   }
   return false;

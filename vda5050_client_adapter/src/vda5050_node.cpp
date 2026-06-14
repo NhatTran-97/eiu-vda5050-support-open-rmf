@@ -219,7 +219,12 @@ void VDA5050Node::teardown_mqtt() {
 
 void VDA5050Node::setup_ros_interfaces() {
   // ── Publishers to robot ──────────────────────────────────────────────────
-  order_pub_ = create_publisher<vda5050_msgs::msg::Order>("~/order", rclcpp::QoS(10));
+  // Order uses transient_local (latched) QoS so the bridge always receives the
+  // latest order even if it subscribes late or restarts. Without this, a single
+  // missed order (volatile, startup-race) leaves the client's order lifecycle
+  // stuck (order_active_ never cleared → all later orders rejected → deadlock).
+  order_pub_ = create_publisher<vda5050_msgs::msg::Order>(
+    "~/order", rclcpp::QoS(10).transient_local());
   action_execute_pub_ = create_publisher<vda5050_msgs::msg::Action>("~/action_execute", rclcpp::QoS(10));
   action_cancel_pub_ = create_publisher<std_msgs::msg::String>("~/action_cancel", rclcpp::QoS(10));
 
@@ -330,11 +335,11 @@ void VDA5050Node::on_order_message(const MqttMessage& msg) {
     const bool replacing_active_order =
       order.order_id != order_manager_->current_order_id() &&
       order_manager_->has_active_order();
-    if (replacing_active_order && action_manager_->has_active_actions()) 
+    if (replacing_active_order && action_manager_->has_active_order_actions())
     {
       result.accepted = false;
       result.rejection_reason =
-        "New order cannot replace the active order while actions are still active";
+        "New order cannot replace the active order while node/edge actions are still active";
     } else {
       result = order_manager_->process_order(order);
     }
