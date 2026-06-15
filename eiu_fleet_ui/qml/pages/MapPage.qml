@@ -110,23 +110,50 @@ Rectangle {
                     var ctx2d = getContext("2d")
                     ctx2d.clearRect(0, 0, width, height)
 
-                    // Nav_graph lanes
-                    ctx2d.strokeStyle = "#f5c400"
-                    ctx2d.lineWidth   = 4
-                    ctx2d.globalAlpha = 0.75
+                    // Nav_graph lanes + direction arrows
                     ctx2d.setLineDash([])
                     for (var i = 0; i < root.edges.length; i++) {
                         var e  = root.edges[i]
-                        if (e.from >= e.to) continue        // bỏ chiều ngược (undirected)
                         var w1 = root.waypoints[e.from]
                         var w2 = root.waypoints[e.to]
                         if (!w1 || !w2) continue
                         var p1 = root.worldToScreen(w1.x, w1.y)
                         var p2 = root.worldToScreen(w2.x, w2.y)
+
+                        // Lane line
+                        ctx2d.strokeStyle = "#f5c400"
+                        ctx2d.lineWidth   = 4
+                        ctx2d.globalAlpha = 0.75
                         ctx2d.beginPath()
                         ctx2d.moveTo(p1.x, p1.y)
                         ctx2d.lineTo(p2.x, p2.y)
                         ctx2d.stroke()
+
+                        // Tam giác đặc chỉ hướng di chuyển
+                        var ang = Math.atan2(p2.y - p1.y, p2.x - p1.x)
+                        ctx2d.fillStyle   = "rgba(41,121,255,0.95)"
+                        ctx2d.globalAlpha = 1.0
+
+                        function fillTriangle(cx, cy, dir, sz) {
+                            ctx2d.save()
+                            ctx2d.translate(cx, cy)
+                            ctx2d.rotate(dir)
+                            ctx2d.beginPath()
+                            ctx2d.moveTo( sz,      0)
+                            ctx2d.lineTo(-sz, -sz * 0.6)
+                            ctx2d.lineTo(-sz,  sz * 0.6)
+                            ctx2d.closePath()
+                            ctx2d.fill()
+                            ctx2d.restore()
+                        }
+
+                        if (e.bidir) {
+                            // A→B tại 33%, B→A tại 67%
+                            fillTriangle(p1.x + (p2.x-p1.x)*0.33, p1.y + (p2.y-p1.y)*0.33, ang, 6)
+                            fillTriangle(p1.x + (p2.x-p1.x)*0.67, p1.y + (p2.y-p1.y)*0.67, ang + Math.PI, 6)
+                        } else {
+                            fillTriangle((p1.x+p2.x)/2, (p1.y+p2.y)/2, ang, 6)
+                        }
                     }
 
                     // Planned path: lấy trực tiếp từ RMF (robot.path = Location[])

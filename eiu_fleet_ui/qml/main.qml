@@ -23,7 +23,7 @@ ApplicationWindow {
 
     // Màu theo trạng thái robot (cột Status)
     function statusColor(s) {
-        if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME") return C.blue
+        if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME" || s === "WORKING") return C.blue
         if (s === "CHARGING")                                        return C.accent
         if (s === "EMERGENCY" || s === "ERROR")                      return C.err
         if (s === "PAUSED" || s === "WAITING")                       return C.warn
@@ -32,9 +32,14 @@ ApplicationWindow {
 
     // Màu theo trạng thái task (cột State)
     function taskColor(s) {
-        if (s.indexOf("completed") >= 0)                          return C.accent
-        if (s.indexOf("failed") >= 0 || s.indexOf("cancel") >= 0) return C.err
-        if (s.indexOf("stale") >= 0 || s.indexOf("queued") >= 0)  return C.warn
+        if (s === "completed")                         return C.accent
+        if (s === "failed" || s === "cancelled")       return C.err
+        if (s === "queued")                            return C.warn
+        if (s === "underway")                          return C.blue
+        // fallback cho các state chứa keyword
+        if (s.indexOf("complet") >= 0)                return C.accent
+        if (s.indexOf("fail") >= 0 || s.indexOf("cancel") >= 0) return C.err
+        if (s.indexOf("queue") >= 0 || s.indexOf("stale") >= 0) return C.warn
         return C.blue
     }
 
@@ -248,14 +253,15 @@ ApplicationWindow {
                             Row {
                                 width: parent.width
                                 anchors.verticalCenter: parent.verticalCenter
-                                Text { width: parent.width*0.13; leftPadding: 10; elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Date" }
-                                Text { width: parent.width*0.12; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Req." }
-                                Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Pickup" }
-                                Text { width: parent.width*0.15; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Dest." }
-                                Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Robot" }
-                                Text { width: parent.width*0.12; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Start" }
-                                Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "End" }
+                                Text { width: parent.width*0.12; leftPadding: 10; elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Date" }
+                                Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Req." }
+                                Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Pickup" }
+                                Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Dest." }
+                                Text { width: parent.width*0.13; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Robot" }
+                                Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Start" }
+                                Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "End" }
                                 Text { width: parent.width*0.12; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "State" }
+                                Text { width: parent.width*0.07; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "" }
                             }
                         }
                         ListView {
@@ -268,14 +274,41 @@ ApplicationWindow {
                                 Row {
                                     width: parent.width
                                     anchors.verticalCenter: parent.verticalCenter
-                                    Text { width: parent.width*0.13; leftPadding: 10; elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.date }
-                                    Text { width: parent.width*0.12; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.requester }
-                                    Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.pickup }
-                                    Text { width: parent.width*0.15; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.destination }
-                                    Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.robot }
-                                    Text { width: parent.width*0.12; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.start }
-                                    Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.end }
+                                    Text { width: parent.width*0.12; leftPadding: 10; elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.date }
+                                    Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.requester }
+                                    Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.pickup }
+                                    Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.destination }
+                                    Text { width: parent.width*0.13; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.robot }
+                                    Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.start }
+                                    Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.end }
                                     Text { width: parent.width*0.12; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: root.taskColor(modelData.state); text: modelData.state }
+                                    Item {
+                                        width: parent.width*0.07; height: 32
+                                        visible: modelData.state === "queued" || modelData.state === "underway"
+                                        Rectangle {
+                                            anchors.centerIn: parent
+                                            width: 22; height: 22; radius: 4
+                                            color: cancelMa.containsMouse ? "#c0392b" : "transparent"
+                                            border.color: cancelMa.containsMouse ? "#c0392b" : C.err
+                                            border.width: 1
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "✕"
+                                                font.pixelSize: 11; font.bold: true
+                                                color: C.err
+                                            }
+                                            MouseArea {
+                                                id: cancelMa
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: {
+                                                    if (modelData.rmf_id && modelData.rmf_id.length > 0)
+                                                        ros.cancel_task(modelData.rmf_id)
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

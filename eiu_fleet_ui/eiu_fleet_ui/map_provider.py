@@ -3,7 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Property
 from PySide6.QtGui import QImage
 
-# ── Đường dẫn maps/ — thử source tree trước, fallback sang share/ ────────────
+
 _src_maps = Path(__file__).parent.parent / "maps"
 if _src_maps.exists():
     _MAPS = _src_maps
@@ -102,8 +102,17 @@ class MapProvider(QObject):
                 "parking": bool(props.get("is_parking_spot", False)),
             })
 
-        lanes_raw = level.get("lanes", [])
-        self._lanes = [{"from": int(ln[0]), "to": int(ln[1])} for ln in lanes_raw]
+        lanes_raw  = level.get("lanes", [])
+        all_pairs  = {(int(ln[0]), int(ln[1])) for ln in lanes_raw}
+        seen, lanes = set(), []
+        for ln in lanes_raw:
+            a, b = int(ln[0]), int(ln[1])
+            key  = (min(a, b), max(a, b))
+            if key not in seen:
+                seen.add(key)
+                lanes.append({"from": a, "to": b,
+                               "bidir": (b, a) in all_pairs})
+        self._lanes = lanes
       
 
     # ── QML Properties ────────────────────────────────────────────────────────

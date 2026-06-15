@@ -91,6 +91,7 @@ def main():
         sys.exit(-1)
 
     # ── Khởi động backend sau khi QML load xong ──────────────────────────────
+    ros.set_waypoints(map_prov._waypoints)
     mqtt.connect_broker("localhost", 1883)
     ros.start()
     app.aboutToQuit.connect(ros.shutdown)   # tắt rclpy gọn gàng khi thoát
