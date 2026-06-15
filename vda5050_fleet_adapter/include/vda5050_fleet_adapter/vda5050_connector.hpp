@@ -102,9 +102,11 @@ private:
     int next_header() { return header_id++; }
   };
 
+  /// Subscribe to a robot's uplink topics. Call OUTSIDE _mutex: paho client
+  /// calls can deadlock against the message-arrived callback if the lock is held.
   void subscribe_robot(const RobotContext& ctx);
-  void publish(const RobotContext& ctx, const std::string& leaf,
-               const nlohmann::json& message);
+  /// Publish a fully-formed payload to a topic. Call OUTSIDE _mutex.
+  void publish_raw(const std::string& topic, const std::string& payload);
   RobotContext* match_robot(const std::string& topic);  // call under _mutex
 
   rclcpp::Logger _logger;

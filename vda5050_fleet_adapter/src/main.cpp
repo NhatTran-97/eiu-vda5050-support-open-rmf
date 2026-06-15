@@ -1,12 +1,3 @@
-/// RMF <-> VDA5050 fleet adapter (EasyFullControl, C++).
-///
-/// RMF Core is unchanged. This node:
-///   * builds an EasyFullControl fleet from config.yaml + nav_graph.yaml,
-///   * for each robot wires RMF callbacks to the VDA5050/MQTT connector,
-///   * runs an update loop that pushes each robot's VDA5050 state into RMF.
-///
-/// Usage:
-///   ros2 run vda5050_fleet_adapter fleet_adapter -c <config.yaml> -n <nav_graph.yaml>
 
 #include <atomic>
 #include <chrono>
@@ -42,12 +33,19 @@ struct Args
 Args parse_args(int argc, char** argv)
 {
   Args a;
-  for (int i = 1; i < argc; ++i) {
+  for (int i = 1; i < argc; ++i) 
+  {
     const std::string arg = argv[i];
     if ((arg == "-c" || arg == "--config_file") && i + 1 < argc)
+    {
       a.config_file = argv[++i];
+    }
+      
     else if ((arg == "-n" || arg == "--nav_graph") && i + 1 < argc)
+    {
       a.nav_graph = argv[++i];
+    }
+      
   }
   return a;
 }
@@ -60,13 +58,15 @@ int main(int argc, char** argv)
   const Args args = parse_args(argc, argv);
 
   auto adapter = Adapter::make("vda5050_fleet_adapter");
-  if (!adapter) {
+  if (!adapter) 
+  {
     std::fprintf(stderr, "Failed to create RMF adapter (schedule node?)\n");
     return 1;
   }
   const auto logger = adapter->node()->get_logger();
 
-  if (args.config_file.empty() || args.nav_graph.empty()) {
+  if (args.config_file.empty() || args.nav_graph.empty()) 
+  {
     RCLCPP_FATAL(logger, "Required: -c <config.yaml> -n <nav_graph.yaml>");
     return 1;
   }
@@ -76,7 +76,8 @@ int main(int argc, char** argv)
   // ── EasyFullControl fleet from the rmf_fleet block of config + nav graph ──
   auto fleet_config = EasyFullControl::FleetConfiguration::from_config_files(
     args.config_file, args.nav_graph);
-  if (!fleet_config) {
+  if (!fleet_config) 
+  {
     RCLCPP_FATAL(logger, "Failed to parse fleet configuration from %s",
                  args.config_file.c_str());
     return 1;
@@ -113,7 +114,8 @@ int main(int argc, char** argv)
 
   const YAML::Node robots_cfg = vda["robots"];
   std::map<std::string, std::shared_ptr<RobotAdapter>> robots;
-  for (const auto& name : fleet_config->known_robots()) {
+  for (const auto& name : fleet_config->known_robots()) 
+  {
     const YAML::Node rc = robots_cfg ? robots_cfg[name] : YAML::Node();
     const std::string manufacturer =
       (rc && rc["manufacturer"]) ? rc["manufacturer"].as<std::string>() : "unknown";
@@ -121,12 +123,14 @@ int main(int argc, char** argv)
       (rc && rc["serial"]) ? rc["serial"].as<std::string>() : name;
 
     Transform tf;
-    if (rc && rc["transform"]) {
+    if (rc && rc["transform"]) 
+    {
       const auto t = rc["transform"];
       const double rot = t["rotation"] ? t["rotation"].as<double>() : 0.0;
       const double scale = t["scale"] ? t["scale"].as<double>() : 1.0;
       double tx = 0.0, ty = 0.0;
-      if (t["translation"] && t["translation"].size() >= 2) {
+      if (t["translation"] && t["translation"].size() >= 2) 
+      {
         tx = t["translation"][0].as<double>();
         ty = t["translation"][1].as<double>();
       }
@@ -142,31 +146,38 @@ int main(int argc, char** argv)
   const auto period = std::chrono::duration<double>(1.0 / update_rate_hz);
 
   std::thread update_thread([&] {
-    while (running && rclcpp::ok()) {
-      for (auto& [name, robot] : robots) {
-        try {
+    while (running && rclcpp::ok()) 
+    {
+      for (auto& [name, robot] : robots) 
+      {
+        try 
+        {
           const auto data = connector->get_data(name);
           if (!data)
-            continue;  // no valid VDA5050 position yet
+            continue;  
           EasyFullControl::RobotState state(
             data->map_name,
             Eigen::Vector3d(data->position[0], data->position[1],
                             data->position[2]),
             data->battery_soc);
 
-          if (!robot->added()) {
+          if (!robot->added()) 
+          {
             auto handle = fleet->add_robot(
               name, state,
               *fleet_config->get_known_robot_configuration(name),
               robot->make_callbacks());
-            if (handle) {
+            if (handle) 
+            {
               robot->set_update_handle(handle);
               RCLCPP_INFO(logger, "Robot '%s' added to RMF fleet", name.c_str());
             }
-          } else {
+          } else 
+          {
             robot->update(state);
           }
-        } catch (const std::exception& e) {
+        } catch (const std::exception& e) 
+        {
           RCLCPP_ERROR(logger, "update_loop error for '%s': %s", name.c_str(),
                        e.what());
         }
@@ -176,14 +187,13 @@ int main(int argc, char** argv)
     }
   });
 
-  adapter->wait();  // blocks until rclcpp shutdown
-
-  // Release our own resources (update loop, then MQTT link) and exit. We skip the
-  // RMF Adapter and paho destructors, which can block for several seconds joining
-  // internal threads, by exiting the process directly once cleanup is done.
+  adapter->wait();  
   running = false;
   if (update_thread.joinable())
+  {
     update_thread.join();
+  }
+    
   connector->shutdown();
   rclcpp::shutdown();
   RCLCPP_INFO(logger, "[vda5050_fleet_adapter] shutdown complete");

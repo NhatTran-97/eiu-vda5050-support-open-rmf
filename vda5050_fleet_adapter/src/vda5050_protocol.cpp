@@ -12,7 +12,8 @@ namespace {
 nlohmann::json header(int header_id, const std::string& manufacturer,
                       const std::string& serial)
 {
-  return {
+  return 
+  {
     {"headerId", header_id},
     {"timestamp", now_iso()},
     {"version", VERSION},
@@ -32,11 +33,11 @@ std::string now_iso()
     duration_cast<milliseconds>(now.time_since_epoch()).count() % 1000;
 
   std::tm tm_utc{};
-#if defined(_WIN32)
-  gmtime_s(&tm_utc, &t);
-#else
-  gmtime_r(&t, &tm_utc);
-#endif
+  #if defined(_WIN32)
+    gmtime_s(&tm_utc, &t);
+  #else
+    gmtime_r(&t, &tm_utc);
+  #endif
   char buf[32];
   std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tm_utc);
 
@@ -52,8 +53,7 @@ std::string make_uuid()
   std::uniform_int_distribution<uint32_t> d;
   char buf[37];
   const uint32_t a = d(gen), b = d(gen), c = d(gen), e = d(gen);
-  std::snprintf(buf, sizeof(buf),
-    "%08x-%04x-4%03x-%04x-%04x%08x",
+  std::snprintf(buf, sizeof(buf),"%08x-%04x-4%03x-%04x-%04x%08x",
     a, (b >> 16) & 0xFFFF, b & 0x0FFF,
     ((c >> 16) & 0x3FFF) | 0x8000, c & 0xFFFF, e);
   return buf;
@@ -99,6 +99,7 @@ nlohmann::json make_edge(const std::string& edge_id, int sequence_id,
     {"endNodeId", end_node_id},
     {"actions", nlohmann::json::array()},
   };
+  
   if (max_speed.has_value())
     edge["maxSpeed"] = *max_speed;
   return edge;
@@ -122,15 +123,21 @@ nlohmann::json make_action(
   const std::string& action_id,
   const std::vector<std::pair<std::string, std::string>>& parameters)
 {
-  nlohmann::json action = {
+  nlohmann::json action = 
+  {
     {"actionType", action_type},
     {"actionId", action_id.empty() ? make_uuid() : action_id},
     {"blockingType", blocking_type},
   };
-  if (!parameters.empty()) {
+
+  if (!parameters.empty()) 
+  {
     nlohmann::json params = nlohmann::json::array();
     for (const auto& [k, v] : parameters)
+    {
       params.push_back({{"key", k}, {"value", v}});
+    }
+      
     action["actionParameters"] = params;
   }
   return action;
@@ -176,7 +183,8 @@ std::vector<nlohmann::json> get_array(const nlohmann::json& j, const char* key)
 
 ParsedState::ParsedState(const nlohmann::json& raw)
 {
-  if (raw.contains("agvPosition") && raw["agvPosition"].is_object()) {
+  if (raw.contains("agvPosition") && raw["agvPosition"].is_object()) 
+  {
     const auto& pos = raw["agvPosition"];
     x = get_opt<double>(pos, "x");
     y = get_opt<double>(pos, "y");
@@ -210,8 +218,7 @@ bool ParsedState::has_position() const
 
 bool ParsedState::order_finished(const std::string& oid) const
 {
-  // Require explicit match — empty orderId in state means robot hasn't
-  // acknowledged the order yet, so we must NOT declare it finished.
+
   if (oid.empty() || order_id.empty() || order_id != oid)
     return false;
   return node_states.empty() && edge_states.empty() && !driving;
