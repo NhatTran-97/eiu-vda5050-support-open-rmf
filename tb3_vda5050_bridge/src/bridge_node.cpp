@@ -131,7 +131,25 @@ void BridgeNode::on_amcl_pose(
 void BridgeNode::on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg)
 {
   vda5050_msgs::msg::BatteryState batt;
-  batt.battery_charge = msg->percentage * 100.0f;
+
+  // TB3 OpenCR publishes percentage in 0–100 scale (non-standard).
+  // Standard ROS sensor_msgs uses 0.0–1.0, so detect and handle both.
+  const float pct = msg->percentage;
+  float battery_charge;
+  if (pct > 1.0f) {
+    // TB3 style: already 0–100
+    battery_charge = std::clamp(pct, 0.0f, 100.0f);
+  } else if (!std::isnan(pct) && pct >= 0.0f) {
+    // Standard ROS 0.0–1.0
+    battery_charge = pct * 100.0f;
+  } else {
+    // Derive from voltage (3S LiPo: 12.6V full → 9.0V empty)
+    constexpr float V_FULL = 12.6f, V_EMPTY = 9.0f;
+    const float v = msg->voltage;
+    battery_charge = (v > 1.0f) ?
+      std::clamp((v - V_EMPTY) / (V_FULL - V_EMPTY) * 100.0f, 0.0f, 100.0f) : 100.0f;
+  }
+  batt.battery_charge = battery_charge;   // VDA5050: 0–100 %
   batt.battery_voltage = msg->voltage;
   batt.battery_health = -1;
   batt.charging =
