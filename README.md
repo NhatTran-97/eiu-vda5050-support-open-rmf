@@ -7,6 +7,8 @@ A ROS 2 Jazzy implementation of the VDA5050 v2.1.0 protocol connecting
 
 ![VDA5050 Open-RMF demo](assets/video/vda5050_support_openrmf.gif)
 
+▶️ [Watch the full demo on YouTube](https://www.youtube.com/watch?v=yxOD5KHLECk)
+
 ## Overview
 
 The repository contains three layers:
