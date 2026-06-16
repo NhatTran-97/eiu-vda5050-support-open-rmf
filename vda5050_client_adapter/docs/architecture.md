@@ -112,6 +112,8 @@ stateDiagram-v2
 - `ActionManager` still owns per-action lifecycle and blocking semantics.
 - `VDA5050Node` translates ROS/MQTT callbacks into state-machine events and publish side effects.
 
+**Superseded cancel:** a `cancelOrder` normally completes only once `!driving && !order_active`. Under EasyFullControl the fleet adapter issues `cancelOrder` and immediately follows it with the replacement order while the robot is still driving, so that condition never holds and the adapter would stay stuck in `CANCELLING`. When a new order is accepted, `take_pending_cancel()` resolves the still-pending cancel (marks the `cancelOrder` action FINISHED, "superseded by new order") and the mode recomputes to `ORDER_ACTIVE`.
+
 ---
 
 ## 5. Runtime Integration View

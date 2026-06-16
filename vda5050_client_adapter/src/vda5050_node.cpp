@@ -361,6 +361,21 @@ void VDA5050Node::on_order_message(const MqttMessage& msg) {
 
   clear_errors_by_type("orderError");
 
+  // A new accepted order supersedes any cancelOrder still pending. The fleet
+  // adapter (EasyFullControl) issues cancelOrder and immediately follows it with
+  // the replacement order while the robot is still driving, so the cancel never
+  // sees the !driving && !order_active state it waits for and the adapter would
+  // otherwise stay stuck in CANCELLING forever. Resolve it here.
+  const auto superseded_cancel = state_machine_->take_pending_cancel();
+  if (!superseded_cancel.empty()) {
+    action_manager_->set_action_finished(
+      superseded_cancel, "Order cancelled (superseded by new order)");
+    sync_action_blocking();
+    RCLCPP_INFO(get_logger(),
+                "Resolved pending cancelOrder %s superseded by new order %s",
+                superseded_cancel.c_str(), order.order_id.c_str());
+  }
+
   // Publish to robot as ROS2 message
   auto ros_order = ros_from_internal(order);
   order_pub_->publish(ros_order);

@@ -81,6 +81,15 @@ void AdapterStateMachine::request_cancel(const std::string& action_id)
   recompute_mode_locked();
 }
 
+std::string AdapterStateMachine::take_pending_cancel()
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::string action_id = pending_cancel_action_id_;
+  pending_cancel_action_id_.clear();
+  recompute_mode_locked();
+  return action_id;
+}
+
 std::vector<CompletedControlAction> AdapterStateMachine::consume_ready_control_actions()
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -99,7 +108,8 @@ std::vector<CompletedControlAction> AdapterStateMachine::consume_ready_control_a
     pending_resume_action_id_.clear();
   }
 
-  if (!pending_cancel_action_id_.empty() && !driver_driving_ && !order_active_) {
+  if (!pending_cancel_action_id_.empty() && !driver_driving_ && !order_active_) 
+  {
     completed.push_back(
       {ControlActionKind::CANCEL_ORDER, pending_cancel_action_id_, "Order cancelled"});
     pending_cancel_action_id_.clear();

@@ -51,6 +51,12 @@ public:
   void request_resume(const std::string& action_id);
   void request_cancel(const std::string& action_id);
 
+  // Clears and returns a still-pending cancelOrder action id (empty if none).
+  // Used when a new order supersedes a cancelOrder that never reached the
+  // order-inactive + stopped state (e.g. cancel immediately followed by a
+  // replacement order while the robot is still driving).
+  std::string take_pending_cancel();
+
   std::vector<CompletedControlAction> consume_ready_control_actions();
 
   AdapterMode mode() const;
