@@ -3,6 +3,14 @@
 A ROS 2 Jazzy implementation of the VDA5050 v2.1.0 protocol connecting
 **Open-RMF** (fleet management) to a **TurtleBot3 / Nav2** robot stack via MQTT.
 
+## Demo
+
+<video src="https://github.com/NhatTran-97/eiu-vda5050-support-open-rmf/raw/main/assets/video/vda5050_support_openrmf.mp4" controls width="100%"></video>
+
+> If the player does not load, [watch the demo video](assets/video/vda5050_support_openrmf.mp4).
+
+## Overview
+
 The repository contains three layers:
 
 - **Dashboard UI** — PySide6 + QML desktop app for monitoring robots and dispatching tasks.
