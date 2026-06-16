@@ -5,9 +5,7 @@ A ROS 2 Jazzy implementation of the VDA5050 v2.1.0 protocol connecting
 
 ## Demo
 
-![Demo](assets/video/vda5050_support_openrmf.gif)
-
-> ▶️ [Watch in higher quality (MP4)](assets/video/vda5050_support_openrmf.mp4)
+![VDA5050 Open-RMF demo](assets/video/vda5050_support_openrmf.gif)
 
 ## Overview
 
