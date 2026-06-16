@@ -189,11 +189,27 @@ void BridgeNode::on_order(const vda5050_msgs::msg::Order::SharedPtr msg)
     msg->order_id.c_str(),
     msg->nodes.size());
 
-  cancel_navigation();
+  // Do NOT async_cancel_goal the active goal and send the replacement goal in the
+  // same tick: on the single-goal NavigateToPose server the cancel races with the
+  // new goal and Nav2 can silently drop the new goal (accepted, but result_callback
+  // never fires), stranding the order forever (route never consumed). Instead bump
+  // the navigation token so the old goal's preemption result is ignored, then let
+  // the new goal preempt the old one. Only if the new order needs no navigation do
+  // we cancel explicitly to stop the robot.
+  auto previous_goal = current_goal_handle_;
+  invalidate_navigation_context();
   order_session_.start(*msg);
   state_machine_.on_order_started();
   publish_bridge_status();
   dispatch_next_work();
+
+  const auto mode = state_machine_.mode();
+  const bool sent_replacement_goal =
+    mode == BridgeMode::DISPATCHING || mode == BridgeMode::NAVIGATING;
+  if (previous_goal && !sent_replacement_goal) {
+    nav2_client_->async_cancel_goal(previous_goal);
+    RCLCPP_INFO(get_logger(), "Cancelled previous navigation (no replacement goal)");
+  }
 }
 
 void BridgeNode::on_action_cancel(const std_msgs::msg::String::SharedPtr msg)
@@ -218,6 +234,7 @@ void BridgeNode::on_action_cancel(const std_msgs::msg::String::SharedPtr msg)
 
   if (data.rfind("cancel:", 0) == 0) {
     RCLCPP_INFO(get_logger(), "Cancel signal received");
+    cancel_nav2_retry();
     cancel_navigation();
     order_session_.clear();
     state_machine_.on_cancel_requested();
@@ -292,6 +309,7 @@ void BridgeNode::dispatch_next_work()
 
       case DispatchKind::COMPLETED:
       default:
+        cancel_nav2_retry();
         state_machine_.on_all_work_completed();
         publish_bridge_status();
         if (order_session_.has_order()) {
@@ -335,15 +353,20 @@ bool BridgeNode::try_complete_in_place(const NavigationTarget& target)
 
 void BridgeNode::send_navigation_goal(const NavigationTarget& target)
 {
-  // 10s (not 2s): with latched order QoS the bridge can receive an order the
-  // instant it starts, before its action client has discovered the Nav2 server.
-  // A short timeout then spuriously reports "action server not available".
-  if (!nav2_client_->wait_for_action_server(std::chrono::seconds(10))) {
-    state_machine_.on_navigation_failed();
+  // Don't fail the order if Nav2 isn't up yet (e.g. the bridge started before
+  // Nav2, or the robot just booted). Keep the order and re-attempt on a timer so
+  // startup order is irrelevant — the goal goes out as soon as Nav2 appears.
+  if (!nav2_client_->action_server_is_ready()) {
+    RCLCPP_WARN(
+      get_logger(),
+      "Nav2 action server not available yet — holding node %s, will retry",
+      target.node.node_id.c_str());
+    state_machine_.on_dispatching();
     publish_bridge_status();
-    publish_navigation_error("Nav2 action server not available", target.node.node_id);
+    arm_nav2_retry();
     return;
   }
+  cancel_nav2_retry();
 
   if (target.incoming_edge.has_value()) {
     edge_entered_pub_->publish(*target.incoming_edge);
@@ -511,6 +534,31 @@ void BridgeNode::invalidate_navigation_context()
 {
   ++navigation_token_;
   current_goal_handle_.reset();
+}
+
+void BridgeNode::arm_nav2_retry()
+{
+  if (nav2_retry_timer_) {
+    return;  // already retrying
+  }
+  nav2_retry_timer_ = create_wall_timer(
+    std::chrono::seconds(2),
+    [this]() {
+      if (nav2_client_->action_server_is_ready()) {
+        RCLCPP_INFO(get_logger(), "Nav2 action server now available — resuming dispatch");
+      }
+      // Re-plan from the current order cursor; send_navigation_goal cancels this
+      // timer once a goal actually goes out, or re-arms if Nav2 is still down.
+      dispatch_next_work();
+    });
+}
+
+void BridgeNode::cancel_nav2_retry()
+{
+  if (nav2_retry_timer_) {
+    nav2_retry_timer_->cancel();
+    nav2_retry_timer_.reset();
+  }
 }
 
 void BridgeNode::set_driving(bool driving)

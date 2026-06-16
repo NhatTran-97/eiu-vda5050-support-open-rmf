@@ -95,6 +95,22 @@ vda5050_client_adapter ~/order
 BridgeStateMachine → ~/driving · ~/paused
 ```
 
+## Startup & Robustness
+
+The bridge is designed so that **startup order does not matter**:
+
+- **Bridge starts before Nav2** — a navigation goal is not failed if the Nav2 action
+  server is not up yet. The order is held and re-attempted on a 2 s timer; the goal goes
+  out as soon as Nav2 appears.
+- **New order replaces an active one** — the bridge lets Nav2 **preempt** the active goal
+  (sends the replacement, bumps the navigation token) instead of cancelling and re-sending
+  in the same tick, which on a single-goal server races and can make Nav2 silently drop
+  the new goal.
+- **Stale callbacks** — each goal carries a monotonic token; results from superseded goals
+  are ignored.
+
+See [docs/architecture.md §6, §6b](docs/architecture.md) for details.
+
 ## ROS Interface
 
 > Topic prefix is parameterized by `adapter_ns` (default: `/vda5050_client_adapter`).

@@ -184,6 +184,39 @@ This prevents an old canceled goal from mutating the current order state.
 
 ---
 
+## 6b. Order Replacement & Nav2 Readiness
+
+### Replacing an active order (Nav2 preemption, not explicit cancel)
+
+When a brand-new order arrives while the robot is navigating, the bridge does **not**
+call `async_cancel_goal` on the active goal and then immediately send the replacement in
+the same tick. On the single-goal `NavigateToPose` server those two async calls race, and
+Nav2 can silently drop the new goal (accepted, but the result callback never fires) —
+stranding the order forever because its route is never consumed.
+
+Instead, `on_order` for a new order:
+
+1. Bumps the navigation token (`invalidate_navigation_context`) so the old goal's
+   preemption result is ignored.
+2. Sends the replacement goal and lets Nav2 **preempt** the old one (standard single-goal
+   behavior — no race).
+3. Only if the new order needs no navigation (robot already at target, mode is not
+   `DISPATCHING`/`NAVIGATING`) does it explicitly `async_cancel_goal` the previous goal to
+   stop the robot.
+
+The explicit `cancel:` instant action (a true cancel with no replacement) still calls
+`cancel_navigation()` to stop the robot.
+
+### Nav2 not ready yet (startup order independence)
+
+`send_navigation_goal` checks `action_server_is_ready()` (non-blocking). If Nav2 is not up
+yet — e.g. the bridge started before Nav2 — the order is **held, not failed**: the bridge
+stays in `DISPATCHING` and arms a 2 s retry timer that re-attempts the dispatch. The goal
+goes out as soon as Nav2 appears. The timer is cancelled once a goal is sent, the order
+completes, or it is cancelled. This makes robot-side startup order irrelevant.
+
+---
+
 ## 7. ROS Interface
 
 The adapter-facing namespace is parameterized by `adapter_ns`.

@@ -78,6 +78,11 @@ private:
   // ── Nav2 action client ──────────────────────────────────────────────────────
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
 
+  // Re-attempts the pending dispatch while the Nav2 action server is not yet
+  // available (e.g. the bridge started before Nav2). Keeps the order intact
+  // instead of failing it permanently, so startup order does not matter.
+  rclcpp::TimerBase::SharedPtr nav2_retry_timer_;
+
   // ── State ───────────────────────────────────────────────────────────────────
   GoalHandle::SharedPtr current_goal_handle_;
   BridgeStateMachine    state_machine_;
@@ -99,6 +104,8 @@ private:
   // ── Nav2 helpers ────────────────────────────────────────────────────────────
   void cancel_navigation();
   void dispatch_next_work();
+  void arm_nav2_retry();
+  void cancel_nav2_retry();
   bool try_complete_in_place(const NavigationTarget& target);
   void send_navigation_goal(const NavigationTarget& target);
   void publish_traversal_events(const std::vector<TraversalEvent>& events);
