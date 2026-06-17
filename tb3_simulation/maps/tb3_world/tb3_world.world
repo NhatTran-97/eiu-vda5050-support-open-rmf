@@ -1,0 +1,668 @@
+<sdf version="1.7">
+  <world name="sim_world">
+    <physics name="10ms" type="ode">
+      <max_step_size>0.01</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu">
+    </plugin>
+    <plugin filename="libdoor.so" name="door">
+    </plugin>
+    <plugin filename="liblift.so" name="lift">
+    </plugin>
+    <scene>
+      <ambient>1 1 1</ambient>
+      <background>0.8 0.8 0.8</background>
+      <grid>false</grid>
+    </scene>
+    <gui fullscreen="0">
+      <window>
+        <width>1000</width>
+        <height>845</height>
+        <style material_theme="Light" material_primary="DeepOrange" material_accent="LightBlue" toolbar_color_light="#f3f3f3" toolbar_text_color_light="#111111" toolbar_color_dark="#414141" toolbar_text_color_dark="#f3f3f3" plugin_toolbar_color_light="#bbdefb" plugin_toolbar_text_color_light="#111111" plugin_toolbar_color_dark="#607d8b" plugin_toolbar_text_color_dark="#eeeeee" />
+        <menus>
+          <drawer default="false">
+          </drawer>
+        </menus>
+      </window>
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.4 0.4 0.4</ambient_light>
+        <background_color>0.8 0.8 0.8</background_color>
+        <camera_pose>18.100735835612188 -33.407120991141426 10 0 0.6 1.57</camera_pose>
+      </plugin>
+      <plugin filename="EntityContextMenuPlugin" name="Entity context menu">
+        <gz-gui>
+          <property key="state" type="string">floating</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="GzSceneManager" name="Scene Manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="InteractiveViewControl" name="Interactive view control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="CameraTracking" name="Camera Tracking">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="MarkerManager" name="Marker manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="SelectEntities" name="Select Entities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="Spawn" name="Spawn Entities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="VisualizationCapabilities" name="Visualization Capabilities">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="WorldControl" name="World control">
+        <gz-gui>
+          <title>World control</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">72</property>
+          <property type="double" key="z">1</property>
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="left" target="left" />
+            <line own="bottom" target="bottom" />
+          </anchors>
+        </gz-gui>
+        <play_pause>true</play_pause>
+        <step>true</step>
+        <start_paused>true</start_paused>
+        <use_event>true</use_event>
+      </plugin>
+      <plugin filename="WorldStats" name="World stats">
+        <gz-gui>
+          <title>World stats</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">110</property>
+          <property type="double" key="width">290</property>
+          <property type="double" key="z">1</property>
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="right" target="right" />
+            <line own="bottom" target="bottom" />
+          </anchors>
+        </gz-gui>
+        <sim_time>true</sim_time>
+        <real_time>true</real_time>
+        <real_time_factor>true</real_time_factor>
+        <iterations>true</iterations>
+      </plugin>
+      <plugin filename="Shapes" name="Shapes">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">0</property>
+          <property key="y" type="double">0</property>
+          <property key="width" type="double">250</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#666666</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="Lights" name="Lights">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">250</property>
+          <property key="y" type="double">0</property>
+          <property key="width" type="double">150</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#666666</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="TransformControl" name="Transform control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">0</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">250</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="Screenshot" name="Screenshot">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">250</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">50</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="CopyPaste" name="CopyPaste">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="x" type="double">300</property>
+          <property key="y" type="double">50</property>
+          <property key="width" type="double">100</property>
+          <property key="height" type="double">50</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+          <property key="cardBackground" type="string">#777777</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="ComponentInspector" name="Component inspector">
+        <gz-gui>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="EntityTree" name="Entity tree">
+        <gz-gui>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="toggle_charging" name="toggle_charging" />
+      <plugin name="toggle_floors" filename="toggle_floors">
+        <floor name="tb3_world" model_name="tb3_world_tb3_world">
+          <model name="OpenRobotics/Sofa" />
+          <model name="OpenRobotics/Sofa_2" />
+          <model name="OpenRobotics/Bookshelf" />
+          <model name="OpenRobotics/Bookshelf_2" />
+          <model name="OpenRobotics/Bookshelf_3" />
+          <model name="OpenRobotics/AdjTable" />
+          <model name="OpenRobotics/OfficeChairGrey" />
+          <model name="OpenRobotics/Table" />
+          <model name="OpenRobotics/Table_2" />
+          <model name="OpenRobotics/Table_3" />
+          <model name="OpenRobotics/Table_4" />
+          <model name="OpenRobotics/Table_5" />
+          <model name="OpenRobotics/Table_6" />
+          <model name="OpenRobotics/AdjTable_2" />
+          <model name="OpenRobotics/AdjTable_3" />
+          <model name="OpenRobotics/AdjTable_4" />
+          <model name="OpenRobotics/AdjTable_5" />
+          <model name="OpenRobotics/AdjTable_6" />
+          <model name="OpenRobotics/AdjTable_7" />
+          <model name="OpenRobotics/OfficeChairGrey_2" />
+          <model name="OpenRobotics/OfficeChairGrey_3" />
+          <model name="OpenRobotics/OfficeChairGrey_4" />
+          <model name="OpenRobotics/OfficeChairGrey_5" />
+          <model name="OpenRobotics/OfficeChairGrey_6" />
+          <model name="OpenRobotics/OfficeChairGrey_7" />
+          <model name="OpenRobotics/OfficeChairBlue" />
+          <model name="OpenRobotics/OfficeChairBlue_2" />
+          <model name="OpenRobotics/OfficeChairBlue_3" />
+          <model name="OpenRobotics/OfficeChairBlue_4" />
+          <model name="OpenRobotics/OfficeChairBlue_5" />
+          <model name="OpenRobotics/OfficeChairBlue_6" />
+          <model name="OpenRobotics/OfficeChairBlue_7" />
+          <model name="OpenRobotics/OfficeChairBlue_8" />
+          <model name="OpenRobotics/Table_7" />
+          <model name="OpenRobotics/Table_8" />
+          <model name="OpenRobotics/Table_9" />
+          <model name="OpenRobotics/Table_10" />
+          <model name="OpenRobotics/Table_11" />
+          <model name="OpenRobotics/Table_12" />
+          <model name="OpenRobotics/Table_13" />
+          <model name="OpenRobotics/Table_14" />
+          <model name="OpenRobotics/OfficeChairBlack" />
+          <model name="OpenRobotics/OfficeChairBlack_2" />
+          <model name="OpenRobotics/OfficeChairBlack_3" />
+          <model name="OpenRobotics/OfficeChairBlack_4" />
+          <model name="OpenRobotics/OfficeChairBlack_5" />
+          <model name="OpenRobotics/OfficeChairBlack_6" />
+          <model name="OpenRobotics/OfficeChairBlack_7" />
+          <model name="OpenRobotics/OfficeChairBlack_8" />
+          <model name="null" />
+        </floor>
+      </plugin>
+    </gui>
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>1 1 1 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.09</constant>
+        <linear>0.001</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+    <include>
+      <name>OpenRobotics/Sofa</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Sofa</uri>
+      <pose>20.847754891913514 -15.048117440533215 0.0 0 0 2.8314</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Sofa_2</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Sofa</uri>
+      <pose>21.853102716652106 -15.39171669709081 0.0 0 0 -0.3081</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Bookshelf</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Bookshelf</uri>
+      <pose>14.348418954464089 -11.118825942303388 0.0 0 0 1.1485</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Bookshelf_2</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Bookshelf</uri>
+      <pose>13.94871981928926 -11.968574103711475 0.0 0 0 1.1328</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Bookshelf_3</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Bookshelf</uri>
+      <pose>13.537820708347708 -12.815572271069696 0.0 0 0 1.1159</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/AdjTable</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/AdjTable</uri>
+      <pose>10.406927482631229 -13.711870331758213 0.0 0 0 -0.4324</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairGrey</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairGrey</uri>
+      <pose>10.158078021064412 -14.209619254783663 0.0 0 0 2.7611</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>12.359423258034923 -8.285482072782232 0.0 0 0 1.0974</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_2</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>11.679224729773928 -9.640429141096309 0.0 0 0 1.1071</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_3</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>10.992326216009626 -10.99942620064746 0.0 0 0 1.1071</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_4</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>13.08277169293288 -8.6525312786014 0.0 0 0 -2.0344</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_5</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>12.405273158829933 -10.00347835557022 0.0 0 0 -2.0395</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_6</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>11.721074639223682 -11.351675438489174 0.0 0 0 -2.0344</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/AdjTable_2</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/AdjTable</uri>
+      <pose>16.154015047713212 -12.888672112904272 0.0 0 0 -0.4182</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/AdjTable_3</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/AdjTable</uri>
+      <pose>17.636211840698284 -13.53372071721882 0.0 0 0 -0.3985</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/AdjTable_4</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/AdjTable</uri>
+      <pose>19.125208618970294 -14.177869323480683 0.0 0 0 -0.4252</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/AdjTable_5</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/AdjTable</uri>
+      <pose>15.824665760323093 -13.616070539039303 0.0 0 0 -0.4182</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/AdjTable_6</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/AdjTable</uri>
+      <pose>17.32056252366567 -14.247369173104527 0.0 0 0 -0.4049</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/AdjTable_7</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/AdjTable</uri>
+      <pose>18.81645928700825 -14.86491783692043 0.0 0 0 -0.4049</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairGrey_2</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairGrey</uri>
+      <pose>15.481266503332757 -14.139119407323504 0.0 0 0 2.715</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairGrey_3</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairGrey</uri>
+      <pose>17.008363199168343 -14.761268061186453 0.0 0 0 2.7367</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairGrey_4</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairGrey</uri>
+      <pose>18.563709833879805 -15.411716653817098 0.0 0 0 2.7004</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairGrey_5</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairGrey</uri>
+      <pose>19.21415842651045 -13.57352063110413 0.0 0 0 -0.3393</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairGrey_6</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairGrey</uri>
+      <pose>17.771911547086138 -12.979671916008874 0.0 0 0 -0.4636</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairGrey_7</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairGrey</uri>
+      <pose>16.216514912482857 -12.357523262145927 0.0 0 0 -0.4049</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlue</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlue</uri>
+      <pose>23.456099248263946 -15.694516041926786 0.0 0 0 -0.2337</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlue_2</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlue</uri>
+      <pose>24.558996861935 -16.118715124091317 0.0 0 0 -0.2663</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlue_3</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlue</uri>
+      <pose>25.633594536838363 -16.54286420636403 0.0 0 0 -0.4324</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlue_4</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlue</uri>
+      <pose>26.877941844456075 -17.023613166172137 0.0 0 0 -0.4809</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlue_5</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlue</uri>
+      <pose>27.18899117144164 -18.013411024556042 0.0 0 0 2.8633</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlue_6</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlue</uri>
+      <pose>26.142643435414165 -17.645761820035087 0.0 0 0 2.6779</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlue_7</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlue</uri>
+      <pose>24.92664606645596 -17.193312798994675 0.0 0 0 2.8198</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlue_8</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlue</uri>
+      <pose>23.738898636373634 -16.740863777954264 0.0 0 0 2.8966</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_7</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>8.69418118848389 -6.0228869683374695 0.0 0 0 1.1479</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_8</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>7.874032963030707 -7.493433786529481 0.0 0 0 1.1071</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_9</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>7.0539347374693415 -9.07708036000864 0.0 0 0 1.0698</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_10</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>6.205536573140279 -10.689026872255496 0.0 0 0 -2.0647</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_11</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>9.401129658866294 -6.333986295214852 0.0 0 0 -2.0074</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_12</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>8.609331372072623 -7.832783052282743 0.0 0 0 1.1071</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_13</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>7.789233146511254 -9.416429625761904 0.0 0 0 -2.0647</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/Table_14</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table</uri>
+      <pose>6.940834982182192 -11.056626076884637 0.0 0 0 -2.0344</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlack</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlack</uri>
+      <pose>10.051578251496938 -6.645035622200419 0.0 0 0 -1.9451</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlack_2</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlack</uri>
+      <pose>9.288029903579146 -8.11558244039243 0.0 0 0 -1.9757</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlack_3</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlack</uri>
+      <pose>8.38308186160651 -9.727528952639284 0.0 0 0 -2.0344</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlack_4</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlack</uri>
+      <pose>7.619533513688715 -11.339425464994324 0.0 0 0 -2.0344</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlack_5</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlack</uri>
+      <pose>8.043732595853246 -5.655237763816513 0.0 0 0 1.0744</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlack_6</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlack</uri>
+      <pose>7.251884309167759 -7.154084520776219 0.0 0 0 1.0637</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlack_7</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlack</uri>
+      <pose>6.403536144730512 -8.794280971898953 0.0 0 0 1.1071</pose>
+      <static>True</static>
+    </include>
+    <include>
+      <name>OpenRobotics/OfficeChairBlack_8</name>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/OfficeChairBlack</uri>
+      <pose>5.611687858045024 -10.23652785132327 0.0 0 0 1.1659</pose>
+      <static>True</static>
+    </include>
+    <model name="null">
+      <pose>30.56398386900245 -13.55377067383692 0.0 0 0 2.7049748912126312</pose>
+      <link name="right">
+        <pose>0 0 1.11 0 0 0</pose>
+        <visual name="right_visual">
+          <geometry>
+            <box>
+              <size>2.561428044157478 0.03 2.2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.25 0 0.6</ambient>
+            <diffuse>0.5 0.25 0 0.6</diffuse>
+            <pbr>
+              <metal>
+                <metalness>0.0</metalness>
+              </metal>
+            </pbr>
+          </material>
+        </visual>
+        <collision name="right_collision">
+          <geometry>
+            <box>
+              <size>2.561428044157478 0.03 2.2</size>
+            </box>
+          </geometry>
+          <surface>
+            <contact>
+              <collide_bitmask>0x02</collide_bitmask>
+            </contact>
+          </surface>
+        </collision>
+        <inertial>
+          <mass>50.0</mass>
+          <inertia>
+            <ixx>20.17041666666667</ixx>
+            <iyy>47.503806772485014</iyy>
+            <izz>27.340890105818342</izz>
+          </inertia>
+        </inertial>
+      </link>
+      <joint name="right_joint" type="revolute">
+        <parent>world</parent>
+        <child>right</child>
+        <axis>
+          <xyz>0 0 -1</xyz>
+          <limit>
+            <lower>0</lower>
+            <upper>1.57</upper>
+          </limit>
+        </axis>
+        <pose>1.2857140220787389 0 0 0 0 0</pose>
+      </joint>
+      <plugin name="register_component" filename="libregister_component.so">
+        <component name="Door">
+          <v_max_door>0.5</v_max_door>
+          <a_max_door>0.3</a_max_door>
+          <a_nom_door>0.15</a_nom_door>
+          <dx_min_door>0.01</dx_min_door>
+          <f_max_door>500.0</f_max_door>
+          <ros_interface>true</ros_interface>
+          <door name="null" type="SwingDoor" left_joint_name="empty_joint" right_joint_name="right_joint" />
+        </component>
+      </plugin>
+    </model>
+    <include>
+      <name>tb3_world_tb3_world</name>
+      <uri>model://tb3_world_tb3_world</uri>
+      <pose>0 0 0.0 0 0 0</pose>
+    </include>
+    <plugin name="register_component" filename="libregister_component.so">
+      <component name="Chargers">
+        <rmf_charger name="wp1_charging" x="15.276116947212877" y="-8.801480956320416" z="0.0" />
+      </component>
+    </plugin>
+  </world>
+</sdf>

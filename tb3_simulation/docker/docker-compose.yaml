@@ -1,0 +1,31 @@
+services:
+  tb3-simulation:
+    build: .
+    image: eiu-artc/tb3-simulation
+    tty: true
+    container_name: tb3-simulation
+    network_mode: host
+
+    volumes:
+      - ${HOME}/simulation_ws:/home/eiu/sim_ws/
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.config/open-robotics:/home/eiu/.config/open-robotics
+      - ${HOME}/.cache/open-robotics:/home/eiu/.cache/open-robotics
+      - ${XAUTHORITY:-${HOME}/.Xauthority}:/home/eiu/.Xauthority:ro
+
+    environment:
+      - ENV=development
+      - DISPLAY=${DISPLAY}
+      - XAUTHORITY=/home/eiu/.Xauthority
+      - QT_X11_NO_MITSHM=1
+      - QT_XCB_GL_INTEGRATION=xcb_glx
+      - TURTLEBOT3_MODEL=burger
+      - ROS_DOMAIN_ID=1
+
+    devices:
+      - /dev/dri:/dev/dri
+
+    group_add:
+      - video
+
+    privileged: true
