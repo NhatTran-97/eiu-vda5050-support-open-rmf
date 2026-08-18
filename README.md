@@ -5,11 +5,19 @@ A ROS 2 Jazzy implementation of the VDA5050 v2.1.0 protocol connecting
 
 ## Demo
 
+### Real robot (TurtleBot3)
+
 <p align="center">
-  <img src="assets/video/vda5050_support_openrmf.gif" alt="VDA5050 Open-RMF demo" width="80%" />
+  <img src="assets/video/vda5050_support_openrmf.gif" alt="VDA5050 Open-RMF demo on real TurtleBot3" width="80%" />
 </p>
 
 <p align="center">▶️ <a href="https://www.youtube.com/watch?v=yxOD5KHLECk">Watch the full demo on YouTube</a></p>
+
+### Simulation
+
+<p align="center">
+  <img src="assets/video/simulation_vda5050-open-rmf-support.gif" alt="VDA5050 Open-RMF demo in simulation" width="80%" />
+</p>
 
 ## Overview
 
