@@ -1,9 +1,9 @@
 """
-Cầu nối ROS 2 ↔ QML cho EIU Fleet UI.
+ROS 2 <-> QML bridge for EIU Fleet UI.
 
-  1. Subscribe  /fleet_states        (rmf_fleet_msgs/FleetState)  → bảng robot
-  2. Subscribe  /task_api_responses  (rmf_task_msgs/ApiResponse)  → task state
-  3. Publish    /task_api_requests   (rmf_task_msgs/ApiRequest)   → dispatch task
+  1. Subscribe  /fleet_states        (rmf_fleet_msgs/FleetState)  -> robot table
+  2. Subscribe  /task_api_responses  (rmf_task_msgs/ApiResponse)  -> task state
+  3. Publish    /task_api_requests   (rmf_task_msgs/ApiRequest)   -> dispatch task
 """
 
 import os
@@ -25,7 +25,7 @@ _MODE_NAMES = {
     7: "DOCKING", 8: "ERROR", 9: "CLEANING",
 }
 
-# RMF task status → label hiển thị
+# RMF task status -> display label
 _STATE_LABEL = {
     "queued":      "queued",
     "selected":    "queued",
@@ -43,7 +43,7 @@ _EPOCH_2020 = 1_577_836_800
 
 
 def _fmt_time(ts) -> str:
-    """Timestamp → 'HH:MM:SS AM/PM' (UTC). Trả '' nếu không hợp lệ."""
+    """Timestamp -> 'HH:MM:SS AM/PM' (UTC). Returns '' if invalid."""
     if not ts:
         return ""
     ts = float(ts)
@@ -55,9 +55,9 @@ def _fmt_time(ts) -> str:
 
 
 def _finish_from_path(path) -> str:
-    """Estimated finish time từ Location.t của waypoint cuối trong RMF path.
-    RMF internal clock bắt đầu từ Unix epoch (0), nên t.sec=29375 → 08:09:35 UTC.
-    Dùng UTC để hiển thị đúng giờ trong ngày.
+    """Estimated finish time from Location.t of the last waypoint in the RMF path.
+    RMF's internal clock starts at the Unix epoch (0), so t.sec=29375 -> 08:09:35 UTC.
+    UTC is used so the displayed time of day is correct.
     """
     if not path:
         return ""
@@ -81,10 +81,10 @@ class RosBridge(QObject):
         self._robots_json  = "[]"
         self._rmf_online   = False
         self._last_rx      = 0.0
-        self._tasks        = []       # list[dict], mới nhất ở đầu
+        self._tasks        = []       # list[dict], most recent first
         self._tasks_json   = "[]"
         self._planned_dest = ""
-        self._waypoints    = []       # list[dict] {name,x,y} từ nav_graph
+        self._waypoints    = []       # list[dict] {name,x,y} from nav_graph
         self._task_miss    : dict[str, int] = {}  # rmf_id → consecutive miss count
 
         # request_id ("eiu-xxx") → rmf internal task_id
@@ -100,11 +100,11 @@ class RosBridge(QObject):
         self._watchdog.timeout.connect(self._check_online)
 
     def set_waypoints(self, wp_list: list):
-        """Nhận danh sách waypoints từ MapProvider để dùng cho _nearest_wp_name."""
+        """Receive the waypoint list from MapProvider, for use by _nearest_wp_name."""
         self._waypoints = wp_list
 
     def _nearest_wp_name(self, robots: list) -> str:
-        """Tìm waypoint gần nhất với vị trí robot đầu tiên."""
+        """Find the waypoint nearest to the first robot's position."""
         if not robots or not self._waypoints:
             return ""
         r = robots[0]
@@ -117,7 +117,7 @@ class RosBridge(QObject):
                 best = wp["name"]
         return best
 
-    # ── Khởi động / tắt ────────────────────────────────────────────────────────
+    # ── Start / shutdown ──────────────────────────────────────────────────────
 
     def start(self):
         domain = os.environ.get("EIU_ROS_DOMAIN_ID", "7")
@@ -130,7 +130,7 @@ class RosBridge(QObject):
             from rmf_fleet_msgs.msg import FleetState
             from rmf_task_msgs.msg import ApiRequest, ApiResponse
         except Exception as e:
-            print(f"[ROS] import lỗi ({e}). GUI chạy nhưng không có RMF data.")
+            print(f"[ROS] import error ({e}). GUI runs but without RMF data.")
             return
 
         try:
@@ -150,7 +150,7 @@ class RosBridge(QObject):
             self._node.create_subscription(
                 FleetState, FLEET_STATES_TOPIC, self._on_fleet_state, 10)
 
-            # Task state updates: dispatcher dùng TRANSIENT_LOCAL
+            # Task state updates: the dispatcher uses TRANSIENT_LOCAL
             self._node.create_subscription(
                 ApiResponse, TASK_RESP_TOPIC, self._on_task_response, reliable_tl)
 
@@ -160,7 +160,7 @@ class RosBridge(QObject):
             self._ok = True
             print(f"[ROS] bridge online — domain {domain}")
         except Exception as e:
-            print(f"[ROS] start lỗi: {e}")
+            print(f"[ROS] start error: {e}")
 
     def _spin(self):
         import rclpy
@@ -225,11 +225,11 @@ class RosBridge(QObject):
             self.rmfOnlineChanged.emit()
         self.robotsChanged.emit()
 
-        # Cross-reference: cập nhật bảng tasks theo robot đang làm gì
+        # Cross-reference: update the tasks table based on what each robot is doing
         self._sync_tasks_from_fleet(robot_task_map)
 
     def _robot_finish(self, robot_name: str, path) -> str:
-        """Finish time: lấy từ path live khi đang chạy, fallback sang task gần nhất."""
+        """Finish time: taken from the live path while running, falling back to the most recent task."""
         t = _finish_from_path(path)
         if t:
             return t
@@ -245,18 +245,18 @@ class RosBridge(QObject):
             self.rmfOnlineChanged.emit()
 
     def _sync_tasks_from_fleet(self, robot_task_map: dict):
-        """Cập nhật robot/state/end cho tasks dựa vào fleet_states."""
+        """Update robot/state/end for tasks based on fleet_states."""
         updated = False
         active_rmf_ids = set(robot_task_map.keys())
 
-        # rmf_ids đã được claim bởi task nào đó (dùng để fallback an toàn)
+        # rmf_ids already claimed by some task (used for the safe fallback below)
         claimed_ids = {t.get("rmf_id", "") for t in self._tasks}
 
         for task in self._tasks:
             rmf_id = task.get("rmf_id", "")
 
             if rmf_id:
-                # Exact match bằng RMF task ID
+                # Exact match by RMF task ID
                 if rmf_id in active_rmf_ids:
                     self._task_miss.pop(rmf_id, None)   # reset miss counter
                     robot_name, finish = robot_task_map[rmf_id]
@@ -267,8 +267,8 @@ class RosBridge(QObject):
                     if finish and task.get("end", "—") == "—":
                         task["end"] = finish; updated = True
                 elif task["state"] == "underway":
-                    # Grace period: chờ 3 lần liên tiếp không thấy mới mark completed
-                    # tránh false-completed khi robot chuyển giữa 2 task
+                    # Grace period: only mark completed after 3 consecutive misses,
+                    # to avoid a false "completed" when a robot switches between tasks
                     self._task_miss[rmf_id] = self._task_miss.get(rmf_id, 0) + 1
                     if self._task_miss[rmf_id] >= 3:
                         task["state"] = "completed"
@@ -278,9 +278,9 @@ class RosBridge(QObject):
                         updated = True
 
             elif task["state"] in ("queued", "underway") and robot_task_map:
-                # Fallback: chưa nhận dispatch_task_response → chưa có rmf_id.
-                # Chỉ gán rmf_id chưa được claim bởi task khác, tránh "đánh cắp"
-                # rmf_id của task đang active và trigger false-completed.
+                # Fallback: dispatch_task_response not received yet -> no rmf_id yet.
+                # Only assign an rmf_id not already claimed by another task, to avoid
+                # "stealing" the rmf_id of an active task and triggering a false completion.
                 available = [(rid, info) for rid, info in robot_task_map.items()
                              if rid not in claimed_ids]
                 if not available:
@@ -291,7 +291,7 @@ class RosBridge(QObject):
                 task["state"]   = "underway"
                 if finish and task.get("end", "—") == "—":
                     task["end"] = finish
-                claimed_ids.add(rmf_id_new)   # update local set ngay
+                claimed_ids.add(rmf_id_new)   # update the local set immediately
                 updated = True
                 print(f"[ROS] fallback link: task {task['id']} → rmf_id={rmf_id_new} robot={robot_name}")
 
@@ -302,7 +302,7 @@ class RosBridge(QObject):
     # ── Subscribe: /task_api_responses ────────────────────────────────────────
 
     def _on_task_response(self, msg):
-        """Nhận phản hồi từ Jazzy dispatcher: lấy rmf_task_id và state updates."""
+        """Receive responses from the Jazzy dispatcher: pick up rmf_task_id and state updates."""
         try:
             data = json.loads(msg.json_msg)
         except Exception:
@@ -318,7 +318,7 @@ class RosBridge(QObject):
                 return
             self._req_to_rmf[req_id] = rmf_id
             print(f"[ROS] task mapped: {req_id} → {rmf_id} (success={success})")
-            # Gắn rmf_id vào task record
+            # Attach the rmf_id to the task record
             for task in self._tasks:
                 if task["id"] == req_id:
                     task["rmf_id"] = rmf_id
@@ -339,7 +339,7 @@ class RosBridge(QObject):
             status_raw = task_data.get("status", "")
             state_label = _STATE_LABEL.get(status_raw, status_raw)
 
-            # Estimated finish time (có thể là giây hoặc milliseconds)
+            # Estimated finish time (may be in seconds or milliseconds)
             finish_str = ""
             estimate = task_data.get("estimate", {})
             ft = estimate.get("finish_time") if estimate else None
@@ -367,7 +367,7 @@ class RosBridge(QObject):
                 self.tasksChanged.emit()
 
         else:
-            # Log các type khác để debug
+            # Log other types for debugging
             if msg_type:
                 print(f"[ROS] task_api_responses type={msg_type!r} (ignored)")
 
@@ -376,7 +376,7 @@ class RosBridge(QObject):
     @Slot(str, str, int)
     def dispatch(self, category: str, place: str, loops: int):
         if not self._ok or self._task_pub is None:
-            print("[ROS] dispatch bỏ qua — ROS chưa sẵn sàng")
+            print("[ROS] dispatch skipped — ROS not ready yet")
             return
 
         import uuid
@@ -384,8 +384,8 @@ class RosBridge(QObject):
 
         req_id  = "eiu-" + uuid.uuid4().hex[:8]
 
-        # Xây dựng patrol places: nếu loops > 1, thêm waypoint hiện tại của robot
-        # vào đầu để tạo route A→B thật sự thay vì B→B (no-op).
+        # Build patrol places: if loops > 1, prepend the robot's current waypoint
+        # so the route is a real A->B trip instead of a no-op B->B.
         places = [place]
         if loops > 1:
             robots = json.loads(self._robots_json)
@@ -408,7 +408,7 @@ class RosBridge(QObject):
 
         rec = {
             "id":          req_id,
-            "rmf_id":      "",           # sẽ được điền khi nhận dispatch_task_response
+            "rmf_id":      "",           # filled in once dispatch_task_response arrives
             "date":        time.strftime("%d %b %Y"),
             "requester":   "eiu_fleet_ui",
             "pickup":      "n/a",
@@ -444,7 +444,7 @@ class RosBridge(QObject):
             self._task_pub.publish(msg)
             print(f"[ROS] cancel_task → {rmf_id}")
 
-        # Cập nhật local ngay, không chờ confirm từ dispatcher
+        # Update local state immediately, without waiting for dispatcher confirmation
         for task in self._tasks:
             if task.get("rmf_id") == rmf_id and task["state"] in ("queued", "underway"):
                 task["state"] = "cancelled"

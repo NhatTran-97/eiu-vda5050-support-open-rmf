@@ -9,15 +9,15 @@ BROKER_TOPIC_CONN  = "TB3/v2/ROBOTIS/0001/connection"
 
 class MqttClient(QObject):
     """
-    Kết nối MQTT, nhận trạng thái robot, phát signal cho QML.
+    Connects to MQTT, receives robot state, and emits signals for QML.
 
-    QML nhận:
-        mqtt.connected      → bool (broker có kết nối không)
-        mqtt.robotOnline    → bool (robot có online không)
-        mqtt.posX/Y/theta   → float (vị trí robot)
-        mqtt.battery        → float (0–100)
-        mqtt.driving        → bool
-        mqtt.orderId        → str
+    QML receives:
+        mqtt.connected      -> bool (broker connection status)
+        mqtt.robotOnline    -> bool (robot online status)
+        mqtt.posX/Y/theta   -> float (robot position)
+        mqtt.battery        -> float (0-100)
+        mqtt.driving        -> bool
+        mqtt.orderId        -> str
     """
 
     stateChanged = Signal()
@@ -35,7 +35,7 @@ class MqttClient(QObject):
         self._driving      = False
         self._order_id     = ""
 
-        # Tương thích paho-mqtt cả v1 lẫn v2
+        # Compatible with both paho-mqtt v1 and v2
         try:
             self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1,
                                        client_id="eiu_fleet_ui")
@@ -46,14 +46,14 @@ class MqttClient(QObject):
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message    = self._on_message
 
-    # ── Kết nối / ngắt ───────────────────────────────────────────────────────
+    # ── Connect / disconnect ─────────────────────────────────────────────────
 
     @Slot(str, int)
     def connect_broker(self, host: str, port: int):
-        """Gọi từ main.py sau khi QML load xong."""
+        """Called from main.py once QML has finished loading."""
         try:
             self._client.connect_async(host, port, keepalive=60)
-            self._client.loop_start()   # thread MQTT chạy nền
+            self._client.loop_start()   # MQTT background thread
             print(f"[MQTT] connecting → {host}:{port}")
         except Exception as e:
             print(f"[MQTT] connect error: {e}")
@@ -66,7 +66,7 @@ class MqttClient(QObject):
         except Exception:
             pass
 
-    # ── Paho callbacks (chạy trong MQTT thread — Qt queue signal về main) ────
+    # ── Paho callbacks (run on the MQTT thread — Qt queues signals to main) ──
 
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:

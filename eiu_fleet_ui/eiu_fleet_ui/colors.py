@@ -4,36 +4,36 @@ from PySide6.QtCore import QObject, Property
 class Colors(QObject):
     """Read-only color palette — exposed to QML as context property `C`."""
 
-    # ── Bảng màu EIU Green (dark navy + green accent) ────────────────────────
+    # ── EIU Green palette (dark navy + green accent) ─────────────────────────
     @Property(str, constant=True)
-    def bg(self):         return "#0B1A27"   # nền toàn app
+    def bg(self):         return "#0B1A27"  
 
     @Property(str, constant=True)
-    def surface(self):    return "#162030"   # card / panel
+    def surface(self):    return "#162030"   
 
     @Property(str, constant=True)
-    def surfaceAlt(self): return "#1E2E40"   # header card, hover
+    def surfaceAlt(self): return "#1E2E40"   
 
     @Property(str, constant=True)
     def border(self):     return "#1E3248"
 
     @Property(str, constant=True)
-    def text(self):       return "#ECF0F1"   # chữ chính
+    def text(self):       return "#ECF0F1"   
 
     @Property(str, constant=True)
-    def textDim(self):    return "#7F8C8D"   # chữ phụ / label
+    def textDim(self):    return "#7F8C8D"   
 
     @Property(str, constant=True)
-    def accent(self):     return "#27AE60"   # xanh lá (online, success)
+    def accent(self):     return "#27AE60"  
 
     @Property(str, constant=True)
-    def accentDark(self): return "#1D8348"   # xanh lá đậm (button hover)
+    def accentDark(self): return "#1D8348"   
 
     @Property(str, constant=True)
-    def warn(self):       return "#F39C12"   # vàng (charging station)
+    def warn(self):       return "#F39C12"  
 
     @Property(str, constant=True)
-    def err(self):        return "#E74C3C"   # đỏ (offline, error)
+    def err(self):        return "#E74C3C"   
 
     @Property(str, constant=True)
-    def blue(self):       return "#2980B9"   # xanh dương (waypoint)
+    def blue(self):       return "#2980B9"  

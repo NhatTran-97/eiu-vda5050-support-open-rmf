@@ -21,7 +21,7 @@ ApplicationWindow {
     function reloadRobots() { root.robots = JSON.parse(ros.robotsJson) }
     function reloadTasks()  { root.tasks  = JSON.parse(ros.tasksJson) }
 
-    // Màu theo trạng thái robot (cột Status)
+    // Color based on the robot's status (Status column)
     function statusColor(s) {
         if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME" || s === "WORKING") return C.blue
         if (s === "CHARGING")                                        return C.accent
@@ -30,13 +30,13 @@ ApplicationWindow {
         return C.textDim
     }
 
-    // Màu theo trạng thái task (cột State)
+    // Color based on the task's state (State column)
     function taskColor(s) {
         if (s === "completed")                         return C.accent
         if (s === "failed" || s === "cancelled")       return C.err
         if (s === "queued")                            return C.warn
         if (s === "underway")                          return C.blue
-        // fallback cho các state chứa keyword
+        // fallback for states matching a keyword
         if (s.indexOf("complet") >= 0)                return C.accent
         if (s.indexOf("fail") >= 0 || s.indexOf("cancel") >= 0) return C.err
         if (s.indexOf("queue") >= 0 || s.indexOf("stale") >= 0) return C.warn
@@ -143,13 +143,13 @@ ApplicationWindow {
             }
         }
 
-        // ── Nội dung: 2 card (robot+task) bên trái = 4, map bên phải = 6 ──────
+        // ── Content: robot+task cards on the left (4), map on the right (6) ───
         Item {
             id: contentArea
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            // ════════════ LEFT (4 phần) ════════════
+            // ════════════ LEFT (4 parts) ════════════
             ColumnLayout {
                 id: leftPanel
                 anchors.left:   parent.left
@@ -171,7 +171,7 @@ ApplicationWindow {
                     Column {
                         anchors.fill: parent
 
-                        // thanh tiêu đề màu accent
+                        // accent-colored title bar
                         Rectangle {
                             width: parent.width; height: 34; color: C.accent
                             Text {
@@ -181,7 +181,7 @@ ApplicationWindow {
                                 font.pixelSize: 13; font.bold: true; color: "#ffffff"
                             }
                         }
-                        // header cột
+                        // column header
                         Rectangle {
                             width: parent.width; height: 28; color: C.surfaceAlt
                             Row {
@@ -222,7 +222,7 @@ ApplicationWindow {
                         anchors.centerIn: parent; visible: root.robots.length === 0
                         width: parent.width - 24
                         horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
-                        text: ros.rmfOnline ? "Fleet chưa có robot" : "Đang chờ RMF (/fleet_states)…"
+                        text: ros.rmfOnline ? "No robots in the fleet yet" : "Waiting for RMF (/fleet_states)…"
                         font.pixelSize: 12; color: C.textDim
                     }
                 }
@@ -317,13 +317,13 @@ ApplicationWindow {
                         anchors.centerIn: parent; visible: root.tasks.length === 0
                         width: parent.width - 24
                         horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
-                        text: "Chưa có task — bấm  + New Task  để dispatch"
+                        text: "No tasks yet — click  + New Task  to dispatch one"
                         font.pixelSize: 12; color: C.textDim
                     }
                 }
             }
 
-            // ════════════ RIGHT: MAP (6 phần) ════════════
+            // ════════════ RIGHT: MAP (6 parts) ════════════
             Rectangle {
                 id: mapHeader
                 anchors.left:  leftPanel.right

@@ -1,6 +1,6 @@
 import QtQuick
 
-// Panel bản đồ: ảnh map + waypoints + lanes + robot marker, có zoom + pan.
+// Map panel: map image + waypoints + lanes + robot marker, with zoom + pan.
 Rectangle {
     id: root
     radius: 10
@@ -14,7 +14,7 @@ Rectangle {
     property var  mapRobots:   []
     property string plannedDest: ""
 
-    // MQTT fallback (khi wired sau)
+    // MQTT fallback (used once wired up later)
     property real robotX:  0
     property real robotY:  0
     property bool robotOk: false
@@ -49,7 +49,7 @@ Rectangle {
         }
     }
 
-    // toạ độ thế giới (m) → pixel trên ảnh đã vẽ (chưa tính scale của mapContent)
+    // world coordinates (m) -> pixel on the rendered image (before mapContent's scale)
     function worldToScreen(wx, wy) {
         if (mapProv.pixelW <= 0 || mapProv.pixelH <= 0) return { x: -100, y: -100 }
         var px = (wx - mapProv.originX) / mapProv.resolution
@@ -75,7 +75,7 @@ Rectangle {
         mapContent.y = 0
     }
 
-    // ── Nội dung có thể zoom/pan ─────────────────────────────────────────────
+    // ── Zoomable/pannable content ────────────────────────────────────────────
     Item {
         id: mapContent
         width:  root.width
@@ -129,7 +129,7 @@ Rectangle {
                         ctx2d.lineTo(p2.x, p2.y)
                         ctx2d.stroke()
 
-                        // Tam giác đặc chỉ hướng di chuyển
+                        // Solid triangle indicating direction of travel
                         var ang = Math.atan2(p2.y - p1.y, p2.x - p1.x)
                         ctx2d.fillStyle   = "rgba(41,121,255,0.95)"
                         ctx2d.globalAlpha = 1.0
@@ -148,7 +148,7 @@ Rectangle {
                         }
 
                         if (e.bidir) {
-                            // A→B tại 33%, B→A tại 67%
+                            // A->B at 33%, B->A at 67%
                             fillTriangle(p1.x + (p2.x-p1.x)*0.33, p1.y + (p2.y-p1.y)*0.33, ang, 6)
                             fillTriangle(p1.x + (p2.x-p1.x)*0.67, p1.y + (p2.y-p1.y)*0.67, ang + Math.PI, 6)
                         } else {
@@ -156,12 +156,12 @@ Rectangle {
                         }
                     }
 
-                    // Planned path: lấy trực tiếp từ RMF (robot.path = Location[])
+                    // Planned path: taken directly from RMF (robot.path = Location[])
                     if (root.mapRobots.length > 0) {
                         var rob = root.mapRobots[0]
                         var rmfPath = rob.path || []
 
-                        // Glow tại đích (plannedDest từ dispatch, hoặc điểm cuối path)
+                        // Glow at the destination (plannedDest from dispatch, or the path's last point)
                         var destPt = null
                         if (root.plannedDest !== "") {
                             for (var j = 0; j < root.waypoints.length; j++) {
@@ -185,7 +185,7 @@ Rectangle {
                             ctx2d.beginPath(); ctx2d.arc(destPt.x, destPt.y, 6, 0, Math.PI*2); ctx2d.fill()
                         }
 
-                        // Vẽ đường theo path RMF (vị trí robot → từng điểm trong path)
+                        // Draw the line along RMF's path (robot position -> each point in the path)
                         if (rmfPath.length > 0 && (rob.x !== 0 || rob.y !== 0)) {
                             var rp = root.worldToScreen(rob.x, rob.y)
                             ctx2d.strokeStyle = "#00e676"; ctx2d.lineWidth = 3
@@ -196,7 +196,7 @@ Rectangle {
                                 ctx2d.lineTo(pp.x, pp.y)
                             }
                             ctx2d.stroke()
-                            // Mũi tên tại điểm cuối
+                            // Arrowhead at the final point
                             if (destPt) {
                                 ctx2d.setLineDash([]); ctx2d.globalAlpha = 0.9
                                 var prevPt = rmfPath.length >= 2
@@ -289,7 +289,7 @@ Rectangle {
         }
     }
 
-    // ── Tương tác: cuộn = zoom, kéo = pan, double-click = reset ─────────────
+    // ── Interaction: scroll = zoom, drag = pan, double-click = reset ────────
     MouseArea {
         anchors.fill: parent
         drag.target: mapContent
@@ -302,7 +302,7 @@ Rectangle {
         onDoubleClicked: root.resetView()
     }
 
-    // ── Nút zoom +/−/reset ──────────────────────────────────────────────────
+    // ── Zoom +/-/reset buttons ────────────────────────────────────────────────
     Column {
         anchors.right: parent.right
         anchors.top:   parent.top
@@ -340,7 +340,7 @@ Rectangle {
     Text {
         anchors.centerIn: parent
         visible: mapImg.status !== Image.Ready
-        text: "Đang tải bản đồ…"
+        text: "Loading map…"
         color: C.textDim; font.pixelSize: 13
     }
 }

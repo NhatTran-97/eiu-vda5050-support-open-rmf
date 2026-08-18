@@ -18,17 +18,17 @@ NAV_GRAPH = _MAPS / "nav_graph.yaml"
 
 class MapProvider(QObject):
     """
-    Load bản đồ PGM + nav_graph, cung cấp cho QML.
+    Loads the occupancy-grid map (PGM/PNG) and nav_graph, and exposes them to QML.
 
-    QML dùng:
-        mapProv.imagePath   → "file:///path/to/map.png"
-        mapProv.originX/Y   → tọa độ gốc bản đồ (metres)
-        mapProv.resolution  → m/pixel
-        mapProv.pixelW/H    → kích thước ảnh (pixel)
-        mapProv.wpJson      → JSON array waypoints
+    QML usage:
+        mapProv.imagePath   -> "file:///path/to/map.png"
+        mapProv.originX/Y   -> map origin coordinates (metres)
+        mapProv.resolution  -> metres per pixel
+        mapProv.pixelW/H    -> image size (pixels)
+        mapProv.wpJson      -> JSON array of waypoints
     """
 
-    mapReady = Signal()   # emit khi load xong
+    mapReady = Signal()   # emitted once loading finishes
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -47,9 +47,8 @@ class MapProvider(QObject):
     # ── Load ─────────────────────────────────────────────────────────────────
 
     def _load(self):
-        """Đọc map.yaml → chuyển PGM → PNG → đọc nav_graph."""
+        """Read map.yaml, convert the map image, then read the nav graph."""
 
-        # TODO 3: gọi 3 hàm con theo thứ tự
         self._read_map_yaml()
         self._load_png()
         self._read_nav_graph()
@@ -68,27 +67,27 @@ class MapProvider(QObject):
 
     def _load_png(self):
         """
-        Đọc PNG và convert sang ARGB32 để QML render được.
-        map.png gốc là Grayscale8 — Qt Quick không hiển thị đúng format này.
+        Load the map PNG and convert it to ARGB32 so QML can render it.
+        The source map.png is Grayscale8, a format Qt Quick cannot display directly.
         """
         import tempfile, os
         img = QImage(str(MAP_PNG))
         img = img.convertToFormat(QImage.Format_ARGB32)
         self._px_w = img.width()
         self._px_h = img.height()
-        # Lưu bản ARGB32 vào temp file
+        # Cache the converted ARGB32 image to a temp file for QML to load
         cache = os.path.join(tempfile.gettempdir(), "eiu_fleet_map.png")
         img.save(cache)
         self._image_path = cache
-  
+
     def _read_nav_graph(self):
-        """Đọc waypoints từ nav_graph.yaml."""
+        """Read waypoints and lanes from nav_graph.yaml."""
 
         import yaml
         with open(NAV_GRAPH) as f:
             data = yaml.safe_load(f)
         levels   = data["levels"]
-        level    = next(iter(levels.values()))   # lấy level đầu tiên
+        level    = next(iter(levels.values()))   # use the first level
         vertices = level["vertices"]
 
         self._waypoints = []

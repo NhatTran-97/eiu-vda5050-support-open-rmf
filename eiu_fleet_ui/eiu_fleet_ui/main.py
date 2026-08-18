@@ -58,7 +58,7 @@ from .ros_bridge import RosBridge
 
 
 def main():
-    _suppress_rcutils_spam()   # must be before rclpy.init() inside RosBridge
+    _suppress_rcutils_spam()   
     qInstallMessageHandler(_qt_msg_handler)
     app = QApplication(sys.argv)
     app.setApplicationName("EIU Fleet UI")
@@ -73,8 +73,8 @@ def main():
     engine = QQmlApplicationEngine()
     ctx    = engine.rootContext()
     ctx.setContextProperty("C",       colors)
-    ctx.setContextProperty("mapProv", map_prov)  # bản đồ + waypoints
-    ctx.setContextProperty("mqtt",    mqtt)      # vị trí robot (MQTT)
+    ctx.setContextProperty("mapProv", map_prov)  # map image + waypoints
+    ctx.setContextProperty("mqtt",    mqtt)      # robot position (MQTT)
     ctx.setContextProperty("ros",     ros)       # fleet_states + dispatch (RMF)
 
     # ── Load QML ─────────────────────────────────────────────────────────────
@@ -90,13 +90,13 @@ def main():
     if not engine.rootObjects():
         sys.exit(-1)
 
-    # ── Khởi động backend sau khi QML load xong ──────────────────────────────
+    # ── Start backend services once QML has finished loading ─────────────────
     ros.set_waypoints(map_prov._waypoints)
     mqtt.connect_broker("localhost", 1883)
     ros.start()
-    app.aboutToQuit.connect(ros.shutdown)   # tắt rclpy gọn gàng khi thoát
+    app.aboutToQuit.connect(ros.shutdown)   # cleanly shut down rclpy on exit
 
-    # ── Tự chụp màn hình (debug): EIU_SHOT=/path.png → grab rồi thoát ─────────
+    # ── Auto screenshot (debug): EIU_SHOT=/path.png → grab then quit ─────────
     shot = os.environ.get("EIU_SHOT")
     if shot:
         delay = int(os.environ.get("EIU_SHOT_DELAY", "4000"))

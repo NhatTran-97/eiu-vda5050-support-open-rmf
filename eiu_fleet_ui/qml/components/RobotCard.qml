@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 
-// 1 card mô tả 1 robot. Dữ liệu truyền vào qua property (từ ros.robotsJson).
+// A card describing a single robot. Data is passed in via properties (from ros.robotsJson).
 Rectangle {
     id: card
 
@@ -19,7 +19,7 @@ Rectangle {
     border.color:     C.border
     border.width:     1
 
-    // Màu theo trạng thái robot
+    // Color based on the robot's status
     function statusColor(s) {
         if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME") return C.blue
         if (s === "CHARGING")                                        return C.accent
@@ -33,7 +33,7 @@ Rectangle {
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
         spacing: 8
 
-        // Header: chấm trạng thái + tên + fleet
+        // Header: status dot + name + fleet
         RowLayout {
             width: parent.width
             spacing: 8
@@ -50,7 +50,7 @@ Rectangle {
             Text { text: card.fleet; font.pixelSize: 11; color: C.textDim }
         }
 
-        // Bảng thông tin: Status / Level / Task
+        // Info grid: Status / Level / Task
         Grid {
             columns: 2; columnSpacing: 12; rowSpacing: 4
             width: parent.width
@@ -70,7 +70,7 @@ Rectangle {
             }
         }
 
-        // Thanh battery
+        // Battery bar
         RowLayout {
             width: parent.width; spacing: 8
             Text { text: "Battery"; font.pixelSize: 11; color: C.textDim

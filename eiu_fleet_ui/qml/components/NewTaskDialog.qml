@@ -2,11 +2,11 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Dialog "Create Task": chọn loại task + waypoint đích + số vòng → ros.dispatch()
+// "Create Task" dialog: pick a task category + destination waypoint + loop count -> ros.dispatch()
 Dialog {
     id: dlg
 
-    property var places: []      // danh sách tên waypoint (từ nav_graph)
+    property var places: []      // list of waypoint names (from nav_graph)
 
     modal: true
     width: 380
@@ -57,7 +57,7 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
-            Text { text: "Place Name  (waypoint đích)"; font.pixelSize: 11; color: C.textDim }
+            Text { text: "Place Name  (destination waypoint)"; font.pixelSize: 11; color: C.textDim }
             ComboBox {
                 id: placeCombo
                 Layout.fillWidth: true
