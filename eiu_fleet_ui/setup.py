@@ -29,6 +29,18 @@ setup(
             for dirpath, _, filenames in os.walk('icons')
             if filenames
         ],
+        *[
+            (os.path.join('share', package_name, dirpath),
+             [os.path.join(dirpath, f) for f in filenames])
+            for dirpath, _, filenames in os.walk('fonts')
+            if filenames
+        ],
+        *[
+            (os.path.join('share', package_name, dirpath),
+             [os.path.join(dirpath, f) for f in filenames])
+            for dirpath, _, filenames in os.walk('logo')
+            if filenames
+        ],
     ],
     install_requires=['setuptools'],
     zip_safe=True,

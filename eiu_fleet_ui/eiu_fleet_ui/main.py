@@ -3,9 +3,53 @@ import os
 import sys
 import threading
 from pathlib import Path
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtCore import QUrl, QTimer, qInstallMessageHandler, QtMsgType
+
+
+_FONT_FILES = (
+    "IBMPlexSans-Regular.ttf",
+    "IBMPlexSans-SemiBold.ttf",
+    "IBMPlexSans-Bold.ttf",
+    "IBMPlexMono-Regular.ttf",
+    "IBMPlexMono-SemiBold.ttf",
+    "IBMPlexMono-Bold.ttf",
+)
+
+
+def _resource_dir(name: str) -> Path:
+    """Resolve a bundled resource from source or an installed ROS package."""
+    source_dir = Path(__file__).resolve().parent.parent / name
+    if source_dir.exists():
+        return source_dir
+
+    from ament_index_python.packages import get_package_share_directory
+    return Path(get_package_share_directory("eiu_fleet_ui")) / name
+
+
+def _load_fonts(app: QApplication) -> tuple[str, str]:
+    """Register the bundled IBM Plex families before the QML engine starts."""
+    registered = []
+    font_dir = _resource_dir("fonts")
+
+    for filename in _FONT_FILES:
+        font_id = QFontDatabase.addApplicationFont(str(font_dir / filename))
+        if font_id < 0:
+            print(f"[UI] unable to load font: {filename}", file=sys.stderr)
+            continue
+        registered.extend(QFontDatabase.applicationFontFamilies(font_id))
+
+    sans = next((name for name in registered if name == "IBM Plex Sans"),
+                "IBM Plex Sans")
+    mono = next((name for name in registered if name == "IBM Plex Mono"),
+                "IBM Plex Mono")
+
+    app_font = QFont(sans)
+    app_font.setPointSizeF(10.0)
+    app.setFont(app_font)
+    return sans, mono
 
 
 def _qt_msg_handler(msg_type, _ctx, message):
@@ -52,48 +96,68 @@ def _suppress_rcutils_spam():
     threading.Thread(target=_run, daemon=True, name="stderr-filter").start()
 
 from .colors import Colors
+from .config import FleetSettings, load_fleet_config
 from .map_provider import MapProvider
 from .mqtt_client import MqttClient
 from .ros_bridge import RosBridge
 
 
 def main():
-    _suppress_rcutils_spam()   
+    # Opt-in only: this takes over fd 2 for the whole process and never gives it
+    # back, so it hides real errors as well as the rcutils blocks. Leave it off
+    # during bring-up; set EIU_FILTER_RCUTILS=1 once the log is understood.
+    if os.environ.get("EIU_FILTER_RCUTILS") == "1":
+        _suppress_rcutils_spam()
     qInstallMessageHandler(_qt_msg_handler)
     app = QApplication(sys.argv)
     app.setApplicationName("EIU Fleet UI")
+    logo_dir = _resource_dir("logo")
+    eiu_logo_path = logo_dir / "eiu_logo.png"
+    app.setWindowIcon(QIcon(str(eiu_logo_path)))
+    font_sans, font_mono = _load_fonts(app)
 
     # ── Backend objects ───────────────────────────────────────────────────────
+    # Broker address, VDA5050 identities and task categories all come from the
+    # adapter's config.yaml, so the UI never restates what the fleet already
+    # declares. See config.py for the resolution order.
+    fleet_cfg  = load_fleet_config()
+    print(f"[CFG] fleet '{fleet_cfg.fleet_name}' from {fleet_cfg.source}")
+
     colors     = Colors()
-    map_prov   = MapProvider()
-    mqtt       = MqttClient()
+    settings   = FleetSettings(fleet_cfg)
+    map_prov   = MapProvider(fleet_cfg)
+    mqtt       = MqttClient(fleet_cfg)
     ros        = RosBridge()
 
     # ── QML engine + context properties ──────────────────────────────────────
     engine = QQmlApplicationEngine()
     ctx    = engine.rootContext()
     ctx.setContextProperty("C",       colors)
+    ctx.setContextProperty("cfg",     settings)   # fleet identity + task categories
     ctx.setContextProperty("mapProv", map_prov)  # map image + waypoints
     ctx.setContextProperty("mqtt",    mqtt)      # robot position (MQTT)
     ctx.setContextProperty("ros",     ros)       # fleet_states + dispatch (RMF)
+    ctx.setContextProperty("fontSans", font_sans)
+    ctx.setContextProperty("fontMono", font_mono)
+    ctx.setContextProperty(
+        "robotIconUrl",
+        QUrl.fromLocalFile(str(logo_dir / "robot.png")),
+    )
+    ctx.setContextProperty("eiuLogoUrl", QUrl.fromLocalFile(str(eiu_logo_path)))
 
     # ── Load QML ─────────────────────────────────────────────────────────────
 
-    _src = Path(__file__).parent.parent / "qml" / "main.qml"
-    if _src.exists():
-        qml_file = _src
-    else:
-        from ament_index_python.packages import get_package_share_directory
-        qml_file = Path(get_package_share_directory("eiu_fleet_ui")) / "qml" / "main.qml"
+    qml_file = _resource_dir("qml") / "main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))
 
     if not engine.rootObjects():
         sys.exit(-1)
 
     # ── Start backend services once QML has finished loading ─────────────────
-    ros.set_waypoints(map_prov._waypoints)
-    mqtt.connect_broker("localhost", 1883)
+    ros.set_waypoints(map_prov.waypoints())
+    mqtt.connect_broker()
     ros.start()
+    app.aboutToQuit.connect(mqtt.disconnect_broker)
     app.aboutToQuit.connect(ros.shutdown)   # cleanly shut down rclpy on exit
 
     # ── Auto screenshot (debug): EIU_SHOT=/path.png → grab then quit ─────────

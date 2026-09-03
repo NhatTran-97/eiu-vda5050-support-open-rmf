@@ -9,23 +9,32 @@ Dialog {
     property var places: []      // list of waypoint names (from nav_graph)
 
     modal: true
-    width: 380
+    width: 420
     padding: 0
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     background: Rectangle {
-        color: C.surface; radius: 12
+        color: C.surface; radius: 16
         border.color: C.border; border.width: 1
     }
 
     contentItem: ColumnLayout {
-        spacing: 14
+        spacing: 15
 
         Text {
             Layout.fillWidth: true
             Layout.topMargin: 18; Layout.leftMargin: 18; Layout.rightMargin: 18
-            text: "Create Task"
+            text: "CREATE NEW MISSION"
             font.pixelSize: 16; font.bold: true; color: C.text
+            font.letterSpacing: 1.0
+            horizontalAlignment: Text.AlignHCenter
+        }
+
+        Text {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            text: "Dispatch a patrol task to the Open-RMF fleet"
+            font.pixelSize: 10; color: C.textDim
             horizontalAlignment: Text.AlignHCenter
         }
 
@@ -34,11 +43,11 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
-            Text { text: "Task Category"; font.pixelSize: 11; color: C.textDim }
+            Text { text: "TASK CATEGORY"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
             ComboBox {
                 id: catCombo
                 Layout.fillWidth: true
-                model: ["patrol"]
+                model: cfg.taskCategories
                 font.pixelSize: 13
                 contentItem: Text {
                     text: catCombo.displayText; color: C.text; font: catCombo.font
@@ -46,7 +55,7 @@ Dialog {
                     verticalAlignment: Text.AlignVCenter
                 }
                 background: Rectangle {
-                    implicitHeight: 38; radius: 8
+                    implicitHeight: 42; radius: 10
                     color: C.surfaceAlt; border.color: C.border; border.width: 1
                 }
             }
@@ -57,7 +66,7 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
-            Text { text: "Place Name  (destination waypoint)"; font.pixelSize: 11; color: C.textDim }
+            Text { text: "DESTINATION WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
             ComboBox {
                 id: placeCombo
                 Layout.fillWidth: true
@@ -69,7 +78,7 @@ Dialog {
                     verticalAlignment: Text.AlignVCenter
                 }
                 background: Rectangle {
-                    implicitHeight: 38; radius: 8
+                    implicitHeight: 42; radius: 10
                     color: C.surfaceAlt; border.color: C.border; border.width: 1
                 }
             }
@@ -80,7 +89,7 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 12
-            Text { text: "Loops"; font.pixelSize: 11; color: C.textDim
+            Text { text: "PATROL LOOPS"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim
                    Layout.alignment: Qt.AlignVCenter }
             SpinBox {
                 id: loopsSpin
@@ -97,7 +106,7 @@ Dialog {
                     inputMethodHints: Qt.ImhFormattedNumbersOnly
                 }
                 background: Rectangle {
-                    implicitWidth: 100; implicitHeight: 38; radius: 8
+                    implicitWidth: 100; implicitHeight: 42; radius: 10
                     color: C.surfaceAlt; border.color: C.border; border.width: 1
                 }
             }
@@ -113,7 +122,7 @@ Dialog {
 
             Button {
                 id: cancelBtn
-                text: "Cancel"
+                text: "CANCEL"
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 contentItem: Text {
                     text: cancelBtn.text; color: C.text; font.pixelSize: 13
@@ -121,7 +130,7 @@ Dialog {
                     horizontalAlignment: Text.AlignHCenter
                 }
                 background: Rectangle {
-                    radius: 8; color: cancelBtn.down ? C.border : C.surfaceAlt
+                    radius: 10; color: cancelBtn.down ? C.border : C.surfaceAlt
                     border.color: C.border; border.width: 1
                 }
                 onClicked: dlg.close()
@@ -129,7 +138,7 @@ Dialog {
 
             Button {
                 id: submitBtn
-                text: "Submit"
+                text: "DISPATCH TASK"
                 enabled: placeCombo.currentText !== ""
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 contentItem: Text {
@@ -138,7 +147,7 @@ Dialog {
                     horizontalAlignment: Text.AlignHCenter
                 }
                 background: Rectangle {
-                    radius: 8
+                    radius: 10
                     color: !submitBtn.enabled ? C.border
                           : (submitBtn.down ? C.accentDark : C.accent)
                 }

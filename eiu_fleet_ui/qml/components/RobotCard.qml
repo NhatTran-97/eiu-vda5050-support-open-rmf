@@ -22,7 +22,7 @@ Rectangle {
     // Color based on the robot's status
     function statusColor(s) {
         if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME") return C.blue
-        if (s === "CHARGING")                                        return C.accent
+        if (s === "CHARGING")                                        return C.success
         if (s === "EMERGENCY" || s === "ERROR")                      return C.err
         if (s === "PAUSED" || s === "WAITING")                       return C.warn
         return C.textDim   // IDLE / unknown
@@ -81,7 +81,7 @@ Rectangle {
                 Rectangle {
                     width:  parent.width * Math.max(0, Math.min(1, card.battery / 100))
                     height: parent.height; radius: 4
-                    color:  card.battery < 20 ? C.err : C.accent
+                    color:  card.battery < 20 ? C.err : C.success
                 }
             }
             Text { text: card.battery.toFixed(0) + "%"; font.pixelSize: 11; color: C.text }

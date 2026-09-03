@@ -6,52 +6,82 @@ import "components"
 ApplicationWindow {
     id: root
     visible: true
-    width: 1280
-    height: 800
-    minimumWidth: 1000
-    minimumHeight: 640
-    title: "EIU Fleet Management UI"
+    width: 1440
+    height: 900
+    minimumWidth: 1120
+    minimumHeight: 700
+    title: "EIU Fleet Control Center"
     color: C.bg
 
     property var waypoints: []
-    property var wpNames:   []
-    property var robots:    []
-    property var tasks:     []
+    property var wpNames: []
+    property var lanes: []
+    property var robots: []
+    property var tasks: []
+    // {robot_name: bool} — direct VDA5050 connectivity, distinct from rmfOnline
+    // (which only says the /fleet_states pipe is alive, not any one robot).
+    property var robotsOnline: ({})
+    readonly property string monoFontFamily: fontMono
 
+    readonly property int activeTaskCount: {
+        var count = 0
+        for (var i = 0; i < tasks.length; ++i) {
+            if (tasks[i].state === "queued" || tasks[i].state === "underway")
+                count++
+        }
+        return count
+    }
+
+    readonly property real averageBattery: {
+        if (robots.length === 0)
+            return 0
+        var total = 0
+        for (var i = 0; i < robots.length; ++i)
+            total += Number(robots[i].battery || 0)
+        return total / robots.length
+    }
+    readonly property real kpiHeight: Math.max(116, Math.min(142, width / 15))
     function reloadRobots() { root.robots = JSON.parse(ros.robotsJson) }
-    function reloadTasks()  { root.tasks  = JSON.parse(ros.tasksJson) }
+    function reloadTasks()  { root.tasks = JSON.parse(ros.tasksJson) }
+    function reloadRobotsOnline() { root.robotsOnline = JSON.parse(mqtt.robotsOnlineJson) }
 
-    // Color based on the robot's status (Status column)
-    function statusColor(s) {
-        if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME" || s === "WORKING") return C.blue
-        if (s === "CHARGING")                                        return C.accent
-        if (s === "EMERGENCY" || s === "ERROR")                      return C.err
-        if (s === "PAUSED" || s === "WAITING")                       return C.warn
+    function statusColor(status) {
+        if (status === "CHARGING")
+            return C.success
+        if (status === "MOVING" || status === "DOCKING" ||
+                status === "GOING_HOME" || status === "WORKING")
+            return C.cyan
+        if (status === "EMERGENCY" || status === "ERROR")
+            return C.err
+        if (status === "PAUSED" || status === "WAITING")
+            return C.warn
         return C.textDim
     }
 
-    // Color based on the task's state (State column)
-    function taskColor(s) {
-        if (s === "completed")                         return C.accent
-        if (s === "failed" || s === "cancelled")       return C.err
-        if (s === "queued")                            return C.warn
-        if (s === "underway")                          return C.blue
-        // fallback for states matching a keyword
-        if (s.indexOf("complet") >= 0)                return C.accent
-        if (s.indexOf("fail") >= 0 || s.indexOf("cancel") >= 0) return C.err
-        if (s.indexOf("queue") >= 0 || s.indexOf("stale") >= 0) return C.warn
-        return C.blue
+    function taskColor(state) {
+        if (state === "completed" || state.indexOf("complet") >= 0)
+            return C.success
+        if (state === "failed" || state === "cancelled" ||
+                state.indexOf("fail") >= 0 || state.indexOf("cancel") >= 0)
+            return C.err
+        if (state === "queued" || state.indexOf("queue") >= 0 || state.indexOf("stale") >= 0)
+            return C.warn
+        return C.cyan
     }
 
     Component.onCompleted: {
         var wps = JSON.parse(mapProv.wpJson)
         root.waypoints = wps
+        root.lanes = JSON.parse(mapProv.lanesJson)
         var names = []
-        for (var i = 0; i < wps.length; ++i)
-            if (wps[i].name && wps[i].name.length > 0) names.push(wps[i].name)
+        for (var i = 0; i < wps.length; ++i) {
+            if (wps[i].name && wps[i].name.length > 0)
+                names.push(wps[i].name)
+        }
         root.wpNames = names
         reloadRobots()
         reloadTasks()
+        reloadRobotsOnline()
     }
 
     Connections {
@@ -60,298 +90,994 @@ ApplicationWindow {
         function onTasksChanged()  { root.reloadTasks() }
     }
 
+    Connections {
+        target: mqtt
+        function onOnlineChanged() { root.reloadRobotsOnline() }
+    }
+
     NewTaskDialog {
         id: taskDialog
         places: root.wpNames
         anchors.centerIn: parent
     }
 
-    ColumnLayout {
+    RowLayout {
         anchors.fill: parent
         spacing: 0
 
-        // ── Top bar ──────────────────────────────────────────────────────────
+        // ── Navigation rail ──────────────────────────────────────────────────
         Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 56
-            color: C.surface
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.leftMargin: 16
-                anchors.rightMargin: 16
-                spacing: 12
-
-                Image {
-                    source: "../icons/eiu.png"
-                    Layout.preferredHeight: 22
-                    Layout.preferredWidth:  77
-                    fillMode: Image.PreserveAspectFit
-                    smooth: true
-                }
-                Text {
-                    text: "Fleet Management"
-                    font.pixelSize: 15; font.bold: true; color: C.text
-                }
-
-                Item { Layout.fillWidth: true }
-
-                Row {
-                    spacing: 6
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        color: ros.rmfOnline ? C.accent : C.err
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        text: ros.rmfOnline ? "RMF online" : "RMF offline"
-                        font.pixelSize: 11; color: C.textDim
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                }
-                Row {
-                    spacing: 6
-                    Rectangle {
-                        width: 8; height: 8; radius: 4
-                        color: mqtt.connected ? C.accent : C.err
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        text: mqtt.connected ? "Broker online" : "Broker offline"
-                        font.pixelSize: 11; color: C.textDim
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                }
-
-                Button {
-                    id: newTaskBtn
-                    text: "+ New Task"
-                    Layout.leftMargin: 8
-                    implicitHeight: 36
-                    leftPadding: 14; rightPadding: 14
-                    contentItem: Text {
-                        text: newTaskBtn.text; color: "#ffffff"
-                        font.pixelSize: 13; font.bold: true
-                        verticalAlignment: Text.AlignVCenter
-                        horizontalAlignment: Text.AlignHCenter
-                    }
-                    background: Rectangle {
-                        radius: 8; color: newTaskBtn.down ? C.accentDark : C.accent
-                    }
-                    onClicked: taskDialog.open()
-                }
-            }
-        }
-
-        // ── Content: robot+task cards on the left (4), map on the right (6) ───
-        Item {
-            id: contentArea
-            Layout.fillWidth: true
+            Layout.preferredWidth: 218
             Layout.fillHeight: true
+            color: "#081726"
 
-            // ════════════ LEFT (4 parts) ════════════
+            Rectangle {
+                anchors.right: parent.right
+                width: 1
+                height: parent.height
+                color: C.border
+                opacity: 0.65
+            }
+
             ColumnLayout {
-                id: leftPanel
-                anchors.left:   parent.left
-                anchors.top:    parent.top
-                anchors.bottom: parent.bottom
-                anchors.margins: 12
-                width: (parent.width - 36) * 0.5
-                spacing: 10
+                anchors.fill: parent
+                spacing: 0
 
-                // ── Card ROBOT ──
-                Rectangle {
+                Item {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.preferredHeight: 100
-                    radius: 10; color: C.surface
-                    border.color: C.border; border.width: 1
-                    clip: true
+                    Layout.preferredHeight: 82
 
-                    Column {
+                    RowLayout {
                         anchors.fill: parent
+                        anchors.leftMargin: 22
+                        anchors.rightMargin: 16
+                        spacing: 11
 
-                        // accent-colored title bar
                         Rectangle {
-                            width: parent.width; height: 34; color: C.accent
+                            Layout.preferredWidth: 42
+                            Layout.preferredHeight: 42
+                            radius: 12
+                            color: C.accent
+
                             Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                leftPadding: 12
-                                text: "Active Robots  (" + root.robots.length + ")"
-                                font.pixelSize: 13; font.bold: true; color: "#ffffff"
+                                anchors.centerIn: parent
+                                text: "E"
+                                color: "white"
+                                font.pixelSize: 21
+                                font.bold: true
                             }
                         }
-                        // column header
+
+                        ColumnLayout {
+                            spacing: 0
+                            Text {
+                                text: "EIU FLEET"
+                                color: C.text
+                                font.pixelSize: 15
+                                font.bold: true
+                                font.letterSpacing: 0.8
+                            }
+                            Text {
+                                text: "CONTROL OS"
+                                color: C.accent
+                                font.pixelSize: 9
+                                font.bold: true
+                                font.letterSpacing: 1.7
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    Layout.leftMargin: 22
+                    Layout.topMargin: 14
+                    Layout.bottomMargin: 10
+                    text: "WORKSPACE"
+                    color: C.textDim
+                    opacity: 0.65
+                    font.pixelSize: 9
+                    font.bold: true
+                    font.letterSpacing: 1.8
+                }
+
+                Repeater {
+                    model: [
+                        { "label": "Dashboard", "glyph": "▦", "active": true },
+                        { "label": "Navigation", "glyph": "⌖", "active": false },
+                        { "label": "Robots", "glyph": "◎", "active": false },
+                        { "label": "Tasks", "glyph": "✓", "active": false },
+                        { "label": "System", "glyph": "⚙", "active": false }
+                    ]
+
+                    delegate: Item {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 48
+
                         Rectangle {
-                            width: parent.width; height: 28; color: C.surfaceAlt
-                            Row {
-                                width: parent.width
+                            anchors.fill: parent
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 12
+                            anchors.topMargin: 3
+                            anchors.bottomMargin: 3
+                            radius: 10
+                            color: modelData.active ? C.accent : "transparent"
+
+                            Rectangle {
+                                visible: modelData.active
+                                anchors.left: parent.left
                                 anchors.verticalCenter: parent.verticalCenter
-                                Text { width: parent.width*0.16; leftPadding: 10; elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Name" }
-                                Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Fleet" }
-                                Text { width: parent.width*0.17; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Finish" }
-                                Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Level" }
-                                Text { width: parent.width*0.13; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Battery" }
-                                Text { width: parent.width*0.16; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Updated" }
-                                Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Status" }
+                                width: 3
+                                height: 22
+                                radius: 2
+                                color: "#9AC4FF"
                             }
-                        }
-                        // rows
-                        ListView {
-                            width: parent.width; height: parent.height - 34 - 28
-                            clip: true; model: root.robots
-                            boundsBehavior: Flickable.StopAtBounds
-                            delegate: Rectangle {
-                                width: ListView.view.width; height: 32
-                                color: index % 2 === 1 ? C.surfaceAlt : "transparent"
-                                Row {
-                                    width: parent.width
+
+                            Row {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 15
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 13
+
+                                Text {
+                                    width: 22
+                                    text: modelData.glyph
+                                    color: modelData.active ? "white" : C.textDim
+                                    font.pixelSize: 18
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+                                Text {
                                     anchors.verticalCenter: parent.verticalCenter
-                                    Text { width: parent.width*0.16; leftPadding: 10; elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.text;    text: modelData.name }
-                                    Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.fleet }
-                                    Text { width: parent.width*0.17; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: (modelData.finish && modelData.finish.length) ? modelData.finish : "—" }
-                                    Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.level }
-                                    Text { width: parent.width*0.13; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.battery.toFixed(0) + "%" }
-                                    Text { width: parent.width*0.16; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.updated }
-                                    Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: root.statusColor(modelData.status); text: modelData.status }
+                                    text: modelData.label
+                                    color: modelData.active ? "white" : C.textDim
+                                    font.pixelSize: 13
+                                    font.bold: modelData.active
                                 }
                             }
                         }
                     }
-                    Text {
-                        anchors.centerIn: parent; visible: root.robots.length === 0
-                        width: parent.width - 24
-                        horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
-                        text: ros.rmfOnline ? "No robots in the fleet yet" : "Waiting for RMF (/fleet_states)…"
-                        font.pixelSize: 12; color: C.textDim
-                    }
                 }
 
-                // ── Card TASK ──
+                Item { Layout.fillHeight: true }
+
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.preferredHeight: 100
-                    radius: 10; color: C.surface
-                    border.color: C.border; border.width: 1
-                    clip: true
+                    Layout.preferredHeight: 98
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.bottomMargin: 18
+                    radius: 13
+                    color: C.surface
+                    border.color: C.border
+                    border.width: 1
 
                     Column {
                         anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 8
 
-                        Rectangle {
-                            width: parent.width; height: 34; color: C.accent
+                        Text {
+                            text: "SYSTEM HEALTH"
+                            color: C.textDim
+                            font.pixelSize: 9
+                            font.bold: true
+                            font.letterSpacing: 1.2
+                        }
+                        Row {
+                            spacing: 8
+                            Rectangle {
+                                width: 8
+                                height: 8
+                                radius: 4
+                                color: ros.rmfOnline ? C.success : C.err
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
                             Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                leftPadding: 12
-                                text: "Tasks  (" + root.tasks.length + ")"
-                                font.pixelSize: 13; font.bold: true; color: "#ffffff"
+                                text: ros.rmfOnline ? "All services nominal" : "RMF connection offline"
+                                color: ros.rmfOnline ? C.success : C.err
+                                font.pixelSize: 11
                             }
                         }
+                        Text {
+                            text: "Fleet UI  ·  v0.2.0"
+                            color: C.textDim
+                            opacity: 0.7
+                            font.family: root.monoFontFamily
+                            font.pixelSize: 10
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Dashboard ────────────────────────────────────────────────────────
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 82
+                color: "#091827"
+
+                Rectangle {
+                    anchors.bottom: parent.bottom
+                    width: parent.width
+                    height: 1
+                    color: C.border
+                    opacity: 0.55
+                }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 24
+                    anchors.rightMargin: 24
+                    spacing: 12
+
+                    Image {
+                        Layout.preferredWidth: 92
+                        Layout.preferredHeight: 32
+                        source: eiuLogoUrl
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
+                        asynchronous: true
+                    }
+
+                    ColumnLayout {
+                        spacing: 2
+                        Text {
+                            text: "Fleet Command Center"
+                            color: C.text
+                            font.pixelSize: 22
+                            font.bold: true
+                        }
+                        Text {
+                            text: "Live operations overview"
+                            color: C.textDim
+                            font.pixelSize: 12
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Rectangle {
+                        Layout.preferredWidth: 118
+                        Layout.preferredHeight: 34
+                        radius: 17
+                        color: C.surface
+                        border.color: ros.rmfOnline ? "#286A60" : "#673044"
+                        border.width: 1
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 7
+                            Rectangle {
+                                width: 7
+                                height: 7
+                                radius: 4
+                                color: ros.rmfOnline ? C.success : C.err
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: ros.rmfOnline ? "RMF ONLINE" : "RMF OFFLINE"
+                                color: C.text
+                                font.family: root.monoFontFamily
+                                font.pixelSize: 10
+                                font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.preferredWidth: 128
+                        Layout.preferredHeight: 34
+                        radius: 17
+                        color: C.surface
+                        border.color: mqtt.connected ? "#286A60" : "#673044"
+                        border.width: 1
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 7
+                            Rectangle {
+                                width: 7
+                                height: 7
+                                radius: 4
+                                color: mqtt.connected ? C.success : C.err
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: mqtt.connected ? "MQTT ONLINE" : "MQTT OFFLINE"
+                                color: C.text
+                                font.family: root.monoFontFamily
+                                font.pixelSize: 10
+                                font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+
+                    Button {
+                        id: newTaskButton
+                        text: "+  NEW TASK"
+                        Layout.preferredHeight: 38
+                        leftPadding: 17
+                        rightPadding: 17
+                        contentItem: Text {
+                            text: newTaskButton.text
+                            color: "white"
+                            font.pixelSize: 11
+                            font.bold: true
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 10
+                            color: newTaskButton.down ? C.accentDark : C.accent
+                            border.color: "#5A9BFF"
+                            border.width: 1
+                        }
+                        onClicked: taskDialog.open()
+                    }
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 20
+                    spacing: 16
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: root.kpiHeight
+                        Layout.minimumHeight: root.kpiHeight
+                        Layout.maximumHeight: root.kpiHeight
+                        spacing: 14
+
+                        MetricCard {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.minimumWidth: 210
+                            title: "System status"
+                            value: ros.rmfOnline ? "ACTIVE" : "OFFLINE"
+                            valueFontFamily: root.monoFontFamily
+                            detail: ros.rmfOnline ? "Open-RMF is responding" : "Waiting for fleet states"
+                            iconText: "●"
+                            accentColor: ros.rmfOnline ? C.success : C.err
+                        }
+                        MetricCard {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.minimumWidth: 210
+                            title: "Fleet"
+                            value: root.robots.length + (root.robots.length === 1 ? " robot" : " robots")
+                            valueFontFamily: root.monoFontFamily
+                            detail: root.robots.length > 0 ? "Reporting live telemetry" : "No robots discovered"
+                            iconText: "R"
+                            accentColor: C.cyan
+                        }
+                        MetricCard {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.minimumWidth: 210
+                            title: "Average battery"
+                            value: root.robots.length > 0 ? root.averageBattery.toFixed(0) + "%" : "—"
+                            valueFontFamily: root.monoFontFamily
+                            detail: root.robots.length > 0 ? "Across the active fleet" : "Waiting for telemetry"
+                            iconText: "ϟ"
+                            accentColor: root.averageBattery > 20 ? C.success : C.warn
+                        }
+                        MetricCard {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            Layout.minimumWidth: 210
+                            title: "Active tasks"
+                            value: root.activeTaskCount.toString()
+                            valueFontFamily: root.monoFontFamily
+                            detail: root.tasks.length + " total task records"
+                            iconText: "✓"
+                            accentColor: C.accent
+                        }
+                    }
+
+                    SplitView {
+                        id: dashboardSplit
+                        objectName: "dashboardSplit"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        orientation: Qt.Horizontal
+
+                        handle: Rectangle {
+                            implicitWidth: 16
+                            color: SplitHandle.pressed
+                                   ? Qt.rgba(0.12, 0.47, 1.0, 0.12)
+                                   : "transparent"
+
+                            HoverHandler { cursorShape: Qt.SplitHCursor }
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: SplitHandle.pressed ? 4 : 2
+                                height: 64
+                                radius: 2
+                                color: SplitHandle.hovered || SplitHandle.pressed
+                                       ? C.accent : C.border
+
+                                Behavior on width {
+                                    NumberAnimation { duration: 100 }
+                                }
+                                Behavior on color {
+                                    ColorAnimation { duration: 120 }
+                                }
+                            }
+                        }
+
+                        // ── Main map card ────────────────────────────────────
                         Rectangle {
-                            width: parent.width; height: 28; color: C.surfaceAlt
-                            Row {
-                                width: parent.width
-                                anchors.verticalCenter: parent.verticalCenter
-                                Text { width: parent.width*0.12; leftPadding: 10; elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Date" }
-                                Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Req." }
-                                Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Pickup" }
-                                Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Dest." }
-                                Text { width: parent.width*0.13; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Robot" }
-                                Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "Start" }
-                                Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "End" }
-                                Text { width: parent.width*0.12; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "State" }
-                                Text { width: parent.width*0.07; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: C.textDim; text: "" }
-                            }
-                        }
-                        ListView {
-                            width: parent.width; height: parent.height - 34 - 28
-                            clip: true; model: root.tasks
-                            boundsBehavior: Flickable.StopAtBounds
-                            delegate: Rectangle {
-                                width: ListView.view.width; height: 32
-                                color: index % 2 === 1 ? C.surfaceAlt : "transparent"
-                                Row {
-                                    width: parent.width
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    Text { width: parent.width*0.12; leftPadding: 10; elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.date }
-                                    Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.requester }
-                                    Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.pickup }
-                                    Text { width: parent.width*0.14; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.destination }
-                                    Text { width: parent.width*0.13; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.text;    text: modelData.robot }
-                                    Text { width: parent.width*0.11; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.start }
-                                    Text { width: parent.width*0.10; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; color: C.textDim; text: modelData.end }
-                                    Text { width: parent.width*0.12; leftPadding: 6;  elide: Text.ElideRight; font.pixelSize: 11; font.bold: true; color: root.taskColor(modelData.state); text: modelData.state }
-                                    Item {
-                                        width: parent.width*0.07; height: 32
-                                        visible: modelData.state === "queued" || modelData.state === "underway"
+                            id: mapPanel
+                            objectName: "mapPanel"
+                            SplitView.fillWidth: true
+                            SplitView.minimumWidth: 500
+                            radius: 16
+                            color: C.surface
+                            border.color: C.border
+                            border.width: 1
+                            clip: true
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                spacing: 0
+
+                                Item {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 54
+
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 18
+                                        anchors.rightMargin: 18
+                                        spacing: 12
+
+                                        Rectangle {
+                                            Layout.preferredWidth: 4
+                                            Layout.preferredHeight: 22
+                                            radius: 2
+                                            color: C.accent
+                                        }
+                                        Text {
+                                            text: "LIVE NAVIGATION MAP"
+                                            color: C.text
+                                            font.pixelSize: 13
+                                            font.bold: true
+                                            font.letterSpacing: 0.8
+                                        }
+                                        Item { Layout.fillWidth: true }
+                                        Row {
+                                            spacing: 12
+                                            Row {
+                                                spacing: 5
+                                                Rectangle { width: 7; height: 7; radius: 4; color: C.accent; anchors.verticalCenter: parent.verticalCenter }
+                                                Text { text: "Lanes"; color: C.textDim; font.pixelSize: 10 }
+                                            }
+                                            Row {
+                                                spacing: 5
+                                                Rectangle { width: 7; height: 7; radius: 4; color: C.success; anchors.verticalCenter: parent.verticalCenter }
+                                                Text { text: "Route"; color: C.textDim; font.pixelSize: 10 }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    color: C.border
+                                    opacity: 0.7
+                                }
+
+                                SplitView {
+                                    id: mapAnalyticsSplit
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    orientation: Qt.Vertical
+
+                                    // Fit the map region to the occupancy image's real
+                                    // aspect ratio. The remaining height belongs to the
+                                    // analytics region, so no fixed 50/50-style ratio is
+                                    // needed when the window or SplitView width changes.
+                                    readonly property real naturalMapHeight: {
+                                        if (mapProv.pixelW <= 0 || mapProv.pixelH <= 0)
+                                            return 0
+                                        var frameInsets = 36  // Loader + MapPage image margins
+                                        var contentWidth = Math.max(1, width - frameInsets)
+                                        return frameInsets + contentWidth
+                                               * mapProv.pixelH / mapProv.pixelW
+                                    }
+
+                                    handle: Rectangle {
+                                        implicitHeight: 12
+                                        color: SplitHandle.pressed
+                                               ? Qt.rgba(0.12, 0.47, 1.0, 0.10)
+                                               : "transparent"
+
+                                        HoverHandler { cursorShape: Qt.SplitVCursor }
+
                                         Rectangle {
                                             anchors.centerIn: parent
-                                            width: 22; height: 22; radius: 4
-                                            color: cancelMa.containsMouse ? "#c0392b" : "transparent"
-                                            border.color: cancelMa.containsMouse ? "#c0392b" : C.err
-                                            border.width: 1
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: "✕"
-                                                font.pixelSize: 11; font.bold: true
-                                                color: C.err
+                                            width: 64
+                                            height: SplitHandle.pressed ? 4 : 2
+                                            radius: 2
+                                            color: SplitHandle.hovered || SplitHandle.pressed
+                                                   ? C.accent : C.border
+
+                                            Behavior on height {
+                                                NumberAnimation { duration: 100 }
                                             }
-                                            MouseArea {
-                                                id: cancelMa
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: {
-                                                    if (modelData.rmf_id && modelData.rmf_id.length > 0)
-                                                        ros.cancel_task(modelData.rmf_id)
+                                            Behavior on color {
+                                                ColorAnimation { duration: 120 }
+                                            }
+                                        }
+                                    }
+
+                                    Item {
+                                        SplitView.preferredHeight: mapAnalyticsSplit.naturalMapHeight
+                                        SplitView.minimumHeight: 160
+
+                                        Loader {
+                                            id: mapLoader
+                                            anchors.fill: parent
+                                            anchors.margins: 10
+                                            source: Qt.resolvedUrl("pages/MapPage.qml")
+                                        }
+                                    }
+
+                                    Item {
+                                        SplitView.fillHeight: true
+                                        SplitView.minimumHeight: 205
+
+                                        FleetAnalytics {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 10
+                                            anchors.rightMargin: 10
+                                            anchors.bottomMargin: 10
+                                            robots: root.robots
+                                            tasks: root.tasks
+                                            robotsOnline: root.robotsOnline
+                                            waypoints: root.waypoints
+                                        }
+                                    }
+                                }
+                            }
+
+                            Binding {
+                                target: mapLoader.item
+                                property: "waypoints"
+                                value: root.waypoints
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
+                                property: "edges"
+                                value: root.lanes
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
+                                property: "mapRobots"
+                                value: root.robots
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
+                                property: "plannedDest"
+                                value: ros.plannedDest
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
+                                property: "robotIconSource"
+                                value: robotIconUrl
+                                when: mapLoader.status === Loader.Ready
+                            }
+                        }
+
+                        // ── Live fleet panels ────────────────────────────────
+                        ColumnLayout {
+                            id: fleetPanel
+                            objectName: "fleetPanel"
+                            SplitView.preferredWidth: 720
+                            SplitView.minimumWidth: 640
+                            SplitView.maximumWidth: 900
+                            spacing: 16
+
+                            // Typography follows the width of this panel so it remains
+                            // comfortably readable on large control-room displays.
+                            readonly property real contentScale: Math.max(
+                                1.0, Math.min(1.25, width / 720))
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.preferredHeight: 260
+                                radius: 16
+                                color: C.surface
+                                border.color: C.border
+                                border.width: 1
+                                clip: true
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 0
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 52 * fleetPanel.contentScale
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 17
+                                            anchors.rightMargin: 17
+                                            Text {
+                                                text: "ACTIVE ROBOTS"
+                                                color: C.text
+                                                font.pixelSize: 13 * fleetPanel.contentScale
+                                                font.bold: true
+                                                font.letterSpacing: 0.8
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                Layout.preferredWidth: 30 * fleetPanel.contentScale
+                                                Layout.preferredHeight: 25 * fleetPanel.contentScale
+                                                radius: 8
+                                                color: "#17365A"
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: root.robots.length
+                                                    color: C.cyan
+                                                    font.family: root.monoFontFamily
+                                                    font.pixelSize: 11 * fleetPanel.contentScale
+                                                    font.bold: true
                                                 }
                                             }
+                                        }
+                                    }
+
+                                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: C.border; opacity: 0.65 }
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+
+                                        ListView {
+                                            anchors.fill: parent
+                                            anchors.margins: 8
+                                            model: root.robots
+                                            clip: true
+                                            spacing: 3
+                                            boundsBehavior: Flickable.StopAtBounds
+
+                                            delegate: Rectangle {
+                                                width: ListView.view.width
+                                                height: 74 * fleetPanel.contentScale
+                                                radius: 10
+                                                color: index % 2 === 0 ? C.surfaceAlt : "transparent"
+
+                                                RowLayout {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 10
+                                                    anchors.rightMargin: 10
+                                                    spacing: 10
+
+                                                    Rectangle {
+                                                        Layout.preferredWidth: 42 * fleetPanel.contentScale
+                                                        Layout.preferredHeight: 42 * fleetPanel.contentScale
+                                                        radius: 12 * fleetPanel.contentScale
+                                                        color: "#153B65"
+                                                        border.color: "#285B8C"
+                                                        Text {
+                                                            anchors.centerIn: parent
+                                                            text: modelData.name && modelData.name.length ? modelData.name.charAt(0).toUpperCase() : "R"
+                                                            color: C.cyan
+                                                            font.pixelSize: 17 * fleetPanel.contentScale
+                                                            font.bold: true
+                                                        }
+                                                        // VDA5050 connectivity dot, straight from the robot's own
+                                                        // `connection` topic — not inferred from /fleet_states age.
+                                                        Rectangle {
+                                                            width: 10 * fleetPanel.contentScale
+                                                            height: width
+                                                            radius: width / 2
+                                                            anchors.right: parent.right
+                                                            anchors.bottom: parent.bottom
+                                                            anchors.margins: -1
+                                                            color: root.robotsOnline[modelData.name] ? C.success : C.err
+                                                            border.width: 1.5
+                                                            border.color: C.surface
+                                                        }
+                                                    }
+                                                    ColumnLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 3
+                                                        Text { text: modelData.name; color: C.text; font.pixelSize: 18 * fleetPanel.contentScale; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                                        Text {
+                                                            text: modelData.fleet + "  ·  " + modelData.level
+                                                                  + (root.robotsOnline[modelData.name] ? "" : "  ·  VDA5050 offline")
+                                                            color: root.robotsOnline[modelData.name] ? C.textDim : C.err
+                                                            font.family: root.monoFontFamily
+                                                            font.pixelSize: 13 * fleetPanel.contentScale
+                                                            elide: Text.ElideRight; Layout.fillWidth: true
+                                                        }
+                                                    }
+                                                    Text {
+                                                        text: Number(modelData.battery).toFixed(0) + "%"
+                                                        color: Number(modelData.battery) < 20 ? C.err : C.success
+                                                        font.family: root.monoFontFamily
+                                                        font.pixelSize: 16 * fleetPanel.contentScale
+                                                        font.bold: true
+                                                    }
+                                                    Rectangle {
+                                                        Layout.preferredWidth: 102 * fleetPanel.contentScale
+                                                        Layout.preferredHeight: 34 * fleetPanel.contentScale
+                                                        radius: 10 * fleetPanel.contentScale
+                                                        color: "transparent"
+                                                        border.color: root.statusColor(modelData.status)
+                                                        border.width: 1
+                                                        Text {
+                                                            anchors.centerIn: parent
+                                                            text: modelData.status
+                                                            color: root.statusColor(modelData.status)
+                                                            font.family: root.monoFontFamily
+                                                            font.pixelSize: 12 * fleetPanel.contentScale
+                                                            font.bold: true
+                                                            elide: Text.ElideRight
+                                                            width: parent.width - 8
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: root.robots.length === 0
+                                            text: ros.rmfOnline ? "No robots in this fleet" : "Waiting for /fleet_states"
+                                            color: C.textDim
+                                            font.pixelSize: 13 * fleetPanel.contentScale
+                                        }
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                id: recentTasksPanel
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                Layout.preferredHeight: 300
+                                radius: 16
+                                color: C.surface
+                                border.color: C.border
+                                border.width: 1
+                                clip: true
+
+                                // Scale from the space actually available to the table,
+                                // not from the whole window. This keeps every column
+                                // readable after the SplitView handle is dragged.
+                                readonly property real tableScale: Math.max(
+                                    1.0, Math.min(1.40, width / 680))
+                                readonly property real dateColumnWidth: 78 * tableScale
+                                readonly property real requesterColumnWidth: 86 * tableScale
+                                readonly property real pickupColumnWidth: 42 * tableScale
+                                readonly property real robotColumnWidth: 48 * tableScale
+                                readonly property real timeColumnWidth: 74 * tableScale
+                                readonly property real stateColumnWidth: 78 * tableScale
+                                readonly property real actionColumnWidth: 26
+                                readonly property real identityColumnGap: 8 * tableScale
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 0
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 52
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 17
+                                            anchors.rightMargin: 17
+                                            spacing: 9
+
+                                            Rectangle {
+                                                Layout.preferredWidth: 4
+                                                Layout.preferredHeight: 20
+                                                radius: 2
+                                                color: C.accent
+                                            }
+                                            Text {
+                                                text: "RECENT TASKS"
+                                                color: C.text
+                                                font.pixelSize: 13 * recentTasksPanel.tableScale
+                                                font.bold: true
+                                                font.letterSpacing: 0.8
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                Layout.preferredWidth: recordsText.implicitWidth + 18
+                                                Layout.preferredHeight: 24
+                                                radius: 8
+                                                color: "#143452"
+                                                border.color: "#235278"
+                                                border.width: 1
+
+                                                Text {
+                                                    id: recordsText
+                                                    anchors.centerIn: parent
+                                                    text: root.tasks.length + " records"
+                                                    color: C.cyan
+                                                    font.family: root.monoFontFamily
+                                                    font.pixelSize: 10 * recentTasksPanel.tableScale
+                                                    font.bold: true
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: C.border; opacity: 0.65 }
+
+                                    // Column headers share the exact same widths as the rows.
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 34 * recentTasksPanel.tableScale
+                                        color: "#0A1A2B"
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 19
+                                            anchors.rightMargin: 16
+                                            spacing: 4
+                                            Text { text: "DATE";      Layout.preferredWidth: recentTasksPanel.dateColumnWidth;      Layout.minimumWidth: Layout.preferredWidth; Layout.rightMargin: recentTasksPanel.identityColumnGap; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "REQUESTER"; Layout.preferredWidth: recentTasksPanel.requesterColumnWidth; Layout.minimumWidth: Layout.preferredWidth; Layout.rightMargin: recentTasksPanel.identityColumnGap; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "PICKUP";    Layout.preferredWidth: recentTasksPanel.pickupColumnWidth;    Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "DEST.";     Layout.fillWidth: true; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "ROBOT";     Layout.preferredWidth: recentTasksPanel.robotColumnWidth;     Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "START";     Layout.preferredWidth: recentTasksPanel.timeColumnWidth;      Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "END";       Layout.preferredWidth: recentTasksPanel.timeColumnWidth;      Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "STATE";     Layout.preferredWidth: recentTasksPanel.stateColumnWidth;     Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Item { Layout.preferredWidth: recentTasksPanel.actionColumnWidth; Layout.minimumWidth: Layout.preferredWidth }
+                                        }
+                                    }
+                                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: C.border; opacity: 0.4 }
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+
+                                        ListView {
+                                            anchors.fill: parent
+                                            anchors.margins: 8
+                                            model: root.tasks
+                                            clip: true
+                                            spacing: 2
+                                            boundsBehavior: Flickable.StopAtBounds
+
+                                            delegate: Rectangle {
+                                                width: ListView.view.width
+                                                height: 48 * recentTasksPanel.tableScale
+                                                radius: 8
+                                                color: taskRowHover.hovered
+                                                       ? C.surfaceRaised
+                                                       : (index % 2 === 0 ? C.surfaceAlt : "transparent")
+
+                                                Behavior on color {
+                                                    ColorAnimation { duration: 110 }
+                                                }
+
+                                                HoverHandler { id: taskRowHover }
+
+                                                RowLayout {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 11
+                                                    anchors.rightMargin: 8
+                                                    spacing: 4
+
+                                                    Text {
+                                                        text: modelData.date
+                                                        Layout.preferredWidth: recentTasksPanel.dateColumnWidth
+                                                        Layout.minimumWidth: Layout.preferredWidth
+                                                        Layout.rightMargin: recentTasksPanel.identityColumnGap
+                                                        color: C.text
+                                                        font.family: root.monoFontFamily
+                                                        font.pixelSize: 12 * recentTasksPanel.tableScale
+                                                        font.bold: true
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                    }
+                                                    Text {
+                                                        text: modelData.requester
+                                                        Layout.preferredWidth: recentTasksPanel.requesterColumnWidth
+                                                        Layout.minimumWidth: Layout.preferredWidth
+                                                        Layout.rightMargin: recentTasksPanel.identityColumnGap
+                                                        color: C.cyan
+                                                        font.family: root.monoFontFamily
+                                                        font.pixelSize: 12 * recentTasksPanel.tableScale
+                                                        font.bold: true
+                                                        horizontalAlignment: Text.AlignHCenter
+                                                    }
+                                                    Text { text: modelData.pickup; Layout.preferredWidth: recentTasksPanel.pickupColumnWidth; Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.family: root.monoFontFamily; font.pixelSize: 12 * recentTasksPanel.tableScale; font.bold: true; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
+                                                    Text { text: modelData.destination; Layout.fillWidth: true; color: C.text; font.bold: true; font.pixelSize: 14 * recentTasksPanel.tableScale; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
+                                                    Text { text: modelData.robot; Layout.preferredWidth: recentTasksPanel.robotColumnWidth; Layout.minimumWidth: Layout.preferredWidth; color: C.text; font.family: root.monoFontFamily; font.pixelSize: 12 * recentTasksPanel.tableScale; font.bold: true; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
+                                                    Text { text: modelData.start; Layout.preferredWidth: recentTasksPanel.timeColumnWidth; Layout.minimumWidth: Layout.preferredWidth; color: "#B7CCE0"; font.family: root.monoFontFamily; font.pixelSize: 11 * recentTasksPanel.tableScale; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
+                                                    Text { text: modelData.end;   Layout.preferredWidth: recentTasksPanel.timeColumnWidth; Layout.minimumWidth: Layout.preferredWidth; color: "#B7CCE0"; font.family: root.monoFontFamily; font.pixelSize: 11 * recentTasksPanel.tableScale; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
+                                                    Rectangle {
+                                                        Layout.preferredWidth: recentTasksPanel.stateColumnWidth
+                                                        Layout.minimumWidth: Layout.preferredWidth
+                                                        Layout.preferredHeight: 22 * recentTasksPanel.tableScale
+                                                        radius: height / 2
+                                                        property color badgeColor: root.taskColor(modelData.state)
+                                                        color: Qt.rgba(badgeColor.r, badgeColor.g, badgeColor.b, 0.12)
+                                                        border.color: Qt.rgba(badgeColor.r, badgeColor.g, badgeColor.b, 0.45)
+                                                        border.width: 1
+
+                                                        Text {
+                                                            anchors.centerIn: parent
+                                                            width: parent.width - 8
+                                                            text: modelData.state.toUpperCase()
+                                                            color: parent.badgeColor
+                                                            font.family: root.monoFontFamily
+                                                            font.pixelSize: 10 * recentTasksPanel.tableScale
+                                                            font.bold: true
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            elide: Text.ElideRight
+                                                        }
+                                                    }
+                                                    Item {
+                                                        Layout.preferredWidth: recentTasksPanel.actionColumnWidth
+                                                        Layout.minimumWidth: Layout.preferredWidth
+                                                        Layout.preferredHeight: 26
+
+                                                        Button {
+                                                            id: cancelTaskButton
+                                                            anchors.fill: parent
+                                                            visible: modelData.state === "queued" || modelData.state === "underway"
+                                                            padding: 0
+                                                            contentItem: Text {
+                                                                text: "×"
+                                                                color: C.err
+                                                                font.pixelSize: 14
+                                                                font.bold: true
+                                                                horizontalAlignment: Text.AlignHCenter
+                                                                verticalAlignment: Text.AlignVCenter
+                                                            }
+                                                            background: Rectangle {
+                                                                radius: 7
+                                                                color: cancelTaskButton.hovered ? "#3B1B2A" : "transparent"
+                                                                border.color: C.err
+                                                                border.width: 1
+                                                            }
+                                                            onClicked: {
+                                                                if (modelData.rmf_id && modelData.rmf_id.length > 0)
+                                                                    ros.cancel_task(modelData.rmf_id)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Column {
+                                            anchors.centerIn: parent
+                                            visible: root.tasks.length === 0
+                                            spacing: 5
+                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "NO ACTIVE MISSIONS"; color: C.textDim; font.pixelSize: 12; font.bold: true }
+                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Create a task to get started"; color: C.textDim; opacity: 0.65; font.pixelSize: 10 }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    Text {
-                        anchors.centerIn: parent; visible: root.tasks.length === 0
-                        width: parent.width - 24
-                        horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
-                        text: "No tasks yet — click  + New Task  to dispatch one"
-                        font.pixelSize: 12; color: C.textDim
-                    }
                 }
-            }
-
-            // ════════════ RIGHT: MAP (6 parts) ════════════
-            Rectangle {
-                id: mapHeader
-                anchors.left:  leftPanel.right
-                anchors.leftMargin: 12
-                anchors.right: parent.right
-                anchors.rightMargin: 12
-                anchors.top:   parent.top
-                anchors.topMargin: 12
-                height: 34
-                radius: 8
-                color: C.accent
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    leftPadding: 12
-                    text: "Map"
-                    font.pixelSize: 13; font.bold: true; color: "#ffffff"
-                }
-            }
-            Loader {
-                anchors.left:  leftPanel.right
-                anchors.leftMargin: 12
-                anchors.right: parent.right
-                anchors.rightMargin: 12
-                anchors.top:   mapHeader.bottom
-                anchors.topMargin: 8
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 12
-                source: Qt.resolvedUrl("pages/MapPage.qml")
             }
         }
     }
