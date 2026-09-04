@@ -368,10 +368,6 @@ void BridgeNode::send_navigation_goal(const NavigationTarget& target)
   }
   cancel_nav2_retry();
 
-  if (target.incoming_edge.has_value()) {
-    edge_entered_pub_->publish(*target.incoming_edge);
-  }
-
   NavigateToPose::Goal goal;
 
   goal.pose.header.frame_id = nav2_frame_id_;
@@ -379,14 +375,49 @@ void BridgeNode::send_navigation_goal(const NavigationTarget& target)
   goal.pose.pose.position.x = target.node.node_position.x;
   goal.pose.pose.position.y = target.node.node_position.y;
 
+  // allowedDeviationTheta close to pi means the sender (vda5050_fleet_adapter
+  // sends ~3.15 rad for every node) explicitly doesn't care about final
+  // heading here. Nav2 only reports a goal reached once the robot is inside
+  // BOTH the position AND yaw tolerance though, so any fixed goal_yaw that
+  // doesn't match how the robot is naturally facing on arrival still forces a
+  // rotate-in-place at every such node - using the robot's heading *at
+  // dispatch time* (rather than node_position.theta) just relocates the
+  // problem, since that heading is stale by the time it arrives.
+  //
+  // robot_local_ui's nav_graph.py hits this same Nav2 behaviour and solves it
+  // by dropping collinear waypoints entirely so most nodes are never a real
+  // stop. This adapter can't do that (RMF dispatches one node at a time via
+  // EasyFullControl, so the bridge never sees the whole route to simplify),
+  // so instead: when heading isn't actually constrained, aim the goal yaw
+  // along the bearing from the robot's current position to this node. That
+  // is the direction the robot is already driving in a straight lane, so it
+  // arrives already facing it and Nav2's yaw check passes without an extra
+  // spin. It only produces a real rotation at an actual corner, where one is
+  // genuinely needed anyway.
+  constexpr double kUnconstrainedThetaRad = 3.0;
+  const bool theta_constrained =
+    target.node.node_position.theta_set &&
+    target.node.node_position.allowed_deviation_theta < kUnconstrainedThetaRad;
+
+  double goal_yaw = target.node.node_position.theta;
+  if (!theta_constrained && robot_pose_valid_) {
+    const double dx = target.node.node_position.x - robot_x_;
+    const double dy = target.node.node_position.y - robot_y_;
+    goal_yaw = (std::hypot(dx, dy) > 1e-3) ? std::atan2(dy, dx) : robot_yaw_;
+  }
+
   tf2::Quaternion q;
-  q.setRPY(0.0, 0.0, target.node.node_position.theta);
+  q.setRPY(0.0, 0.0, goal_yaw);
   goal.pose.pose.orientation = tf2::toMsg(q);
 
   const uint64_t token = ++navigation_token_;
   const uint64_t generation = order_session_.generation();
   const std::size_t node_index = target.node_index;
   const std::string node_id = target.node.node_id;
+
+  if (target.incoming_edge.has_value()) {
+    edge_entered_pub_->publish(*target.incoming_edge);
+  }
 
   RCLCPP_INFO(
     get_logger(),
@@ -436,6 +467,18 @@ void BridgeNode::send_navigation_goal(const NavigationTarget& target)
       if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
         publish_traversal_events(order_session_.complete_navigation(node_index));
         dispatch_next_work();
+        return;
+      }
+
+      if (result.code == rclcpp_action::ResultCode::CANCELED) {
+        // A deliberate stop (cancelOrder, pause, or a replacement order
+        // preempting this leg) - not a navigation failure. Reporting a FATAL
+        // navigationError for every ordinary cancel/replan is what was
+        // flooding state.errors with one permanent entry per stop; whoever
+        // requested the cancel already has its own way to know about it
+        // (state_machine_ was already updated by that caller, or the
+        // replacement order is already dispatching).
+        RCLCPP_INFO(get_logger(), "Navigation to %s cancelled", node_id.c_str());
         return;
       }
 

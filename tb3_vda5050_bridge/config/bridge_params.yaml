@@ -4,7 +4,7 @@ tb3_vda5050_bridge:
     adapter_ns: "/vda5050_client_adapter"
 
     # TurtleBot3 telemetry topics.
-    odom_topic: "/odom"
+    odom_topic: "/diff_drive_controller/odom"
     amcl_pose_topic: "/amcl_pose"
     battery_topic: "/battery_state"
 
