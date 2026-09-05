@@ -2,6 +2,11 @@
 
 namespace vda5050_adapter {
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Initialization and shutdown
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Mark initialization complete, exit INITIALIZING mode
 void AdapterStateMachine::mark_initialized()
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -9,6 +14,7 @@ void AdapterStateMachine::mark_initialized()
   recompute_mode_locked();
 }
 
+// Request shutdown, enter SHUTTING_DOWN mode
 void AdapterStateMachine::start_shutdown()
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -16,6 +22,11 @@ void AdapterStateMachine::start_shutdown()
   recompute_mode_locked();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// State change notifications
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Update MQTT connection state (connected), recompute mode
 void AdapterStateMachine::on_mqtt_connection_changed(bool connected)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -23,6 +34,7 @@ void AdapterStateMachine::on_mqtt_connection_changed(bool connected)
   recompute_mode_locked();
 }
 
+// Update order active state (order_active), recompute mode
 void AdapterStateMachine::on_order_state_changed(bool order_active)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -30,6 +42,7 @@ void AdapterStateMachine::on_order_state_changed(bool order_active)
   recompute_mode_locked();
 }
 
+// Update action blocking state (action_blocked), recompute mode
 void AdapterStateMachine::on_action_blocking_changed(bool action_blocked)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -37,6 +50,7 @@ void AdapterStateMachine::on_action_blocking_changed(bool action_blocked)
   recompute_mode_locked();
 }
 
+// Update driving state (driving) from driver
 void AdapterStateMachine::on_driver_driving_changed(bool driving)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -44,6 +58,7 @@ void AdapterStateMachine::on_driver_driving_changed(bool driving)
   recompute_mode_locked();
 }
 
+// Update paused state (paused) from driver
 void AdapterStateMachine::on_driver_paused_changed(bool paused)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -51,6 +66,7 @@ void AdapterStateMachine::on_driver_paused_changed(bool paused)
   recompute_mode_locked();
 }
 
+// Update fatal error state (fatal_error), may enter FAULTED
 void AdapterStateMachine::on_fatal_error_changed(bool fatal_error)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -58,29 +74,56 @@ void AdapterStateMachine::on_fatal_error_changed(bool fatal_error)
   recompute_mode_locked();
 }
 
-void AdapterStateMachine::request_pause(const std::string& action_id)
+// ─────────────────────────────────────────────────────────────────────────────
+// Control action requests
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Request pause (action_id): returns replaced action id if any
+std::string AdapterStateMachine::request_pause(const std::string& action_id)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  std::string replaced;
+  if (!pending_pause_action_id_.empty() && pending_pause_action_id_ != action_id) {
+    replaced = pending_pause_action_id_;
+  } else if (!pending_resume_action_id_.empty()) {
+    replaced = pending_resume_action_id_;
+  }
   pending_pause_action_id_ = action_id;
   pending_resume_action_id_.clear();
   recompute_mode_locked();
+  return replaced;
 }
 
-void AdapterStateMachine::request_resume(const std::string& action_id)
+// Request resume (action_id): returns replaced action id if any
+std::string AdapterStateMachine::request_resume(const std::string& action_id)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  std::string replaced;
+  if (!pending_resume_action_id_.empty() && pending_resume_action_id_ != action_id) {
+    replaced = pending_resume_action_id_;
+  } else if (!pending_pause_action_id_.empty()) {
+    replaced = pending_pause_action_id_;
+  }
   pending_resume_action_id_ = action_id;
   pending_pause_action_id_.clear();
   recompute_mode_locked();
+  return replaced;
 }
 
-void AdapterStateMachine::request_cancel(const std::string& action_id)
+// Request cancel (action_id): returns replaced action id if any
+std::string AdapterStateMachine::request_cancel(const std::string& action_id)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  std::string replaced;
+  if (!pending_cancel_action_id_.empty() && pending_cancel_action_id_ != action_id) {
+    replaced = pending_cancel_action_id_;
+  }
   pending_cancel_action_id_ = action_id;
   recompute_mode_locked();
+  return replaced;
 }
 
+// Get and clear pending cancel action id, return empty if none
 std::string AdapterStateMachine::take_pending_cancel()
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -90,6 +133,11 @@ std::string AdapterStateMachine::take_pending_cancel()
   return action_id;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Control action processing
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Get and clear all ready control actions, return empty if none
 std::vector<CompletedControlAction> AdapterStateMachine::consume_ready_control_actions()
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -108,7 +156,7 @@ std::vector<CompletedControlAction> AdapterStateMachine::consume_ready_control_a
     pending_resume_action_id_.clear();
   }
 
-  if (!pending_cancel_action_id_.empty() && !driver_driving_ && !order_active_) 
+  if (!pending_cancel_action_id_.empty() && !driver_driving_ && !order_active_)
   {
     completed.push_back(
       {ControlActionKind::CANCEL_ORDER, pending_cancel_action_id_, "Order cancelled"});
@@ -119,30 +167,43 @@ std::vector<CompletedControlAction> AdapterStateMachine::consume_ready_control_a
   return completed;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// State queries
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Return current adapter mode (thread-safe snapshot).
 AdapterMode AdapterStateMachine::mode() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return mode_;
 }
 
+// Return true if MQTT is connected right now
 bool AdapterStateMachine::mqtt_connected() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return mqtt_connected_;
 }
 
+// Return true if in PAUSED mode
 bool AdapterStateMachine::paused() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return driver_paused_;
 }
 
+// Return true if driver reported driving
 bool AdapterStateMachine::reported_driving() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return driver_driving_ && !driver_paused_ && !action_blocked_ && !fatal_error_;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Conversion utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Convert AdapterMode enum (mode) to human-readable C string.
 const char* AdapterStateMachine::to_string(AdapterMode mode)
 {
   switch (mode) {
@@ -172,6 +233,7 @@ const char* AdapterStateMachine::to_string(AdapterMode mode)
   return "UNKNOWN";
 }
 
+// Recompute mode_ from all internal flags (priority: shutting_down > initialized > fatal_error > mqtt_connected > pending_cancel > pending_pause > pending_resume > paused > action_blocked > order_active). Must hold mutex.
 void AdapterStateMachine::recompute_mode_locked()
 {
   if (shutting_down_) {

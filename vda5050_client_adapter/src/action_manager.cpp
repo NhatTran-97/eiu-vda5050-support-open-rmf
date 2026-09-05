@@ -7,14 +7,50 @@
 namespace vda5050_adapter 
 {
 
-namespace 
+namespace
 {
 
-bool is_active_status(vda5050::ActionStatus status) 
+// Check if status (status) is active: INITIALIZING, RUNNING, or PAUSED.
+bool is_active_status(vda5050::ActionStatus status)
 {
   return status == vda5050::ActionStatus::INITIALIZING ||
          status == vda5050::ActionStatus::RUNNING ||
          status == vda5050::ActionStatus::PAUSED;
+}
+
+// Convert ActionStatus enum (status) to human-readable C string.
+const char* status_name(vda5050::ActionStatus status) {
+  switch (status) {
+    case vda5050::ActionStatus::WAITING:      return "WAITING";
+    case vda5050::ActionStatus::INITIALIZING: return "INITIALIZING";
+    case vda5050::ActionStatus::RUNNING:      return "RUNNING";
+    case vda5050::ActionStatus::PAUSED:       return "PAUSED";
+    case vda5050::ActionStatus::FINISHED:     return "FINISHED";
+    case vda5050::ActionStatus::FAILED:       return "FAILED";
+    default:                                  return "UNKNOWN";
+  }
+}
+
+// Validates the ActionStatus lifecycle: WAITING -> INITIALIZING -> RUNNING
+// -> FINISHED|FAILED, with PAUSED reachable from and back to
+// INITIALIZING/RUNNING. FINISHED/FAILED are terminal.
+bool is_valid_status_transition(vda5050::ActionStatus from, vda5050::ActionStatus to) {
+  if (from == vda5050::ActionStatus::FINISHED || from == vda5050::ActionStatus::FAILED) {
+    return false;
+  }
+  switch (to) {
+    case vda5050::ActionStatus::RUNNING:
+      return from == vda5050::ActionStatus::INITIALIZING ||
+             from == vda5050::ActionStatus::PAUSED;
+    case vda5050::ActionStatus::PAUSED:
+      return from == vda5050::ActionStatus::INITIALIZING ||
+             from == vda5050::ActionStatus::RUNNING;
+    case vda5050::ActionStatus::FINISHED:
+    case vda5050::ActionStatus::FAILED:
+      return true;
+    default:
+      return false;
+  }
 }
 
 }  // namespace
@@ -25,25 +61,29 @@ ActionManager::ActionManager() = default;
 // Callback registration
 // ─────────────────────────────────────────────────────────────────────────────
 
-void ActionManager::set_execute_callback(ActionExecuteCallback cb) 
+// Register callback (cb) to invoke when an action should start executing.
+void ActionManager::set_execute_callback(ActionExecuteCallback cb)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   on_execute_ = std::move(cb);
 }
 
-void ActionManager::set_pause_callback(ActionPauseCallback cb) 
+// Register callback (cb) to invoke when an action should be paused by id.
+void ActionManager::set_pause_callback(ActionPauseCallback cb)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   on_pause_ = std::move(cb);
 }
 
-void ActionManager::set_resume_callback(ActionResumeCallback cb) 
+// Register callback (cb) to invoke when a paused action should be resumed by id.
+void ActionManager::set_resume_callback(ActionResumeCallback cb)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   on_resume_ = std::move(cb);
 }
 
-void ActionManager::set_cancel_callback(ActionCancelCallback cb) 
+// Register callback (cb) to invoke when an action should be cancelled by id.
+void ActionManager::set_cancel_callback(ActionCancelCallback cb)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   on_cancel_ = std::move(cb);
@@ -53,7 +93,8 @@ void ActionManager::set_cancel_callback(ActionCancelCallback cb)
 // Action ingestion
 // ─────────────────────────────────────────────────────────────────────────────
 
-void ActionManager::enqueue_node_actions(const vda5050::Node& node) 
+// Queue node (node)'s actions; dispatch when the node is reached (after on_node_reached called).
+void ActionManager::enqueue_node_actions(const vda5050::Node& node)
 {
   PendingCallbacks pending;
   {
@@ -65,7 +106,8 @@ void ActionManager::enqueue_node_actions(const vda5050::Node& node)
   invoke_pending_callbacks(pending);
 }
 
-void ActionManager::enqueue_edge_actions(const vda5050::Edge& edge) 
+// Queue edge (edge)'s actions; dispatch when the edge is entered (after on_edge_entered called).
+void ActionManager::enqueue_edge_actions(const vda5050::Edge& edge)
 {
   PendingCallbacks pending;
   {
@@ -77,6 +119,7 @@ void ActionManager::enqueue_edge_actions(const vda5050::Edge& edge)
   invoke_pending_callbacks(pending);
 }
 
+// Execute instantActions (instant_actions) immediately without waiting for navigation trigger.
 void ActionManager::process_instant_actions(
   const vda5050::InstantActions& instant_actions)
 {
@@ -89,8 +132,9 @@ void ActionManager::process_instant_actions(
   invoke_pending_callbacks(pending);
 }
 
+// Sync order actions (nodes, edges) against current state: add new actions, remove stale waiting ones not in update.
 void ActionManager::sync_order_actions(const std::vector<vda5050::Node>& nodes,
-                                       const std::vector<vda5050::Edge>& edges) 
+                                       const std::vector<vda5050::Edge>& edges)
 {
   struct TriggerSource 
   {
@@ -187,7 +231,8 @@ void ActionManager::sync_order_actions(const std::vector<vda5050::Node>& nodes,
   invoke_pending_callbacks(pending);
 }
 
-void ActionManager::reset_for_new_order() 
+// Clear order actions on new order, keeping only active instant actions (INITIALIZING or RUNNING).
+void ActionManager::reset_for_new_order()
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -195,7 +240,7 @@ void ActionManager::reset_for_new_order()
   std::unordered_map<std::string, ActionRecord> kept_actions;
   kept_order.reserve(action_order_.size());
 
-  for (const auto& id : action_order_) 
+  for (const auto& id : action_order_)
   {
     auto it = actions_.find(id);
     if (it == actions_.end()) continue;
@@ -220,8 +265,9 @@ void ActionManager::reset_for_new_order()
 // Navigation events
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Mark node (node_id, sequence_id) as physically reached; trigger associated actions.
 void ActionManager::on_node_reached(const std::string& node_id,
-                                    uint32_t           sequence_id) 
+                                    uint32_t           sequence_id)
                                     {
   PendingCallbacks pending;
   {
@@ -232,8 +278,9 @@ void ActionManager::on_node_reached(const std::string& node_id,
   invoke_pending_callbacks(pending);
 }
 
+// Mark edge (edge_id, sequence_id) as entered; trigger associated actions.
 void ActionManager::on_edge_entered(const std::string& edge_id,
-                                    uint32_t           sequence_id) 
+                                    uint32_t           sequence_id)
                                     {
   PendingCallbacks pending;
   {
@@ -244,8 +291,9 @@ void ActionManager::on_edge_entered(const std::string& edge_id,
   invoke_pending_callbacks(pending);
 }
 
+// Mark edge (edge_id, sequence_id) as exited; fail any unfinished edge actions with "Edge left before action completed".
 void ActionManager::on_edge_left(const std::string& edge_id,
-                                 uint32_t           sequence_id) 
+                                 uint32_t           sequence_id)
                                  {
   PendingCallbacks pending;
   {
@@ -278,6 +326,7 @@ void ActionManager::on_edge_left(const std::string& edge_id,
 // Feedback from robot driver
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Update action (action_id) status to RUNNING; dispatch any pending control actions.
 void ActionManager::set_action_running(const std::string& action_id) {
   PendingCallbacks pending;
   {
@@ -288,6 +337,7 @@ void ActionManager::set_action_running(const std::string& action_id) {
   invoke_pending_callbacks(pending);
 }
 
+// Update action (action_id) status to FINISHED with optional result_description.
 void ActionManager::set_action_finished(const std::string& action_id,
                                         const std::string& result_desc) {
   PendingCallbacks pending;
@@ -299,6 +349,7 @@ void ActionManager::set_action_finished(const std::string& action_id,
   invoke_pending_callbacks(pending);
 }
 
+// Update action (action_id) status to FAILED with optional result_description.
 void ActionManager::set_action_failed(const std::string& action_id,
                                       const std::string& result_desc) {
   PendingCallbacks pending;
@@ -310,6 +361,7 @@ void ActionManager::set_action_failed(const std::string& action_id,
   invoke_pending_callbacks(pending);
 }
 
+// Update action (action_id) status to PAUSED; may trigger resume of other paused actions.
 void ActionManager::set_action_paused(const std::string& action_id) {
   PendingCallbacks pending;
   {
@@ -324,6 +376,7 @@ void ActionManager::set_action_paused(const std::string& action_id) {
 // Pause / Resume / Cancel all
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Pause all active actions except exclude_action_id; queue pause callbacks.
 void ActionManager::pause_all(const std::string& exclude_action_id) {
   PendingCallbacks pending;
   {
@@ -344,6 +397,7 @@ void ActionManager::pause_all(const std::string& exclude_action_id) {
   invoke_pending_callbacks(pending);
 }
 
+// Resume all paused actions except exclude_action_id; queue resume callbacks and dispatch new actions.
 void ActionManager::resume_all(const std::string& exclude_action_id) {
   PendingCallbacks pending;
   {
@@ -378,6 +432,7 @@ void ActionManager::resume_all(const std::string& exclude_action_id) {
   invoke_pending_callbacks(pending);
 }
 
+// Cancel all active actions except exclude_action_id; mark as FAILED and queue cancel callbacks.
 void ActionManager::cancel_all(const std::string& exclude_action_id) {
   PendingCallbacks pending;
   {
@@ -387,7 +442,7 @@ void ActionManager::cancel_all(const std::string& exclude_action_id) {
     for (auto& [id, rec] : actions_) {
       if (id == exclude_action_id) continue;
       if (rec.status == vda5050::ActionStatus::FINISHED ||
-          rec.status == vda5050::ActionStatus::FAILED) 
+          rec.status == vda5050::ActionStatus::FAILED)
           {
         continue;
       }
@@ -405,10 +460,81 @@ void ActionManager::cancel_all(const std::string& exclude_action_id) {
   invoke_pending_callbacks(pending);
 }
 
+// Check for HARD actions stuck waiting (now, hard_pause_timeout): fail those past timeout, resume others paused for them.
+bool ActionManager::check_timeouts(
+  std::chrono::steady_clock::time_point now,
+  std::chrono::steady_clock::duration   hard_pause_timeout)
+{
+  PendingCallbacks pending;
+  bool changed = false;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<std::string> timed_out;
+    for (auto& [id, rec] : actions_) {
+      const bool stuck_hard_wait =
+        rec.status == vda5050::ActionStatus::WAITING &&
+        rec.trigger_ready &&
+        rec.action.blocking_type == vda5050::BlockingType::HARD;
+
+      if (!stuck_hard_wait) {
+        rec.hard_wait_since.reset();
+        continue;
+      }
+      if (!rec.hard_wait_since.has_value()) {
+        rec.hard_wait_since = now;
+        continue;
+      }
+      if (now - *rec.hard_wait_since >= hard_pause_timeout) {
+        timed_out.push_back(id);
+      }
+    }
+
+    for (const auto& id : timed_out) {
+      auto it = actions_.find(id);
+      if (it == actions_.end()) continue;
+
+      it->second.status = vda5050::ActionStatus::FAILED;
+      it->second.result_description = "Timed out waiting for other actions to pause";
+      it->second.hard_wait_since.reset();
+      changed = true;
+      std::cerr << "[ActionManager] HARD action '" << id<< "' timed out waiting to run — failing it\n";
+
+      for (auto& [other_id, other] : actions_) 
+      {
+        if (other_id == id) continue;
+        if (!other.pause_requested && !other.paused_for_hard) continue;
+        other.pause_requested = false;
+        
+        if (other.status == vda5050::ActionStatus::PAUSED && !other.resume_requested) {
+          other.resume_requested = true;
+          pending.resume_action_ids.push_back(other_id);
+        }
+        other.paused_for_hard = false;
+      }
+    }
+
+    auto dispatch_pending = dispatch_pending_locked();
+    pending.execute_cb = dispatch_pending.execute_cb;
+    pending.pause_cb   = dispatch_pending.pause_cb;
+    pending.resume_cb  = on_resume_;
+    pending.cancel_cb  = dispatch_pending.cancel_cb;
+    pending.execute_actions  = std::move(dispatch_pending.execute_actions);
+    pending.pause_action_ids = std::move(dispatch_pending.pause_action_ids);
+    pending.resume_action_ids.insert(pending.resume_action_ids.end(),
+                                     dispatch_pending.resume_action_ids.begin(),
+                                     dispatch_pending.resume_action_ids.end());
+    pending.cancel_action_ids = std::move(dispatch_pending.cancel_action_ids);
+  }
+  invoke_pending_callbacks(pending);
+  return changed;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State queries
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Return snapshot of all action states in execution order for State message publication.
 std::vector<vda5050::ActionState> ActionManager::action_states() const {
   std::lock_guard<std::mutex> lock(mutex_);
   std::vector<vda5050::ActionState> result;
@@ -432,18 +558,21 @@ std::vector<vda5050::ActionState> ActionManager::action_states() const {
   return result;
 }
 
-bool ActionManager::is_hard_blocked() const 
+// Return true if any HARD-blocking action is currently INITIALIZING or RUNNING.
+bool ActionManager::is_hard_blocked() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return any_hard_running();
 }
 
-bool ActionManager::is_soft_blocked() const 
+// Return true if any SOFT-blocking action is currently INITIALIZING or RUNNING.
+bool ActionManager::is_soft_blocked() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return any_soft_running();
 }
 
+// Return true if any action is in an active state (INITIALIZING, RUNNING, or PAUSED).
 bool ActionManager::has_active_actions() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -454,14 +583,14 @@ bool ActionManager::has_active_actions() const
   return false;
 }
 
+// Return true if any order action (node/edge trigger, not instant) is active; instant actions don't block order replacement.
 bool ActionManager::has_active_order_actions() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   for (const auto& [id, rec] : actions_)
   {
-    // Only node/edge actions bind an order; instant actions (cancelOrder, pause,
-    // stateRequest) belong to the adapter lifecycle and must not block a
-    // replacing order.
+    // Only node/edge actions bind an order; instant actions (cancelOrder, pause, stateRequest)
+    // belong to the adapter lifecycle and must not block a replacing order.
     if (rec.is_instant || rec.trigger_kind == TriggerKind::IMMEDIATE)
       continue;
     if (is_active_status(rec.status)) return true;
@@ -473,6 +602,7 @@ bool ActionManager::has_active_order_actions() const
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Queue actions (actions) with trigger type/id/sequence (ignore duplicates); must hold mutex.
 void ActionManager::enqueue_actions_locked(
   const std::vector<vda5050::Action>& actions,
   TriggerKind                         trigger_kind,
@@ -480,7 +610,11 @@ void ActionManager::enqueue_actions_locked(
   uint32_t                            trigger_sequence_id)
 {
   for (const auto& action : actions) {
-    if (actions_.count(action.action_id)) continue;
+    if (actions_.count(action.action_id)) {
+      std::cerr << "[ActionManager] Duplicate actionId '" << action.action_id
+                << "' ignored (already tracked)\n";
+      continue;
+    }
 
     ActionRecord rec;
     rec.action = action;
@@ -496,6 +630,7 @@ void ActionManager::enqueue_actions_locked(
   }
 }
 
+// Mark trigger (trigger_kind, trigger_id, trigger_sequence_id) as ready; affected actions become dispatchable.
 void ActionManager::mark_trigger_ready_locked(TriggerKind        trigger_kind,
                                               const std::string& trigger_id,
                                               uint32_t           trigger_sequence_id) {
@@ -507,6 +642,7 @@ void ActionManager::mark_trigger_ready_locked(TriggerKind        trigger_kind,
   }
 }
 
+// Fail all actions attached to edge (edge_id, sequence_id) with "Edge left before action completed"; queue cancels.
 void ActionManager::fail_edge_actions_locked(const std::string& edge_id,
                                              uint32_t           sequence_id,
                                              PendingCallbacks&  pending) {
@@ -527,6 +663,7 @@ void ActionManager::fail_edge_actions_locked(const std::string& edge_id,
   }
 }
 
+// Remove stale WAITING order actions not in desired_order_actions (desired_order_actions); preserve instant/active.
 void ActionManager::remove_stale_waiting_order_actions_locked(
   const std::unordered_map<std::string, ActionRecord>& desired_order_actions) {
   std::vector<std::string> compact_order;
@@ -553,6 +690,7 @@ void ActionManager::remove_stale_waiting_order_actions_locked(
   action_order_ = std::move(compact_order);
 }
 
+// Update action (action_id) status to new_status with optional result_desc; validate transition; must hold mutex.
 void ActionManager::update_status(const std::string&    action_id,
                                   vda5050::ActionStatus new_status,
                                   const std::string&    result_desc) {
@@ -563,6 +701,13 @@ void ActionManager::update_status(const std::string&    action_id,
   }
 
   auto& rec = it->second;
+  if (!is_valid_status_transition(rec.status, new_status)) {
+    std::cerr << "[ActionManager] Ignoring out-of-order status for '" << action_id
+              << "': already " << status_name(rec.status)
+              << ", driver reported " << status_name(new_status) << "\n";
+    return;
+  }
+
   rec.status = new_status;
   rec.result_description = result_desc;
 
@@ -581,6 +726,7 @@ void ActionManager::update_status(const std::string&    action_id,
   }
 }
 
+// Collect pending callbacks from current action state: execute ready WAITING, pause for HARD, resume paused-for-hard.
 ActionManager::PendingCallbacks ActionManager::dispatch_pending_locked() {
   PendingCallbacks pending;
   pending.execute_cb = on_execute_;
@@ -649,6 +795,7 @@ ActionManager::PendingCallbacks ActionManager::dispatch_pending_locked() {
   return pending;
 }
 
+// Invoke all callbacks in pending batch (pending); safe to call from any thread (callbacks handle their own sync).
 void ActionManager::invoke_pending_callbacks(const PendingCallbacks& pending) {
   if (pending.pause_cb) {
     for (const auto& id : pending.pause_action_ids) pending.pause_cb(id);
@@ -667,6 +814,7 @@ void ActionManager::invoke_pending_callbacks(const PendingCallbacks& pending) {
   }
 }
 
+// Return true if any HARD-blocking action is INITIALIZING or RUNNING; must hold mutex.
 bool ActionManager::any_hard_running() const {
   for (const auto& [id, rec] : actions_) {
     if (rec.action.blocking_type == vda5050::BlockingType::HARD &&
@@ -678,6 +826,7 @@ bool ActionManager::any_hard_running() const {
   return false;
 }
 
+// Return true if any SOFT-blocking action is INITIALIZING or RUNNING; must hold mutex.
 bool ActionManager::any_soft_running() const {
   for (const auto& [id, rec] : actions_) {
     if (rec.action.blocking_type == vda5050::BlockingType::SOFT &&

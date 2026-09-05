@@ -11,12 +11,12 @@
 namespace vda5050_adapter {
 
 /**
- * @brief Result of an order-acceptance check.
+ * @brief Result of VDA5050 order-acceptance validation.
  */
-struct OrderAcceptResult 
+struct OrderAcceptResult
 {
-  bool        accepted{false};
-  std::string rejection_reason;
+  bool        accepted{false};           ///< true if order passed validation and was accepted.
+  std::string rejection_reason;          ///< Reason if accepted=false.
 };
 
 /// Data passed with a node-reached event.
@@ -28,46 +28,79 @@ struct NodeReachedEvent
 };
 
 /**
- * @brief Manages VDA5050 order state: validation, stitching, base/horizon
- *        tracking, and newBaseRequest signalling. Thread-safe.
+ * @brief Manages VDA5050 order state: validation, stitching, base/horizon tracking, newBaseRequest.
+ *
+ * Validates incoming orders, manages order updates, tracks base (released, to-be-driven) and
+ * horizon (unreleased, may change) segments, and signals when to request new base segments.
+ * Handles stitch validation (update continuity), rejects stale orders, and fires callbacks
+ * on state changes. Thread-safe via std::mutex.
+ *
+ * Key responsibilities:
+ *  - Validate order acceptance per VDA5050 spec and internal invariants
+ *  - Stitch order updates while protecting already-traversed nodes
+ *  - Track base/horizon and emit newBaseRequest when base depletes below threshold
+ *  - Report navigation events (node_reached, edge_entered, edge_completed)
+ *  - Fire callbacks on order acceptance/cancellation and base request signals
  */
-class OrderManager 
+class OrderManager
 {
 public:
   // ─── Callbacks ────────────────────────────────────────────────────────────
 
-  /// Called when a new/updated order is accepted.
+  /**
+   * @brief Callback when a new or updated order is accepted.
+   * @param order_id Order ID.
+   * @param order_update_id Order update ID.
+   * @param remaining_nodes Remaining nodes (base + horizon).
+   * @param remaining_edges Remaining edges (base + horizon).
+   */
   using OrderAcceptedCallback =
     std::function<void(const std::string& order_id,
                        uint32_t           order_update_id,
                        const std::vector<vda5050::Node>& remaining_nodes,
                        const std::vector<vda5050::Edge>& remaining_edges)>;
 
-  /// Called when a cancelOrder instantAction is received.
+  /**
+   * @brief Callback when a cancelOrder instantAction is received.
+   * @param order_id ID of the cancelled order.
+   */
   using OrderCancelledCallback =
     std::function<void(const std::string& order_id)>;
 
-  /// Called when the AGV should request a new base (newBaseRequest flag).
+  /**
+   * @brief Callback to signal that a new base segment should be requested.
+   */
   using NewBaseRequestCallback = std::function<void()>;
 
+  /**
+   * @brief Construct an order manager with no active order.
+   */
   OrderManager();
+
+  /**
+   * @brief Destructor.
+   */
   ~OrderManager() = default;
 
   // ─── Order ingestion ──────────────────────────────────────────────────────
 
   /**
-   * @brief Validate and apply an incoming order (VDA5050 §6.4).
-   * @return Acceptance result; on rejection, caller adds Error to state.
+   * @brief Validate and apply an incoming order.
+   * @param order The VDA5050 order to process.
+   * @return OrderAcceptResult with acceptance status and optional rejection reason.
    */
   OrderAcceptResult process_order(const vda5050::Order& order);
 
-  /// Cancel the active order. If order_id is non-empty, only cancel if it matches.
+  /**
+   * @brief Cancel the active order.
+   * @param order_id If non-empty, only cancel if it matches the current order ID.
+   */
   void cancel_order(const std::string& order_id = "");
 
   // ─── Navigation feedback (called by the robot driver) ─────────────────────
 
   bool node_reached(const NodeReachedEvent& evt);
-  void edge_entered(const std::string& edge_id, uint32_t sequence_id);
+  bool edge_entered(const std::string& edge_id, uint32_t sequence_id);
   bool edge_completed(const std::string& edge_id, uint32_t sequence_id);
 
   // ─── State queries ────────────────────────────────────────────────────────

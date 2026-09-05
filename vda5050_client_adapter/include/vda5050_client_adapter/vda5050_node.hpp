@@ -34,6 +34,7 @@
  */
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -68,9 +69,32 @@
 
 namespace vda5050_adapter {
 
+/**
+ * @brief VDA5050 adapter node: ROS2/MQTT bridge for autonomous mobile robots.
+ *
+ * Mediates between Master Control (MQTT/VDA5050 JSON) and robot drivers (ROS2 topics).
+ * Manages order lifecycle, action execution, state publication, and MQTT connectivity.
+ * Single-threaded design: all callbacks and state updates run serially via rclcpp::spin().
+ *
+ * Key responsibilities:
+ *  - Subscribe to robot telemetry (position, velocity, battery, driving, action feedback)
+ *  - Publish VDA5050 state, visualization, connection, and factsheet to MQTT
+ *  - Handle inbound orders and instantActions from Master Control
+ *  - Manage order state and route traversal via OrderManager
+ *  - Execute and track actions (NONE/SOFT/HARD blocking) via ActionManager
+ *  - Coordinate adapter-wide mode transitions via AdapterStateMachine
+ */
 class VDA5050Node : public rclcpp::Node {
 public:
+  /**
+   * @brief Initialize adapter node: load config, setup MQTT and ROS2 interfaces.
+   * @param options ROS2 node options.
+   */
   explicit VDA5050Node(const rclcpp::NodeOptions& options = rclcpp::NodeOptions());
+
+  /**
+   * @brief Graceful shutdown: disconnect MQTT and clean up resources.
+   */
   ~VDA5050Node() override;
 
 private:
@@ -148,6 +172,8 @@ private:
   std::string serial_number_;
   double      state_publish_interval_{30.0};
   double      visualization_interval_{1.0};
+  double      position_publish_min_interval_{1.0};
+  double      hard_action_pause_timeout_{30.0};
 
   // ── Core components ────────────────────────────────────────────────────────
   std::unique_ptr<MqttClient>    mqtt_client_;
@@ -165,13 +191,13 @@ private:
   mutable std::mutex            state_mutex_;
   vda5050::AgvPosition          agv_position_;
   bool                          agv_position_set_{false};
+  std::chrono::steady_clock::time_point last_position_publish_{};
   vda5050::Velocity             velocity_;
   bool                          velocity_set_{false};
   vda5050::BatteryState         battery_state_;
   vda5050::SafetyState          safety_state_;
   std::vector<vda5050::Load>    loads_;
   std::vector<vda5050::Error>   errors_;
-  std::optional<vda5050::NodePosition> last_reached_node_position_;
   bool                          driving_{false};
   bool                          paused_{false};
   vda5050::OperatingMode        operating_mode_{vda5050::OperatingMode::AUTOMATIC};
@@ -204,6 +230,7 @@ private:
   // ── Timers ─────────────────────────────────────────────────────────────────
   rclcpp::TimerBase::SharedPtr state_timer_;
   rclcpp::TimerBase::SharedPtr visualization_timer_;
+  rclcpp::TimerBase::SharedPtr action_timeout_timer_;
 };
 
 }  // namespace vda5050_adapter

@@ -51,6 +51,8 @@ def generate_launch_description():
             LaunchConfiguration("params_file"),
             {
                 "mqtt.broker_url": LaunchConfiguration("broker_url"),
+                "vda5050.manufacturer": LaunchConfiguration("manufacturer"),
+                "vda5050.serial_number": LaunchConfiguration("serial_number"),
             },
         ],
         remappings=[

@@ -3,73 +3,52 @@
 
     # ── MQTT broker connection ──────────────────────────────────────────────
     mqtt:
-      broker_url: "tcp://localhost:1883"   # e.g. "ssl://broker.example.com:8883"
+      broker_url: "tcp://localhost:1883"   # MQTT broker URL
       client_id:  "vda5050_client_adapter_001"
-      username:   ""                      
+      username:   ""
       password:   ""
 
     # ── VDA5050 AGV identity ────────────────────────────────────────────────
     # MQTT topic structure: {interface_name}/v2/{manufacturer}/{serial_number}/{topic}
     vda5050:
-      interface_name: "TB3"       # VDA5050 §4.1 — typically "uagv"
-      manufacturer:   "ROBOTIS"        # Your company / manufacturer identifier
-      serial_number:  "0001"       # Unique AGV serial number
+      interface_name: "TB3"       # VDA5050 interface name
+      manufacturer:   "ROBOTIS"        # Manufacturer identifier
+      serial_number:  "0001"       # AGV serial number
 
-      # State message publishing interval (seconds).
-      # VDA5050 §7.3: state must be published at least every 30 s.
-      state_publish_interval: 30.0
-
-      # Visualization publishing interval (seconds).
-      # VDA5050 §7.5: recommended interval ~1 s.
-      visualization_interval: 1.0
+      state_publish_interval: 30.0       # State message interval (sec)
+      visualization_interval: 1.0        # Visualization interval (sec)
+      position_publish_min_interval: 1.0 # Min interval for on-position-update state publishes (sec)
+      hard_action_pause_timeout: 30.0    # Max wait for HARD action pause confirmation (sec)
 
     # ── Factsheet (VDA5050 §9.4) ────────────────────────────────────────────
-    # Published once to the "factsheet" MQTT topic (QoS 1, retained=true)
-    # whenever the adapter connects to the broker.
+    # Published once on connect (QoS 1, retained).
     factsheet:
 
       # ── typeSpecification ─────────────────────────────────────────────────
       type_specification:
         series_name:        "TurtleBot3 Burger"
         series_description: "Indoor differential-drive mobile robot"
-
-        # Kinematic model: "DIFF" | "OMNI" | "THREEWHEEL"
-        agv_kinematic: "DIFF"
-
-        # AGV class: "FORKLIFT" | "CONVEYOR" | "TUGGER" | "CARRIER"
-        agv_class: "CARRIER"
-
-        # Maximum carrying load in kg (TB3 Burger: ~0.5 kg)
-        max_load_mass: 0.5
-
-        # Supported localization technologies
-        localization_types: ["NATURAL"]
-
-        # Navigation method
-        navigation_types: ["AUTONOMOUS"]
+        agv_kinematic: "DIFF"               # "DIFF" | "OMNI" | "THREEWHEEL"
+        agv_class: "CARRIER"                # "FORKLIFT" | "CONVEYOR" | "TUGGER" | "CARRIER"
+        max_load_mass: 0.5                  # Max load (kg)
+        localization_types: ["NATURAL"]     # Supported localization technologies
+        navigation_types: ["AUTONOMOUS"]    # Navigation method
 
       # ── physicalParameters ────────────────────────────────────────────────
-      # TurtleBot3 Burger official specs: https://emanual.robotis.com/docs/en/platform/turtlebot3/features/
       physical_parameters:
-        speed_min:        0.05   # m/s — minimum controllable speed
-        speed_max:        0.22   # m/s — TB3 Burger max linear speed
-        acceleration_max: 1.0   # m/s²
-        deceleration_max: 2.0   # m/s²
-        height_min:      -1.0   # m  — set to -1.0 to omit from factsheet
-        height_max:       0.192  # m  — TB3 Burger height
-        width:            0.178  # m  — TB3 Burger width
-        length:           0.138  # m  — TB3 Burger length
+        speed_min:        0.05      # m/s
+        speed_max:        0.22      # m/s
+        acceleration_max: 1.0       # m/s²
+        deceleration_max: 2.0       # m/s²
+        height_min:      -1.0       # m  (-1.0 to omit)
+        height_max:       0.192     # m
+        width:            0.178     # m
+        length:           0.138     # m
 
       # ── supported action types ────────────────────────────────────────────
-      #   startPause, stopPause, cancelOrder, stateRequest, initPosition
-      # Add your robot-driver actions here (NODE/EDGE/INSTANT scopes).
       supported_action_types:
         - "startPause"
         - "stopPause"
         - "cancelOrder"
         - "stateRequest"
         - "initPosition"
-        # Example robot-specific actions:
-        # - "pick"
-        # - "drop"
-        # - "charge"

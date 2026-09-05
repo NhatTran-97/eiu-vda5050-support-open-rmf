@@ -20,6 +20,11 @@ find_package(vda5050_msgs REQUIRED)
 find_package(nlohmann_json QUIET)
 
 if(NOT nlohmann_json_FOUND)
+  message(WARNING
+    "[vda5050_client_adapter] nlohmann_json not found as a system package — "
+    "fetching v3.11.3 from GitHub at configure time. This requires network "
+    "access and breaks offline/air-gapped builds. Install it instead with: "
+    "sudo apt install nlohmann-json3-dev")
   include(FetchContent)
   FetchContent_Declare(
     nlohmann_json
@@ -51,7 +56,7 @@ set(_paho_inc_hints
 )
 
 find_library(PAHO_MQTTPP_LIB
-  NAMES paho-mqttpp3 HINTS ${_paho_lib_hints}NO_DEFAULT_PATH)
+  NAMES paho-mqttpp3 HINTS ${_paho_lib_hints} NO_DEFAULT_PATH)
 find_library(PAHO_MQTT_C_LIB
   NAMES paho-mqtt3as paho-mqtt3a HINTS ${_paho_lib_hints} NO_DEFAULT_PATH)
 find_path(PAHO_MQTTPP_INCLUDE

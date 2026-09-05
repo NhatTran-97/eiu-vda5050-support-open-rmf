@@ -39,6 +39,13 @@ flowchart LR
 
 Topic pattern: `{interface_name}/v2/{manufacturer}/{serial_number}/{topic}`
 
+`state` is published on a `vda5050.state_publish_interval` timer (default
+30s) **and** immediately on every fresh `~/agv_position` update while
+driving, throttled to at least `vda5050.position_publish_min_interval`
+apart (default 0.2s). Without the position-triggered publish, Master
+Control only ever saw the robot's position advance once per timer tick —
+i.e. jump every 30s — instead of tracking it live.
+
 ---
 
 ## 3. Internal Module Structure
@@ -315,13 +322,13 @@ Dispatch rules:
 
 ---
 
-## 13. Test Coverage — 103 Tests (all pass)
+## 13. Test Coverage — 115 Tests (all pass)
 
 | Suite | Tests | Coverage |
 |---|---|---|
-| `test_adapter_state_machine` | 3 | Top-level mode transitions, control confirmations, fault/shutdown |
-| `test_order_manager` | 29 | Accept, stitch, newBaseRequest, cancel, reject cases |
-| `test_action_manager` | 25 | NONE/SOFT/HARD blocking, pause/resume/cancel, sync |
+| `test_adapter_state_machine` | 4 | Top-level mode transitions, control confirmations, fault/shutdown, pending-action supersede |
+| `test_order_manager` | 31 | Accept, stitch, newBaseRequest, cancel, reject cases, zone_set_id clear, edge_entered ordering |
+| `test_action_manager` | 30 | NONE/SOFT/HARD blocking, pause/resume/cancel, sync, status transition guard, HARD-wait timeout |
 | `test_converters` | 46 | JSON round-trips, schema compliance, ROS↔internal |
 
 ---
@@ -352,3 +359,6 @@ Dispatch rules:
 7. [src/mqtt_client.cpp](../src/mqtt_client.cpp)
 8. [include/vda5050_client_adapter/json_converter.hpp](../include/vda5050_client_adapter/json_converter.hpp)
 9. [include/vda5050_client_adapter/ros_converters.hpp](../include/vda5050_client_adapter/ros_converters.hpp)
+
+---
+

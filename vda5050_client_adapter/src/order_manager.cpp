@@ -16,19 +16,22 @@ OrderManager::OrderManager() = default;
 // Callback registration
 // ─────────────────────────────────────────────────────────────────────────────
 
-void OrderManager::set_order_accepted_callback(OrderAcceptedCallback cb) 
+// Register callback (cb) to invoke when an order is accepted; passes order_id, order_update_id, and remaining route.
+void OrderManager::set_order_accepted_callback(OrderAcceptedCallback cb)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   on_order_accepted_ = std::move(cb);
 }
 
-void OrderManager::set_order_cancelled_callback(OrderCancelledCallback cb) 
+// Register callback (cb) to invoke when an order is cancelled; passes cancelled order_id.
+void OrderManager::set_order_cancelled_callback(OrderCancelledCallback cb)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   on_order_cancelled_ = std::move(cb);
 }
 
-void OrderManager::set_new_base_request_callback(NewBaseRequestCallback cb) 
+// Register callback (cb) to invoke when the AGV should request a new base segment (newBaseRequest flag).
+void OrderManager::set_new_base_request_callback(NewBaseRequestCallback cb)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   on_new_base_request_ = std::move(cb);
@@ -38,7 +41,8 @@ void OrderManager::set_new_base_request_callback(NewBaseRequestCallback cb)
 // Process incoming order
 // ─────────────────────────────────────────────────────────────────────────────
 
-OrderAcceptResult OrderManager::process_order(const vda5050::Order& order) 
+// Validate and apply incoming order (order): new order or update to current. Returns acceptance result with rejection reason if invalid.
+OrderAcceptResult OrderManager::process_order(const vda5050::Order& order)
 {
   std::unique_lock<std::mutex> lock(mutex_);
 
@@ -106,7 +110,8 @@ OrderAcceptResult OrderManager::process_order(const vda5050::Order& order)
 // Cancel
 // ─────────────────────────────────────────────────────────────────────────────
 
-void OrderManager::cancel_order(const std::string& order_id) 
+// Cancel the active order (order_id); if order_id is non-empty, only cancel if it matches current order. Invokes cancelled callback.
+void OrderManager::cancel_order(const std::string& order_id)
 {
   std::unique_lock<std::mutex> lock(mutex_);
 
@@ -125,6 +130,7 @@ void OrderManager::cancel_order(const std::string& order_id)
   active_edges_.clear();
   current_order_id_         = "";
   current_order_update_id_  = 0;
+  current_zone_set_id_      = "";
   order_active_             = false;
   new_base_request_         = false;
   distance_since_last_node_ = 0.0;
@@ -139,6 +145,7 @@ void OrderManager::cancel_order(const std::string& order_id)
 // Navigation feedback
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Notify that node (evt) was physically reached: validate order, pop remaining base node, trigger newBaseRequest if needed.
 bool OrderManager::node_reached(const NodeReachedEvent& evt) {
   std::unique_lock<std::mutex> lock(mutex_);
 
@@ -180,28 +187,31 @@ bool OrderManager::node_reached(const NodeReachedEvent& evt) {
   return true;
 }
 
-void OrderManager::edge_entered(const std::string& edge_id,
+// Notify that edge (edge_id, sequence_id) was entered: validate order, move to active_edges from base.
+bool OrderManager::edge_entered(const std::string& edge_id,
                                 uint32_t           sequence_id)
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
-  auto it = std::find_if(remaining_base_edges_.begin(), remaining_base_edges_.end(),
-    [&](const vda5050::Edge& e) {
-      return e.edge_id == edge_id && e.sequence_id == sequence_id;
-    });
-
-  if (it != remaining_base_edges_.end()) 
-  {
-    active_edges_.push_back(*it);
-    remaining_base_edges_.erase(it);
-  } else 
-  {
-    // Not in base — may be horizon edge or re-entry after stitch.
-    std::cerr << "[OrderManager] edge_entered: edge '" << edge_id
-              << "' (seq=" << sequence_id << ") not found in remaining base edges\n";
+  if (remaining_base_edges_.empty()) {
+    std::cerr << "[OrderManager] Unexpected edge_entered: no released base edge pending\n";
+    return false;
   }
+
+  const auto& expected_edge = remaining_base_edges_.front();
+  if (expected_edge.edge_id != edge_id || expected_edge.sequence_id != sequence_id) {
+    std::cerr << "[OrderManager] Out-of-order edge_entered: expected '"
+              << expected_edge.edge_id << "' (seq=" << expected_edge.sequence_id
+              << "), got '" << edge_id << "' (seq=" << sequence_id << ")\n";
+    return false;
+  }
+
+  active_edges_.push_back(expected_edge);
+  remaining_base_edges_.erase(remaining_base_edges_.begin());
+  return true;
 }
 
+// Notify that edge (edge_id, sequence_id) was completed: remove from active/base. Returns false if unknown edge.
 bool OrderManager::edge_completed(const std::string& edge_id,
                                   uint32_t           sequence_id)
 {
@@ -250,43 +260,50 @@ bool OrderManager::edge_completed(const std::string& edge_id,
 // State queries
 // ─────────────────────────────────────────────────────────────────────────────
 
-std::string OrderManager::current_order_id() const 
+// Return current order id; empty if no active order.
+std::string OrderManager::current_order_id() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return current_order_id_;
 }
 
-uint32_t OrderManager::current_order_update_id() const 
+// Return current order update id; 0 if no active order.
+uint32_t OrderManager::current_order_update_id() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return current_order_update_id_;
 }
 
-std::string OrderManager::last_node_id() const 
+// Return id of last physically reached node; empty if none yet reached.
+std::string OrderManager::last_node_id() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return last_node_id_;
 }
 
-uint32_t OrderManager::last_node_sequence_id() const 
+// Return sequence_id of last physically reached node; 0 if none yet reached.
+uint32_t OrderManager::last_node_sequence_id() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return last_node_sequence_id_;
 }
 
-std::string OrderManager::current_zone_set_id() const 
+// Return zone set id from current order; empty if no active order.
+std::string OrderManager::current_zone_set_id() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return current_zone_set_id_;
 }
 
-double OrderManager::distance_since_last_node() const 
+// Return distance (meters) driven since last node reached.
+double OrderManager::distance_since_last_node() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return distance_since_last_node_;
 }
 
-std::vector<vda5050::NodeState> OrderManager::node_states() const 
+// Return snapshot of all remaining node states (base + horizon) for State message.
+std::vector<vda5050::NodeState> OrderManager::node_states() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   std::vector<vda5050::NodeState> result;
@@ -296,6 +313,7 @@ std::vector<vda5050::NodeState> OrderManager::node_states() const
   return result;
 }
 
+// Return snapshot of all edge states (active + remaining base + horizon) for State message.
 std::vector<vda5050::EdgeState> OrderManager::edge_states() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -307,6 +325,7 @@ std::vector<vda5050::EdgeState> OrderManager::edge_states() const
   return result;
 }
 
+// Return snapshot of currently active edges (entered but not yet completed).
 std::vector<vda5050::EdgeState> OrderManager::active_edge_states() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -316,13 +335,15 @@ std::vector<vda5050::EdgeState> OrderManager::active_edge_states() const
   return result;
 }
 
-bool OrderManager::new_base_request() const 
+// Return true if AGV should request a new base segment (remaining base < 2 nodes).
+bool OrderManager::new_base_request() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return new_base_request_;
 }
 
-bool OrderManager::has_active_order() const 
+// Return true if there is an active order in progress.
+bool OrderManager::has_active_order() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
   return order_active_;
@@ -332,8 +353,9 @@ bool OrderManager::has_active_order() const
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Validate new order (order): must have ≥1 node, no active order, first node matches last reached if any.
 OrderAcceptResult
-OrderManager::validate_new_order(const vda5050::Order& order) const 
+OrderManager::validate_new_order(const vda5050::Order& order) const
 {
   if (order.nodes.empty()) 
   {
@@ -367,6 +389,7 @@ OrderManager::validate_new_order(const vda5050::Order& order) const
   return {true, ""};
 }
 
+// Validate order update (update): must have ≥1 node, stitch node must match last in horizon/base/last_reached.
 OrderAcceptResult
 OrderManager::validate_update(const vda5050::Order& update) const
 {
@@ -409,7 +432,8 @@ OrderManager::validate_update(const vda5050::Order& update) const
   return {true, ""};
 }
 
-void OrderManager::apply_order(const vda5050::Order& order) 
+// Apply new order (order): set order_id/update_id/zone_set_id, partition nodes/edges into base/horizon, reset progress.
+void OrderManager::apply_order(const vda5050::Order& order)
 {
   current_order_id_        = order.order_id;
   current_order_update_id_ = order.order_update_id;
@@ -424,12 +448,12 @@ void OrderManager::apply_order(const vda5050::Order& order)
   horizon_edges_.clear();
   active_edges_.clear();
 
-  for (const auto& n : order.nodes) 
+  for (const auto& n : order.nodes)
   {
     if (n.released) remaining_base_nodes_.push_back(n);
     else            horizon_nodes_.push_back(n);
   }
-  for (const auto& e : order.edges) 
+  for (const auto& e : order.edges)
   {
     if (e.released) remaining_base_edges_.push_back(e);
     else            horizon_edges_.push_back(e);
@@ -438,6 +462,7 @@ void OrderManager::apply_order(const vda5050::Order& order)
   // lastNodeId is only updated when the robot physically reaches a node, not on order accept.
 }
 
+// Apply order update (update): keep stitch node, add new nodes/edges to base/horizon, update order_update_id.
 void OrderManager::apply_stitch(const vda5050::Order& update) {
   current_order_update_id_ = update.order_update_id;
   new_base_request_        = false;
@@ -485,8 +510,9 @@ void OrderManager::apply_stitch(const vda5050::Order& update) {
 
 // ─── Static converters ────────────────────────────────────────────────────────
 
+// Convert Node (n) to NodeState for State message publication.
 vda5050::NodeState
-OrderManager::node_to_state(const vda5050::Node& n) 
+OrderManager::node_to_state(const vda5050::Node& n)
 {
   vda5050::NodeState ns;
   ns.node_id         = n.node_id;
@@ -497,6 +523,7 @@ OrderManager::node_to_state(const vda5050::Node& n)
   return ns;
 }
 
+// Convert Edge (e) to EdgeState for State message publication.
 vda5050::EdgeState
 OrderManager::edge_to_state(const vda5050::Edge& e) {
   vda5050::EdgeState es;

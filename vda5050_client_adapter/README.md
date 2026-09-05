@@ -108,8 +108,8 @@ MQTT .../order → VDA5050Node → OrderManager (stitch validate)
 | `${odom_topic}` | `nav_msgs/Odometry` | Robot position and velocity |
 | `${battery_topic}` | `sensor_msgs/BatteryState` | Battery charge |
 | `${adapter_ns}/agv_position` | `vda5050_msgs/AgvPosition` | Position from bridge |
-| `${adapter_ns}/driving` | `std_msgs/Bool` | Motion state |
-| `${adapter_ns}/paused` | `std_msgs/Bool` | Pause state |
+| `${adapter_ns}/driving` | `std_msgs/Bool` | Motion state. `transient_local`, depth 1, to match the bridge's latched publisher — gets the current value immediately even if this node (re)started after the bridge |
+| `${adapter_ns}/paused` | `std_msgs/Bool` | Pause state. `transient_local`, depth 1 — same as `driving` above |
 | `${adapter_ns}/node_reached` | `vda5050_msgs/NodeState` | Traversal feedback |
 | `${adapter_ns}/edge_entered` | `vda5050_msgs/EdgeState` | Edge feedback |
 | `${adapter_ns}/edge_completed` | `vda5050_msgs/EdgeState` | Edge feedback |
@@ -133,6 +133,8 @@ Config file: [`config/vda5050_params.yaml`](config/vda5050_params.yaml)
 | `vda5050.interface_name` | `TB3` | Must match fleet adapter |
 | `vda5050.manufacturer` | `ROBOTIS` | Must match fleet adapter |
 | `vda5050.serial_number` | `0001` | Must match fleet adapter |
+| `vda5050.position_publish_min_interval` | `1.0` | Min seconds between `state` publishes triggered by a fresh position update; keeps Master Control's view of the robot's position live instead of only advancing once per `state_publish_interval`. Matched to `visualization_interval` since `state` is far more expensive to build per publish |
+| `vda5050.hard_action_pause_timeout` | `30.0` | Max seconds a HARD-blocking action waits for another action to confirm it paused before it's failed instead of waiting forever |
 
 ## Build & Run
 
@@ -142,24 +144,29 @@ cd src/vda5050_client_adapter
 docker compose up -d --build
 
 # Or build from source (Humble)
+sudo apt install libpaho-mqttpp-dev libpaho-mqtt-dev nlohmann-json3-dev
 colcon build --packages-select vda5050_msgs vda5050_client_adapter
 source install/setup.bash
 ros2 launch vda5050_client_adapter vda5050_client_adapter.launch.py
 ```
 
+`nlohmann-json3-dev` is optional but recommended: without it CMake fetches
+nlohmann/json from GitHub at configure time, which needs network access and
+breaks offline/air-gapped builds.
+
 ## Testing
 
 ```bash
-# 103 unit tests (all pass)
+# 115 unit tests (all pass)
 colcon test --packages-select vda5050_client_adapter
 colcon test-result --verbose
 ```
 
 | Suite | Tests | Coverage |
 |---|---|---|
-| `test_adapter_state_machine` | 3 | Mode transitions, confirmations, fault/shutdown |
-| `test_order_manager` | 29 | Accept, stitch, newBaseRequest, cancel, reject |
-| `test_action_manager` | 25 | NONE/SOFT/HARD blocking, pause/resume/cancel |
+| `test_adapter_state_machine` | 4 | Mode transitions, confirmations, fault/shutdown, pending-action supersede |
+| `test_order_manager` | 31 | Accept, stitch, newBaseRequest, cancel, reject, zone_set_id clear, edge_entered ordering |
+| `test_action_manager` | 30 | NONE/SOFT/HARD blocking, pause/resume/cancel, status transition guard, HARD-wait timeout |
 | `test_converters` | 46 | JSON round-trips, schema compliance, ROS↔internal |
 
 ## Related

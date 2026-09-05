@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <utility>
 #include <vector>
@@ -547,6 +548,132 @@ TEST(ActionManagerTest, UnknownActionIdInFeedbackIsHandledGracefully) {
   EXPECT_NO_THROW(mgr.set_action_finished("does-not-exist", ""));
   EXPECT_NO_THROW(mgr.set_action_failed("does-not-exist",  ""));
   EXPECT_NO_THROW(mgr.set_action_paused("does-not-exist"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status transition guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(ActionManagerTest, LateFeedbackCannotRegressATerminalAction) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_execute_callback([](const vda5050::Action&){});
+
+  mgr.process_instant_actions(make_instant({make_action("a1")}));
+  mgr.set_action_running("a1");
+  mgr.set_action_finished("a1", "done");
+  ASSERT_EQ(status_of(mgr, "a1"), vda5050::ActionStatus::FINISHED);
+
+  // A stale/duplicate "RUNNING" feedback arriving after FINISHED must not
+  // revive the action.
+  mgr.set_action_running("a1");
+  EXPECT_EQ(status_of(mgr, "a1"), vda5050::ActionStatus::FINISHED);
+
+  mgr.set_action_paused("a1");
+  EXPECT_EQ(status_of(mgr, "a1"), vda5050::ActionStatus::FINISHED);
+}
+
+TEST(ActionManagerTest, PausedActionCanStillBeFinishedDirectly) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_execute_callback([](const vda5050::Action&){});
+
+  mgr.process_instant_actions(make_instant({make_action("a1")}));
+  mgr.set_action_running("a1");
+  mgr.set_action_paused("a1");
+  ASSERT_EQ(status_of(mgr, "a1"), vda5050::ActionStatus::PAUSED);
+
+  mgr.set_action_finished("a1", "done while paused");
+  EXPECT_EQ(status_of(mgr, "a1"), vda5050::ActionStatus::FINISHED);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// check_timeouts — HARD action stuck waiting for another to pause
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(ActionManagerTest, StuckHardActionTimesOutWhenTheOtherActionNeverConfirmsPaused) {
+  using namespace std::chrono_literals;
+  vda5050_adapter::ActionManager mgr;
+
+  std::vector<std::string> executed, paused, resumed;
+  mgr.set_execute_callback([&](const vda5050::Action& a){ executed.push_back(a.action_id); });
+  mgr.set_pause_callback  ([&](const std::string& id)  { paused.push_back(id); });
+  mgr.set_resume_callback ([&](const std::string& id)  { resumed.push_back(id); });
+
+  mgr.process_instant_actions(make_instant({make_action("none1")}));
+  mgr.set_action_running("none1");
+
+  mgr.process_instant_actions(make_instant({
+    make_action("hard1", "t", vda5050::BlockingType::HARD)
+  }));
+  ASSERT_EQ(paused, std::vector<std::string>{"none1"});
+  // none1 never confirms PAUSED — hard1 is stuck.
+
+  const auto t0 = std::chrono::steady_clock::now();
+
+  // First check just starts the clock; not timed out yet.
+  EXPECT_FALSE(mgr.check_timeouts(t0, 10s));
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::WAITING);
+
+  // Still under the timeout.
+  EXPECT_FALSE(mgr.check_timeouts(t0 + 5s, 10s));
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::WAITING);
+
+  // Past the timeout: hard1 fails. none1 never actually confirmed paused, so
+  // there is nothing on the driver side to resume.
+  EXPECT_TRUE(mgr.check_timeouts(t0 + 11s, 10s));
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::FAILED);
+  EXPECT_TRUE(resumed.empty());
+  EXPECT_FALSE(mgr.is_hard_blocked());
+}
+
+TEST(ActionManagerTest, StuckHardActionTimeoutResumesWhicheverBlockersDidConfirmPaused) {
+  using namespace std::chrono_literals;
+  vda5050_adapter::ActionManager mgr;
+
+  std::vector<std::string> paused, resumed;
+  mgr.set_execute_callback([](const vda5050::Action&){});
+  mgr.set_pause_callback  ([&](const std::string& id) { paused.push_back(id); });
+  mgr.set_resume_callback ([&](const std::string& id) { resumed.push_back(id); });
+
+  mgr.process_instant_actions(make_instant({make_action("a1"), make_action("a2")}));
+  mgr.set_action_running("a1");
+  mgr.set_action_running("a2");
+
+  mgr.process_instant_actions(make_instant({
+    make_action("hard1", "t", vda5050::BlockingType::HARD)
+  }));
+  ASSERT_EQ(paused.size(), 2u);
+
+  // a1 confirms paused; a2 never does — hard1 stays stuck on a2.
+  mgr.set_action_paused("a1");
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::WAITING);
+
+  const auto t0 = std::chrono::steady_clock::now();
+  EXPECT_FALSE(mgr.check_timeouts(t0, 10s));  // arms the clock
+  EXPECT_TRUE(mgr.check_timeouts(t0 + 11s, 10s));
+
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::FAILED);
+  // a1 genuinely needs telling to resume; a2 was never confirmed paused.
+  ASSERT_EQ(resumed, std::vector<std::string>{"a1"});
+}
+
+TEST(ActionManagerTest, HardActionThatDispatchesInTimeIsNeverTimedOut) {
+  using namespace std::chrono_literals;
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_execute_callback([](const vda5050::Action&){});
+  mgr.set_pause_callback([](const std::string&){});
+
+  mgr.process_instant_actions(make_instant({
+    make_action("hard1", "t", vda5050::BlockingType::HARD)
+  }));
+
+  const auto t0 = std::chrono::steady_clock::now();
+  EXPECT_FALSE(mgr.check_timeouts(t0, 10s));
+  // Nothing was blocking it — hard1 dispatched immediately.
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::INITIALIZING);
+
+  // Long after what would have been a timeout, it's still fine — never armed.
+  EXPECT_FALSE(mgr.check_timeouts(t0 + 60s, 10s));
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::INITIALIZING);
 }
 
 TEST(ActionManagerTest, IdleManagerHasNoActiveActions) {

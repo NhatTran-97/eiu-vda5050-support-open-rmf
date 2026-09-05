@@ -409,6 +409,19 @@ TEST(OrderManagerTest, CancelOrderFiresCallbackAndClearsAllState) {
   EXPECT_FALSE(mgr.new_base_request());
 }
 
+TEST(OrderManagerTest, CancelOrderClearsZoneSetId) {
+  vda5050_adapter::OrderManager mgr;
+
+  auto order = make_order("o", 1, {make_node("n1", 0, true)}, {});
+  order.zone_set_id = "zone-42";
+  ASSERT_TRUE(mgr.process_order(order).accepted);
+  ASSERT_EQ(mgr.current_zone_set_id(), "zone-42");
+
+  mgr.cancel_order("o");
+
+  EXPECT_EQ(mgr.current_zone_set_id(), "");
+}
+
 TEST(OrderManagerTest, CancelWithEmptyIdCancelsCurrentOrder) {
   vda5050_adapter::OrderManager mgr;
   std::string cancelled_id;
@@ -546,6 +559,23 @@ TEST(OrderManagerTest, EdgeEnteredMovesEdgeToActiveState) {
 
   // edge_states() must still report it (active edges are included)
   EXPECT_EQ(mgr.edge_states().size(), 1u);
+}
+
+TEST(OrderManagerTest, EdgeEnteredRejectsAnEdgeThatIsNotNextInSequence) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true), make_node("n3", 4, true)},
+    {make_edge("e12", 1, true, "n1", "n2"), make_edge("e23", 3, true, "n2", "n3")}
+  )).accepted);
+
+  // e23 is not next — e12 is still the front of the remaining base edges.
+  EXPECT_FALSE(mgr.edge_entered("e23", 3));
+  EXPECT_EQ(mgr.active_edge_states().size(), 0u);
+
+  // The correct next edge still works afterwards.
+  EXPECT_TRUE(mgr.edge_entered("e12", 1));
+  ASSERT_EQ(mgr.active_edge_states().size(), 1u);
+  EXPECT_EQ(mgr.active_edge_states().front().edge_id, "e12");
 }
 
 TEST(OrderManagerTest, EdgeCompletedRemovesEdgeFromActiveState) {

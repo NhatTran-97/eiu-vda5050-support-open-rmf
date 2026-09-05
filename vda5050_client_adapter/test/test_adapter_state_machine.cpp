@@ -100,4 +100,33 @@ TEST(AdapterStateMachineTest, KeepsCancellingUntilOrderIsInactiveAndRobotStops)
   EXPECT_FALSE(sm.reported_driving());
 }
 
+TEST(AdapterStateMachineTest, ReplacedPendingPauseResumeCancelActionsAreReturned)
+{
+  AdapterStateMachine sm;
+  sm.mark_initialized();
+  sm.on_mqtt_connection_changed(true);
+  sm.on_order_state_changed(true);
+  sm.on_driver_driving_changed(true);
+
+  // A request repeated with its own id is not a replacement.
+  EXPECT_EQ(sm.request_pause("pause-1"), "");
+  EXPECT_EQ(sm.request_pause("pause-1"), "");
+
+  // A different pause id in flight before the first ever completes.
+  EXPECT_EQ(sm.request_pause("pause-2"), "pause-1");
+
+  // A resume while a pause is still pending replaces the pause.
+  EXPECT_EQ(sm.request_resume("resume-1"), "pause-2");
+  EXPECT_EQ(sm.request_resume("resume-1"), "");
+  EXPECT_EQ(sm.request_resume("resume-2"), "resume-1");
+
+  // A pause while a resume is still pending replaces the resume.
+  EXPECT_EQ(sm.request_pause("pause-3"), "resume-2");
+
+  sm.on_order_state_changed(false);
+  EXPECT_EQ(sm.request_cancel("cancel-1"), "");
+  EXPECT_EQ(sm.request_cancel("cancel-1"), "");
+  EXPECT_EQ(sm.request_cancel("cancel-2"), "cancel-1");
+}
+
 }  // namespace
