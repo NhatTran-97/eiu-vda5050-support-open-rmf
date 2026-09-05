@@ -122,6 +122,17 @@ stateDiagram-v2
 3. If the next node is released and has a `node_position`, send it to Nav2.
 4. Never skip ahead past an unreleased node.
 
+### Order updates (`OrderSession::update`)
+
+A VDA5050 order update (same `orderId`, higher `orderUpdateId`) restates the route from
+the stitch node onward, but isn't guaranteed to repeat every node/edge already known, or
+to arrive in the same vector order as before. `update()` upserts the incoming nodes/edges
+by `sequence_id` into the existing list, re-sorts by `sequence_id`, and drops any
+already-known node/edge that is **not released** (still horizon) and is absent from the
+update — VDA5050 lets Master Control freely reshape the horizon this way. A **released**
+node/edge is never dropped even if the update omits it, since release commits the AGV and
+can't be undone. See implementation notes.
+
 ### Action-only node handling
 
 Released nodes without a position are treated as immediate logical traversal points:
@@ -132,6 +143,18 @@ Released nodes without a position are treated as immediate logical traversal poi
 - advance cursor without sending a Nav2 goal
 
 This keeps the bridge compatible with the adapter's `OrderManager` and `ActionManager`.
+
+### Skipping Nav2 when already at the target (`try_complete_in_place`)
+
+Before sending a navigable node to Nav2, `dispatch_next_work()` first calls
+`try_complete_in_place()`. If the robot's current AMCL pose is already within the node's
+`allowedDeviationXy` (default 0.5 m if unset) **and**, when the node's heading is actually
+constrained (`theta_set` and `allowedDeviationTheta` below ~3 rad — i.e. not the "don't
+care" value the fleet adapter sends for most nodes), within `allowedDeviationTheta` of
+`node_position.theta` too, the node is marked reached immediately without ever going
+through Nav2. This avoids a pointless rotate-in-place when a hold-in-place order's start
+and end coincide. If the position is in tolerance but the heading isn't, it falls through
+to Nav2 instead, which issues a pure in-place rotation (goal position == current position).
 
 ---
 
@@ -200,9 +223,8 @@ Instead, `on_order` for a new order:
    preemption result is ignored.
 2. Sends the replacement goal and lets Nav2 **preempt** the old one (standard single-goal
    behavior — no race).
-3. Only if the new order needs no navigation (robot already at target, mode is not
-   `DISPATCHING`/`NAVIGATING`) does it explicitly `async_cancel_goal` the previous goal to
-   stop the robot.
+3. Only if a replacement goal was **not actually handed to Nav2** this cycle does it
+   explicitly `async_cancel_goal` the previous goal to stop the robot.
 
 The explicit `cancel:` instant action (a true cancel with no replacement) still calls
 `cancel_navigation()` to stop the robot.
@@ -259,6 +281,12 @@ Default: `/vda5050_client_adapter`
 | `nav2_action_name` | `string` | `"navigate_to_pose"` | Nav2 action server name |
 | `map_id` | `string` | `"map"` | Default map frame |
 | `position_covariance_threshold` | `double` | `0.5` | Marks `AgvPosition.position_initialized` |
+| `order_state_path` | `string` | `$HOME/.ros/tb3_vda5050_bridge_order_state.txt` | Where order progress is persisted across restarts |
+| `nav2_dispatch_timeout_sec` | `double` | `120.0` | Max time to keep retrying a node dispatch before failing the order |
+| `initial_pose_topic` | `string` | `"/initialpose"` | Where `initPosition` publishes AMCL's new initial pose |
+| `supported_action_types` | `string[]` | `[]` | VDA5050 action types this bridge actually implements |
+| `amcl_pose_timeout_sec` | `double` | `10.0` | Max age of the last AMCL pose before it stops being trusted |
+| `speed_limit_topic` | `string` | `"/speed_limit"` | Nav2's built-in speed-override input |
 
 Config file: [`config/bridge_params.yaml`](../config/bridge_params.yaml)
 

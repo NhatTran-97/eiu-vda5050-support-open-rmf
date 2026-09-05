@@ -205,4 +205,153 @@ TEST(OrderSessionTest, UpdateAppendsNewNodesBeyondTheCurrentRoute) {
   EXPECT_EQ(plan.target->incoming_edge->edge_id, "e12");
 }
 
+TEST(OrderSessionTest, UpdateWithNonNewerUpdateIdIsRejectedAndIgnored) {
+  OrderSession session;
+  vda5050_msgs::msg::Order order;
+  order.order_id = "ord-stale";
+  order.order_update_id = 5;
+  order.nodes.push_back(make_node("n0", 0, true, true));
+  order.nodes.push_back(make_node("n1", 2, false, true));  // horizon
+  session.start(order);
+
+  // Drive past n0 so n1's release state is what's actually under test.
+  auto plan = session.plan_next_work();
+  ASSERT_EQ(plan.kind, DispatchKind::NAVIGATE);
+  ASSERT_TRUE(plan.target.has_value());
+  session.complete_navigation(plan.target->node_index);
+
+  // A duplicate of the same updateId, and one that's actually older, must
+  // both be rejected without touching state — n1 stays un-released.
+  vda5050_msgs::msg::Order duplicate = order;
+  duplicate.nodes[1].released = true;
+  EXPECT_FALSE(session.update(duplicate));
+
+  vda5050_msgs::msg::Order older = order;
+  older.order_update_id = 3;
+  older.nodes[1].released = true;
+  EXPECT_FALSE(session.update(older));
+
+  plan = session.plan_next_work();
+  ASSERT_EQ(plan.kind, DispatchKind::WAITING_FOR_RELEASE);
+
+  // A genuinely newer updateId is accepted.
+  vda5050_msgs::msg::Order newer = order;
+  newer.order_update_id = 6;
+  newer.nodes[1].released = true;
+  EXPECT_TRUE(session.update(newer));
+
+  plan = session.plan_next_work();
+  ASSERT_EQ(plan.kind, DispatchKind::NAVIGATE);
+}
+
+TEST(OrderSessionTest, UpdateCannotRewriteContentOfAnAlreadyTraversedNode) {
+  OrderSession session;
+  vda5050_msgs::msg::Order order;
+  order.order_id = "ord-base";
+  order.order_update_id = 0;
+  order.nodes.push_back(make_node("n0", 0, true, true));
+  order.nodes.push_back(make_node("n1", 2, true, true));
+  order.edges.push_back(make_edge("e01", 1, "n0", "n1"));
+  session.start(order);
+
+  // Reach n0 — it (and edge e01 leading out of it) is now the traversed base.
+  auto plan = session.plan_next_work();
+  ASSERT_EQ(plan.kind, DispatchKind::NAVIGATE);
+  ASSERT_TRUE(plan.target.has_value());
+  ASSERT_EQ(plan.target->node.node_id, "n0");
+  session.complete_navigation(plan.target->node_index);
+  ASSERT_EQ(session.current_node_index(), 1u);
+
+  // A buggy/stale update echoes n0 back with different content under the
+  // same sequence_id — this must not silently rewrite already-driven history.
+  vda5050_msgs::msg::Order update;
+  update.order_id = "ord-base";
+  update.order_update_id = 1;
+  auto tampered_n0 = make_node("n0-tampered", 0, true, true);
+  tampered_n0.node_position.x = 999.0;
+  update.nodes.push_back(tampered_n0);
+  update.nodes.push_back(make_node("n1", 2, true, true));
+  update.edges.push_back(make_edge("e01", 1, "n0", "n1"));
+  ASSERT_TRUE(session.update(update));
+
+  ASSERT_EQ(session.nodes().size(), 2u);
+  EXPECT_EQ(session.nodes()[0].node_id, "n0");
+  EXPECT_DOUBLE_EQ(session.nodes()[0].node_position.x, 0.0);
+
+  plan = session.plan_next_work();
+  ASSERT_EQ(plan.kind, DispatchKind::NAVIGATE);
+  ASSERT_TRUE(plan.target.has_value());
+  EXPECT_EQ(plan.target->node.node_id, "n1");
+}
+
+TEST(OrderSessionTest, StartWithResumeCursorSkipsAlreadyTraversedNodes) {
+  OrderSession session;
+  vda5050_msgs::msg::Order order;
+  order.order_id = "ord-resume";
+  order.nodes.push_back(make_node("n0", 0, true, true));
+  order.nodes.push_back(make_node("n1", 2, true, true));
+  order.nodes.push_back(make_node("n2", 4, true, true));
+  order.edges.push_back(make_edge("e01", 1, "n0", "n1"));
+  order.edges.push_back(make_edge("e12", 3, "n1", "n2"));
+
+  session.start(order, 1);
+  EXPECT_EQ(session.current_node_index(), 1u);
+
+  const auto plan = session.plan_next_work();
+  ASSERT_EQ(plan.kind, DispatchKind::NAVIGATE);
+  ASSERT_TRUE(plan.target.has_value());
+  EXPECT_EQ(plan.target->node.node_id, "n1");
+}
+
+TEST(OrderSessionTest, NextNodeRequiresPoseToCompleteReflectsCurrentNode) {
+  OrderSession session;
+
+  // No order at all: nothing to require.
+  EXPECT_FALSE(session.next_node_requires_pose_to_complete());
+
+  vda5050_msgs::msg::Order order;
+  order.order_id = "ord-pose";
+  order.nodes.push_back(make_node("n0", 0, true, false));   // released, position-less
+  order.nodes.push_back(make_node("n1", 2, true, true));    // released, has position
+  session.start(order);
+
+  EXPECT_TRUE(session.next_node_requires_pose_to_complete());
+
+  const auto plan = session.plan_next_work();
+  ASSERT_EQ(plan.kind, DispatchKind::NAVIGATE);
+  EXPECT_EQ(plan.target->node.node_id, "n1");
+  // Cursor advanced past the position-less node onto one that has a
+  // position — nothing left that would be auto-completed on trust alone.
+  EXPECT_FALSE(session.next_node_requires_pose_to_complete());
+}
+
+TEST(OrderSessionTest, NextNodeRequiresPoseToCompleteIsFalseForUnreleasedOrPositionedNode) {
+  OrderSession session;
+
+  vda5050_msgs::msg::Order order;
+  order.order_id = "ord-pose-2";
+  order.nodes.push_back(make_node("n0", 0, true, true));    // has position
+  session.start(order);
+  EXPECT_FALSE(session.next_node_requires_pose_to_complete());
+
+  vda5050_msgs::msg::Order order2;
+  order2.order_id = "ord-pose-3";
+  order2.nodes.push_back(make_node("n0", 0, false, false)); // unreleased
+  session.start(order2);
+  EXPECT_FALSE(session.next_node_requires_pose_to_complete());
+}
+
+TEST(OrderSessionTest, StartClampsResumeCursorBeyondNodeCount) {
+  OrderSession session;
+  vda5050_msgs::msg::Order order;
+  order.order_id = "ord-resume-2";
+  order.nodes.push_back(make_node("n0", 0, true, true));
+
+  session.start(order, 99);
+  EXPECT_EQ(session.current_node_index(), 1u);
+
+  const auto plan = session.plan_next_work();
+  EXPECT_EQ(plan.kind, DispatchKind::COMPLETED);
+}
+
 }  // namespace

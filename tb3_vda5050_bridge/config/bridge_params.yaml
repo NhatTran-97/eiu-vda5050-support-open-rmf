@@ -1,20 +1,19 @@
 tb3_vda5050_bridge:
   ros__parameters:
-    # Namespace prefix used to talk to vda5050_client_adapter.
-    adapter_ns: "/vda5050_client_adapter"
+    adapter_ns: "/vda5050_client_adapter"          # Adapter namespace
+    odom_topic: "/diff_drive_controller/odom"     # Odometry topic
+    amcl_pose_topic: "/amcl_pose"                 # AMCL pose topic
+    battery_topic: "/battery_state"               # Battery state topic
+    nav2_action_name: "navigate_to_pose"          # Nav2 action name
+    map_id: "tb3_world"                           # Map ID
+    nav2_frame_id: "map"                          # Nav2 global frame
+    position_covariance_threshold: 0.5            # Max AMCL pose covariance threshold
+    supported_action_types:
+      - "initPosition"                            # Supported action types
+    initial_pose_topic: "/initialpose"            # Initial pose topic (AMCL input)
 
-    # TurtleBot3 telemetry topics.
-    odom_topic: "/diff_drive_controller/odom"
-    amcl_pose_topic: "/amcl_pose"
-    battery_topic: "/battery_state"
-
-   
-    nav2_action_name: "navigate_to_pose"
-
-    map_id: "tb3_world"
-
-
-    nav2_frame_id: "map"
-
-   
-    position_covariance_threshold: 0.5
+    # Optional: order state persistence file
+    nav2_dispatch_timeout_sec: 120.0              # Max retry time for Nav2 dispatch (sec)
+    amcl_pose_timeout_sec: 10.0                   # Max age of trusted AMCL pose (sec)
+    pose_stale_move_tolerance_m: 0.15             # Odometry drift tolerance for stale-but-stationary check (m)
+    speed_limit_topic: "/speed_limit"             # Nav2 speed-override input topic

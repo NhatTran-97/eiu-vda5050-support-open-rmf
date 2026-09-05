@@ -101,15 +101,27 @@ The bridge is designed so that **startup order does not matter**:
 
 - **Bridge starts before Nav2** — a navigation goal is not failed if the Nav2 action
   server is not up yet. The order is held and re-attempted on a 2 s timer; the goal goes
-  out as soon as Nav2 appears.
+  out as soon as Nav2 appears. Bounded by `nav2_dispatch_timeout_sec` (120s default) —
+  past that, the order fails with a `navigationError` instead of retrying forever.
 - **New order replaces an active one** — the bridge lets Nav2 **preempt** the active goal
   (sends the replacement, bumps the navigation token) instead of cancelling and re-sending
   in the same tick, which on a single-goal server races and can make Nav2 silently drop
   the new goal.
 - **Stale callbacks** — each goal carries a monotonic token; results from superseded goals
   are ignored.
+- **Restart doesn't replay a finished order** — order progress (`order_id`, node cursor,
+  terminal flag) is persisted to disk (`order_state_path`) and checked before acting on
+  what looks like a new order, so a `transient_local` order retained by a still-running
+  publisher (e.g. `robot_local_ui`'s panel, a separate systemd unit from bringup) can't make
+  a restarted bridge re-drive a route it already completed or that was cancelled. An order
+  still genuinely in progress resumes at its last cursor instead of restarting from node 0.
+- **A failed navigation is retried, not given up on immediately** — Nav2 reporting a goal
+  as failed (obstacle, transient AMCL/planner hiccup) re-attempts the same node on the same
+  2 s timer/`nav2_dispatch_timeout_sec` budget as the "Nav2 not ready yet" case above, instead
+  of stalling the order on the first hiccup. Only once that budget is exhausted does the order
+  actually fail (`navigationError`, order cleared and persisted as terminal).
 
-See [docs/architecture.md §6, §6b](docs/architecture.md) for details.
+See [docs/architecture.md §6, §6b, §10.5, §10.20](docs/architecture.md) for details.
 
 ## ROS Interface
 
@@ -131,9 +143,9 @@ See [docs/architecture.md §6, §6b](docs/architecture.md) for details.
 |---|---|---|
 | `${adapter_ns}/agv_position` | `vda5050_msgs/AgvPosition` | Robot position |
 | `${adapter_ns}/velocity` | `vda5050_msgs/Velocity` | Robot velocity |
-| `${adapter_ns}/battery_state` | `vda5050_msgs/BatteryState` | Battery feedback |
-| `${adapter_ns}/driving` | `std_msgs/Bool` | Derived from state machine |
-| `${adapter_ns}/paused` | `std_msgs/Bool` | Derived from state machine |
+| `${adapter_ns}/battery_state` | `vda5050_msgs/BatteryState` | Battery feedback — an unusable `/battery_state` reading (no percentage or voltage) republishes the last known-good value instead of fabricating one |
+| `${adapter_ns}/driving` | `std_msgs/Bool` | Derived from state machine. `transient_local`, depth 1 — a subscriber joining after the bridge started still gets the current value immediately |
+| `${adapter_ns}/paused` | `std_msgs/Bool` | Derived from state machine. `transient_local`, depth 1 — same as `driving` above |
 | `${adapter_ns}/node_reached` | `vda5050_msgs/NodeState` | Traversal event |
 | `${adapter_ns}/edge_entered` | `vda5050_msgs/EdgeState` | Edge activation event |
 | `${adapter_ns}/edge_completed` | `vda5050_msgs/EdgeState` | Edge completion event |
@@ -152,6 +164,13 @@ Config file: [`config/bridge_params.yaml`](config/bridge_params.yaml)
 | `nav2_action_name` | `navigate_to_pose` | Nav2 action server name |
 | `map_id` | `map` | Default map frame |
 | `position_covariance_threshold` | `0.5` | Threshold for `position_initialized` flag |
+| `order_state_path` | `$HOME/.ros/tb3_vda5050_bridge_order_state.txt` | Order progress persisted across restarts |
+| `nav2_dispatch_timeout_sec` | `120.0` | Max wait for Nav2 before failing a stuck order |
+| `initial_pose_topic` | `/initialpose` | Where `initPosition` publishes AMCL's new pose. Refused (`FAILED`) while an order is active, same reasoning as `robot_local_ui`'s own `setInitialPose()` guard — see [docs/architecture.md §10.21](docs/architecture.md) |
+| `supported_action_types` | `[]` | VDA5050 action types actually implemented (e.g. `initPosition`) |
+| `amcl_pose_timeout_sec` | `10.0` | Max age of the last AMCL pose before it stops being trusted — unless the robot hasn't moved since, see `pose_stale_move_tolerance_m` |
+| `pose_stale_move_tolerance_m` | `0.15` | Only checked at all once the robot has actually driven since the last AMCL confirmation — a robot never told to drive is trusted outright, however stale. For that narrower case, a stale (past `amcl_pose_timeout_sec`) AMCL pose is still trusted as long as odometry shows it hasn't moved more than this since. See [docs/architecture.md §10.22](docs/architecture.md) and [§10.23](docs/architecture.md) |
+| `speed_limit_topic` | `/speed_limit` | Nav2's speed-override input; an edge's `maxSpeed` is applied here before dispatch |
 
 ## Build & Run
 
