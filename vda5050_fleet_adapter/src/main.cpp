@@ -82,6 +82,20 @@ int main(int argc, char** argv)
                  args.config_file.c_str());
     return 1;
   }
+
+  // RMF still validates the initial RobotState battery value when building a
+  // task assignment. When battery accounting is disabled for development,
+  // report a healthy SoC to RMF until the VDA5050 client publishes trustworthy
+  // battery telemetry. Otherwise batteryCharge=0 prevents every task bid.
+  const bool account_for_battery_drain =
+    fleet_config->account_for_battery_drain();
+  if (!account_for_battery_drain)
+  {
+    RCLCPP_WARN(
+      logger,
+      "Battery accounting is disabled; reporting battery SoC=1.0 to RMF");
+  }
+
   auto fleet = adapter->add_easy_fleet(*fleet_config);
 
   // ── VDA5050 / MQTT settings (the `vda5050:` block, read by this adapter) ──
@@ -91,6 +105,12 @@ int main(int argc, char** argv)
     vda["interface_name"] ? vda["interface_name"].as<std::string>() : "uagv";
   const double update_rate_hz =
     vda["update_rate_hz"] ? vda["update_rate_hz"].as<double>() : 10.0;
+  if (!(update_rate_hz > 0.0))
+  {
+    RCLCPP_FATAL(logger, "vda5050.update_rate_hz must be > 0 (got %f)",
+                 update_rate_hz);
+    return 1;
+  }
 
   const YAML::Node mqtt = vda["mqtt"];
   const std::string host =
@@ -152,14 +172,29 @@ int main(int argc, char** argv)
       {
         try 
         {
+
+          if (!connector->is_online(name))
+          {
+            if (robot->added())
+            {
+              RCLCPP_WARN_THROTTLE(
+                logger, *adapter->node()->get_clock(), 10000,
+                "Robot '%s' is offline - no recent VDA5050 state", name.c_str());
+            }
+            continue;
+          }
+
           const auto data = connector->get_data(name);
           if (!data)
             continue;  
+          const double rmf_battery_soc = account_for_battery_drain
+            ? data->battery_soc
+            : 1.0;
           EasyFullControl::RobotState state(
             data->map_name,
             Eigen::Vector3d(data->position[0], data->position[1],
                             data->position[2]),
-            data->battery_soc);
+            rmf_battery_soc);
 
           if (!robot->added()) 
           {

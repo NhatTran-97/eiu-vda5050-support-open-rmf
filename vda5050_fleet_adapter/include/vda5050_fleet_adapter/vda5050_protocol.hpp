@@ -106,9 +106,11 @@ public:
   /// True when a valid, initialized AGV position is present.
   bool has_position() const;
 
-  /// True when `order_id` has been fully executed (no pending node/edge states,
-  /// not driving). A different reported orderId means "not finished".
-  bool order_finished(const std::string& order_id) const;
+  /// True when `order_id` has been fully executed at `target_node_id` (no
+  /// pending node/edge states, not driving). An empty target skips the final
+  /// node check.
+  bool order_finished(const std::string& order_id,
+                      const std::string& target_node_id = "") const;
 };
 
 }  // namespace vda5050_fleet_adapter::protocol

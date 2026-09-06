@@ -75,10 +75,12 @@ TEST(Protocol, OrderFinishedLogic)
 {
   auto base = nlohmann::json::parse(R"({
     "agvPosition": {"x": 1, "y": 1, "theta": 0, "positionInitialized": true},
-    "orderId": "ord-1", "driving": false,
+    "orderId": "ord-1", "lastNodeId": "dest", "driving": false,
     "nodeStates": [], "edgeStates": []
   })");
   EXPECT_TRUE(proto::ParsedState(base).order_finished("ord-1"));
+  EXPECT_TRUE(proto::ParsedState(base).order_finished("ord-1", "dest"));
+  EXPECT_FALSE(proto::ParsedState(base).order_finished("ord-1", "other"));
 
   base["driving"] = true;
   EXPECT_FALSE(proto::ParsedState(base).order_finished("ord-1"));

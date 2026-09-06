@@ -216,10 +216,12 @@ bool ParsedState::has_position() const
          position_initialized;
 }
 
-bool ParsedState::order_finished(const std::string& oid) const
+bool ParsedState::order_finished(const std::string& oid,
+                                 const std::string& target_node_id) const
 {
-
   if (oid.empty() || order_id.empty() || order_id != oid)
+    return false;
+  if (!target_node_id.empty() && last_node_id != target_node_id)
     return false;
   return node_states.empty() && edge_states.empty() && !driving;
 }

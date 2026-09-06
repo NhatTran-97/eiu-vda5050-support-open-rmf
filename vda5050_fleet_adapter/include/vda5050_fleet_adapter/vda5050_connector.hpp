@@ -32,9 +32,7 @@ struct RobotData
 ///   execute_instant_action-> publishes 'instantActions'      (custom action)
 ///   get_data()            -> reads the cached 'state'        (AGV -> RMF)
 ///   is_command_completed()-> checks the cached state vs the last order
-///
-/// Thread-safe: all per-robot data is guarded by an internal mutex. Ported from
-/// the reference RobotClientAPI.py.
+
 class Vda5050Connector : public virtual mqtt::callback
 {
 public:
@@ -91,7 +89,12 @@ private:
     std::string serial;
     std::string interface_name;
     Transform transform;
-    int header_id = 0;
+    // VDA5050 defines headerId per topic (monotonically +1 per message sent
+    // on that topic); order and instantActions are separate topics, so they
+    // need separate counters or each stream develops gaps in its own
+    // sequence.
+    int order_header_id = 0;
+    int instant_actions_header_id = 0;
     std::string current_order_id;
     std::string target_node_id;
     std::optional<protocol::ParsedState> last_state;
@@ -99,7 +102,13 @@ private:
     std::optional<bool> connected;  // nullopt = unknown
     std::chrono::steady_clock::time_point last_state_time{};
 
-    int next_header() { return header_id++; }
+    // Log throttles: remember what was last reported so a 10 Hz state stream
+    // produces one line per change instead of one line per tick.
+    std::string last_incomplete_key;
+    std::string last_errors_key;
+
+    int next_order_header() { return order_header_id++; }
+    int next_instant_actions_header() { return instant_actions_header_id++; }
   };
 
   /// Subscribe to a robot's uplink topics. Call OUTSIDE _mutex: paho client

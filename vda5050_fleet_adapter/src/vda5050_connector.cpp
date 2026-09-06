@@ -151,6 +151,28 @@ void Vda5050Connector::message_arrived(mqtt::const_message_ptr msg)
     ctx->last_state_time = std::chrono::steady_clock::now();
     if (!ctx->last_state->last_node_id.empty())
       ctx->last_node_id = ctx->last_state->last_node_id;
+
+    // Errors and pause were parsed and then dropped, so a faulted robot still
+    // looked healthy to RMF and nothing appeared in the log. Report on change.
+    std::string errors_key;
+    for (const auto& e : ctx->last_state->errors)
+      errors_key += e.dump() + ";";
+    if (ctx->last_state->paused)
+      errors_key += "paused;";
+    if (errors_key != ctx->last_errors_key)
+    {
+      if (errors_key.empty())
+      {
+        RCLCPP_INFO(_logger, "[VDA5050] %s: errors cleared",
+                    ctx->name.c_str());
+      }
+      else
+      {
+        RCLCPP_ERROR(_logger, "[VDA5050] %s reports: %s", ctx->name.c_str(),
+                     errors_key.c_str());
+      }
+      ctx->last_errors_key = errors_key;
+    }
   } else if (ends_with(proto::TOPIC_CONNECTION)) 
   {
     const std::string conn = payload.value("connectionState", std::string{});
@@ -201,7 +223,8 @@ void Vda5050Connector::navigate(const std::string& name,
   {
     std::lock_guard<std::mutex> lock(_mutex);
     auto it = _robots.find(name);
-    if (it == _robots.end()) {
+    if (it == _robots.end()) 
+    {
       RCLCPP_ERROR(_logger, "[VDA5050] navigate: unknown robot '%s'",
                    name.c_str());
       return;
@@ -211,18 +234,20 @@ void Vda5050Connector::navigate(const std::string& name,
     dest = ctx.transform.to_robot(x, y, theta);
     base = dest;
     base_id = ctx.last_node_id.empty() ? (ctx.serial + "_start") : ctx.last_node_id;
-    if (ctx.last_state.has_value() && ctx.last_state->has_position()) {
+    if (ctx.last_state.has_value() && ctx.last_state->has_position()) 
+    {
       base = {*ctx.last_state->x, *ctx.last_state->y, *ctx.last_state->theta};
     }
 
     order_id = proto::make_uuid();
     ctx.current_order_id = order_id;
     ctx.target_node_id = dest_node_id;
-    header_id = ctx.next_header();
+    header_id = ctx.next_order_header();
     manufacturer = ctx.manufacturer;
     serial = ctx.serial;
     interface_name = ctx.interface_name;
   }
+
 
   nlohmann::json nodes = nlohmann::json::array();
   nodes.push_back(proto::make_node(base_id, 0, base[0], base[1], base[2], map_id));
@@ -235,10 +260,7 @@ void Vda5050Connector::navigate(const std::string& name,
   const auto order = proto::make_order(header_id, manufacturer, serial, nodes,
                                        edges, order_id, 0);
 
-  // Publish outside any lock: the order was fully built from values copied under
-  // the lock above, so no shared state is touched here.
-  const std::string order_topic =
-    proto::topic(interface_name, manufacturer, serial, proto::TOPIC_ORDER);
+  const std::string order_topic = proto::topic(interface_name, manufacturer, serial, proto::TOPIC_ORDER);
   publish_raw(order_topic, order.dump());
   RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s' to node '%s' (%.2f, %.2f)",
               name.c_str(), order_id.c_str(), dest_node_id.c_str(), dest[0],
@@ -258,8 +280,7 @@ void Vda5050Connector::stop(const std::string& name)
 
     nlohmann::json actions = nlohmann::json::array();
     actions.push_back(proto::cancel_order_action());
-    msg = proto::make_instant_actions(ctx.next_header(), ctx.manufacturer,
-                                      ctx.serial, actions);
+    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, actions);
     topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
                          proto::TOPIC_INSTANT_ACTIONS);
     ctx.current_order_id.clear();
@@ -287,7 +308,7 @@ std::string Vda5050Connector::execute_instant_action(
     action_id = action.value("actionId", std::string{});
     nlohmann::json actions = nlohmann::json::array();
     actions.push_back(action);
-    msg = proto::make_instant_actions(ctx.next_header(), ctx.manufacturer,
+    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer,
                                       ctx.serial, actions);
     topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
                          proto::TOPIC_INSTANT_ACTIONS);
@@ -309,7 +330,7 @@ void Vda5050Connector::request_state(const std::string& name)
 
     nlohmann::json actions = nlohmann::json::array();
     actions.push_back(proto::make_action("stateRequest", "NONE", "", {}));
-    msg = proto::make_instant_actions(ctx.next_header(), ctx.manufacturer,
+    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer,
                                       ctx.serial, actions);
     topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
                          proto::TOPIC_INSTANT_ACTIONS);
@@ -347,8 +368,6 @@ std::optional<RobotData> Vda5050Connector::get_data(const std::string& name)
   RobotData data;
   data.map_name = s.map_id;
   data.position = rmf;
-  // ParsedState normalises batteryCharge to a 0.0-1.0 SoC; clamp in case the
-  // AGV reports a value outside its nominal range.
   data.battery_soc = std::clamp(s.battery_soc.value_or(1.0), 0.0, 1.0);
   return data;
 }
@@ -358,23 +377,53 @@ bool Vda5050Connector::is_command_completed(const std::string& name)
   std::lock_guard<std::mutex> lock(_mutex);
   auto it = _robots.find(name);
   if (it == _robots.end())
+  {
     return false;
-  const RobotContext& ctx = *it->second;
+  }
+    
+  RobotContext& ctx = *it->second;
   if (!ctx.last_state.has_value() || ctx.current_order_id.empty())
+  {
     return false;
+  }
 
   const auto& s = *ctx.last_state;
-  // The AGV must have acknowledged this order (its state orderId matches) before
-  // completion can be considered, otherwise a stale state reports a false finish.
+
   if (s.order_id.empty() || s.order_id != ctx.current_order_id)
+  {
     return false;
+  }
   if (s.driving)
+  {
     return false;
-  // Complete when the AGV reaches the target node, or clears all node/edge states
-  // for the order (covers the case where it is already at the target).
-  if (!ctx.target_node_id.empty() && s.last_node_id == ctx.target_node_id)
+  }
+
+  if (s.order_finished(ctx.current_order_id, ctx.target_node_id))
+  {
     return true;
-  return s.order_finished(ctx.current_order_id);
+  }
+
+  // The order has drained and the robot has stopped, so the only thing still
+  // failing is the final node check. That condition will never flip on its own,
+  // so name it once instead of letting the navigation hang without a word.
+  if (s.node_states.empty() && s.edge_states.empty() &&
+      !ctx.target_node_id.empty() && s.last_node_id != ctx.target_node_id)
+  {
+    const std::string key = ctx.current_order_id + "|" + s.last_node_id;
+    if (ctx.last_incomplete_key != key)
+    {
+      ctx.last_incomplete_key = key;
+      RCLCPP_WARN(_logger,
+                  "[VDA5050] %s drained order '%s' but reports lastNodeId '%s' "
+                  "while the order targeted '%s'. Navigation cannot complete "
+                  "until the robot echoes the nodeId this adapter sends.",
+                  name.c_str(), ctx.current_order_id.c_str(),
+                  s.last_node_id.empty() ? "(empty)" : s.last_node_id.c_str(),
+                  ctx.target_node_id.c_str());
+    }
+  }
+
+  return false;
 }
 
 std::optional<std::string> Vda5050Connector::get_action_state(
@@ -384,7 +433,8 @@ std::optional<std::string> Vda5050Connector::get_action_state(
   auto it = _robots.find(name);
   if (it == _robots.end() || !it->second->last_state.has_value())
     return std::nullopt;
-  for (const auto& a : it->second->last_state->action_states) {
+  for (const auto& a : it->second->last_state->action_states) 
+  {
     if (a.value("actionId", std::string{}) == action_id)
       return a.value("actionStatus", std::string{});
   }
@@ -396,14 +446,19 @@ bool Vda5050Connector::is_online(const std::string& name, double state_timeout_s
   std::lock_guard<std::mutex> lock(_mutex);
   auto it = _robots.find(name);
   if (it == _robots.end())
+  {
     return false;
+  }
   const RobotContext& ctx = *it->second;
   if (ctx.connected == false)
+  {
     return false;
+  }
   if (!ctx.last_state.has_value())
+  {
     return false;
-  const auto age = std::chrono::duration<double>(
-    std::chrono::steady_clock::now() - ctx.last_state_time).count();
+  }
+  const auto age = std::chrono::duration<double>(std::chrono::steady_clock::now() - ctx.last_state_time).count();
   return age <= state_timeout_s;
 }
 

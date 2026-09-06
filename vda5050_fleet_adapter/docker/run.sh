@@ -5,11 +5,19 @@ set -euo pipefail
 IMAGE="rmf_jazzy_vda"
 CONTAINER="rmf_jazzy_vda_dev"
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"   
-DOMAIN=7  
+DOMAIN=42  
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo ">> building image $IMAGE ..."
   docker build -t "$IMAGE" "$(dirname "${BASH_SOURCE[0]}")"
+fi
+
+# GUI passthrough (eiu_fleet_ui/PySide6 runs inside this container so it shares
+# one ROS2 distro with the fleet adapter — see the Dockerfile comment on why).
+# The container runs as root, so the host X server normally refuses it; grant
+# local root access for the duration of this session only.
+if [ -n "${DISPLAY:-}" ] && command -v xhost >/dev/null 2>&1; then
+  xhost +local:root >/dev/null 2>&1 || true
 fi
 
 echo ">> container=$CONTAINER  ws=$WS  domain=$DOMAIN  (network=host)"
@@ -19,6 +27,10 @@ exec docker run --rm -it \
   --name "$CONTAINER" \
   --network host \
   -e ROS_DOMAIN_ID="$DOMAIN" \
+  -e DISPLAY="${DISPLAY:-}" \
+  -e QT_QPA_PLATFORM=xcb \
+  -e QT_X11_NO_MITSHM=1 \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   -v "$WS":/ros2_ws \
   -w /ros2_ws \
   "$IMAGE" bash

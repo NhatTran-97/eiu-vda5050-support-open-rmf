@@ -22,23 +22,20 @@ rmf_fleet:
   recharge_threshold: 0.10
   recharge_soc: 1.0
   publish_fleet_state: 10.0
-  account_for_battery_drain: true
+
+  account_for_battery_drain: false
   task_capabilities:
     loop: true
     delivery: true
   actions: ["dock"]
-  finishing_request: "park"   # park | charge | nothing
+
+  finishing_request: "charge"   # park | charge | nothing
 
   robots:
     tb3_1:
-      charger: "wp1_charging" 
+      charger: "charger_1"
 
       responsive_wait: false
-    # To add a second robot you need another is_charger waypoint in the nav graph,
-    # e.g. wp7_charging, then:
-    # tb3_2:
-    #   charger: "wp7_charging"
-    #   responsive_wait: true   # enable for multi-robot contention
 
 # --------------------------------------------------------------------------- #
 # VDA5050 / MQTT settings (consumed by vda5050_fleet_adapter, not RMF core)

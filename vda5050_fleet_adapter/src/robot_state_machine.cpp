@@ -1,11 +1,19 @@
 #include "vda5050_fleet_adapter/robot_state_machine.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <utility>
 
 #include <rclcpp/logging.hpp>
 
 namespace vda5050_fleet_adapter {
+
+namespace {
+// How long a single navigation may run before we start complaining, and how
+// often to repeat the complaint afterwards.
+constexpr double kNavWarnAfterSec = 120.0;
+constexpr double kNavWarnEverySec = 60.0;
+}  // namespace
 
 RobotStateMachine::RobotStateMachine(rclcpp::Logger logger, Vda5050Connector& connector, std::string robot_name)
 : _logger(std::move(logger)), _connector(connector), _name(std::move(robot_name))
@@ -27,9 +35,11 @@ std::string RobotStateMachine::derive_node_id(const std::string& name,
   {
     return "wp_" + std::to_string(*graph_index);
   }
-    
+
+  const auto snap_zero = [](double v) { return std::fabs(v) < 0.005 ? 0.0 : v; };
+
   char buf[48];
-  std::snprintf(buf, sizeof(buf), "%.2f_%.2f", x, y);
+  std::snprintf(buf, sizeof(buf), "%.2f_%.2f", snap_zero(x), snap_zero(y));
   return buf;
 }
 
@@ -40,8 +50,24 @@ void RobotStateMachine::on_navigate(
   const std::string node_id = derive_node_id(destination.name(), destination.graph_index(), p.x(), p.y());
 
   std::lock_guard<std::mutex> lock(_mutex);
+
+  if (_state == State::EXECUTING_ACTION && _action_exec.has_value())
+  {
+
+    RCLCPP_ERROR(_logger,
+                 "[%s] navigate requested while action '%s' was still "
+                 "executing - abandoning that action so RMF is not left "
+                 "waiting on it",
+                 _name.c_str(), _action_id.c_str());
+    _action_exec->error("Superseded by a navigate command before finishing");
+    _action_exec.reset();
+    _action_id.clear();
+  }
+
   _nav_exec = std::move(execution);
   _state = State::NAVIGATING;
+  _nav_started = std::chrono::steady_clock::now();
+  _nav_last_warn = _nav_started;
 
   RCLCPP_INFO(_logger, "[%s] navigate -> (%.2f, %.2f, %.2f) node '%s' map '%s'",
               _name.c_str(), p.x(), p.y(), p.z(), node_id.c_str(),
@@ -53,6 +79,27 @@ void RobotStateMachine::on_navigate(
 void RobotStateMachine::on_stop(ConstActivityIdentifierPtr activity)
 {
   std::lock_guard<std::mutex> lock(_mutex);
+
+  // A stop arriving mid-action used to be dropped silently, leaving the robot
+  // running an action RMF believes it has cancelled.
+  if (_state == State::EXECUTING_ACTION && _action_exec.has_value())
+  {
+    const auto current = _action_exec->identifier();
+    if (activity && current && !(*activity == *current))
+      return;
+
+
+    RCLCPP_WARN(_logger,
+                "[%s] stop requested during action '%s' - VDA5050 offers no "
+                "way to cancel a running instantAction, so the AGV will keep "
+                "executing it; RMF is releasing this activity regardless",
+                _name.c_str(), _action_id.c_str());
+    _action_exec.reset();
+    _action_id.clear();
+    _state = State::IDLE;
+    return;
+  }
+
   if (_state != State::NAVIGATING || !_nav_exec.has_value())
     return;
   const auto current = _nav_exec->identifier();
@@ -80,7 +127,20 @@ void RobotStateMachine::on_action(const std::string& category,
 
   std::lock_guard<std::mutex> lock(_mutex);
   RCLCPP_INFO(_logger, "[%s] action '%s'", _name.c_str(), category.c_str());
-  _action_id = _connector.execute_instant_action(_name, category, params);
+
+  const std::string action_id =
+    _connector.execute_instant_action(_name, category, params);
+  if (action_id.empty())
+  {
+    
+    RCLCPP_ERROR(_logger,
+                 "[%s] action '%s' was not published - robot is not registered "
+                 "with the VDA5050 connector; staying IDLE",
+                 _name.c_str(), category.c_str());
+    return;
+  }
+
+  _action_id = action_id;
   _action_exec = std::move(execution);
   _state = State::EXECUTING_ACTION;
 }
@@ -98,6 +158,22 @@ RobotStateMachine::on_state_update()
       _nav_exec.reset();
       _state = State::IDLE;
       return nullptr;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const double waiting =
+      std::chrono::duration<double>(now - _nav_started).count();
+    const double since_warn =
+      std::chrono::duration<double>(now - _nav_last_warn).count();
+    if (waiting > kNavWarnAfterSec && since_warn > kNavWarnEverySec)
+    {
+      _nav_last_warn = now;
+      RCLCPP_ERROR(_logger,
+                   "[%s] navigation still not complete after %.0f s and RMF is "
+                   "blocked waiting for it. Check that the robot echoes "
+                   "lastNodeId equal to the nodeId this adapter sent, and that "
+                   "nodeStates/edgeStates drain.",
+                   _name.c_str(), waiting);
     }
     return _nav_exec->identifier();
   }

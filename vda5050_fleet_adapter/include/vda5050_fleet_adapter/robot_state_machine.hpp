@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -13,17 +14,6 @@
 
 namespace vda5050_fleet_adapter {
 
-/// Explicit per-robot command-lifecycle state machine.
-///
-///        on_navigate                 arrived (state)
-///   IDLE ───────────────► NAVIGATING ───────────────► IDLE
-///     │  on_action                     FINISHED/FAILED
-///     └──────────────► EXECUTING_ACTION ─────────────► IDLE
-///   (on_stop in NAVIGATING -> cancelOrder -> IDLE)
-///
-/// Because EasyFullControl issues navigation ONE destination at a time and waits
-/// for finished() before the next, each VDA5050 order carries a single
-/// destination and orders never overlap — no stitch / order-update needed.
 class RobotStateMachine
 {
 public:
@@ -69,6 +59,11 @@ private:
   std::optional<EasyFullControl::CommandExecution> _nav_exec;
   std::optional<RobotUpdateHandle::ActionExecution> _action_exec;
   std::string _action_id;
+
+  // Deadline bookkeeping for the current navigation. A navigation that never
+  // completes leaves RMF waiting forever with no log, so we at least say so.
+  std::chrono::steady_clock::time_point _nav_started{};
+  std::chrono::steady_clock::time_point _nav_last_warn{};
 };
 
 }  // namespace vda5050_fleet_adapter
