@@ -34,6 +34,7 @@ add_library(${PROJECT_NAME}_core SHARED
   src/mqtt/mqtt_client.cpp
   src/vda5050/message_builder.cpp
   src/vda5050/state_handler.cpp
+  src/vda5050/factsheet_handler.cpp
   src/vda5050/order_handler.cpp
   src/vda5050/instant_action_handler.cpp
   src/rmf/connector.cpp

@@ -113,12 +113,14 @@ int run_fleet_adapter(int argc, char **argv)
                         {
                             if (robot->added())
                             {
+                                robot->set_online(false);
                                 RCLCPP_WARN_THROTTLE(
                                     logger, *adapter->node()->get_clock(), 10000,
                                     "Robot '%s' is offline - no recent VDA5050 state", name.c_str());
                             }
                             continue;
                         }
+                        robot->set_online(true);
 
                         const auto data = connector->get_data(name);
                         if (!data)

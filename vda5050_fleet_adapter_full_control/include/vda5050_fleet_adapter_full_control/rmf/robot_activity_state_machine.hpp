@@ -22,7 +22,7 @@ public:
     using RobotUpdateHandle = rmf_fleet_adapter::agv::RobotUpdateHandle;
     using ConstActivityIdentifierPtr = RobotUpdateHandle::ConstActivityIdentifierPtr;
 
-    enum class State { IDLE, NAVIGATING, EXECUTING_ACTION };
+    enum class State { IDLE, NAVIGATING, EXECUTING_ACTION, LOCALIZING };
 
     RobotActivityStateMachine(rclcpp::Logger logger, Connector &connector,
                               std::string robot_name);
@@ -37,6 +37,14 @@ public:
     // RMF asks the robot to perform a custom action (e.g. dock).
     void on_action(const std::string &category, const nlohmann::json &description,
                    RobotUpdateHandle::ActionExecution execution);
+
+    // RMF asks the robot to re-localize at an estimated pose, forwarded as a
+    // VDA5050 initPosition instant action. Note the asymmetry with
+    // on_action(): CommandExecution has no error(), so a rejected
+    // re-localization can only be logged -- finished() is withheld rather
+    // than confirming a pose the AGV never adopted.
+    void on_localize(const EasyFullControl::Destination &estimate,
+                     EasyFullControl::CommandExecution execution);
 
     // Drive transitions from the latest cached VDA5050 state and return the
     // activity currently underway (to pass to EasyRobotUpdateHandle::update).
@@ -60,6 +68,8 @@ private:
     std::optional<EasyFullControl::CommandExecution> _nav_exec;
     std::optional<RobotUpdateHandle::ActionExecution> _action_exec;
     std::string _action_id;
+    std::optional<EasyFullControl::CommandExecution> _localize_exec;
+    std::string _localize_action_id;
 
     // Deadline bookkeeping for the current navigation. A navigation that
     // never completes leaves RMF waiting forever with no log, so we at

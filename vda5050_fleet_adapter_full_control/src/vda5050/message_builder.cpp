@@ -44,7 +44,9 @@ std::string now_iso()
 
 std::string make_uuid()
 {
-    static thread_local std::mt19937_64 gen{std::random_device{}()};
+    static thread_local std::mt19937_64 gen{
+        std::random_device{}()
+    };
     std::uniform_int_distribution<uint32_t> d;
     char buf[37];
     const uint32_t a = d(gen), b = d(gen), c = d(gen), e = d(gen);
@@ -137,9 +139,10 @@ nlohmann::json make_instant_actions(int header_id, const std::string& manufactur
     return msg;
 }
 
-nlohmann::json cancel_order_action(const std::string& action_id)
+nlohmann::json cancel_order_action(const std::string& action_id,
+                                   const std::string& blocking_type)
 {
-    return make_action("cancelOrder", "HARD", action_id);
+    return make_action("cancelOrder", blocking_type, action_id);
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050

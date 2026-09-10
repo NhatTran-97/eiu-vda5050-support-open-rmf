@@ -59,7 +59,8 @@ nlohmann::json make_instant_actions(int header_id,
                                     const std::string &manufacturer,
                                     const std::string &serial, const nlohmann::json &actions);
 
-nlohmann::json cancel_order_action(const std::string &action_id = "");
+nlohmann::json cancel_order_action(const std::string &action_id = "",
+                                   const std::string &blocking_type = "HARD");
 
 std::string make_uuid();
 

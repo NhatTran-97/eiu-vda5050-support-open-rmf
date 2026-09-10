@@ -2,6 +2,7 @@
 #define ROBOT_HPP
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include <rclcpp/logger.hpp>
@@ -30,11 +31,20 @@ public:
 
     void update(const EasyFullControl::RobotState &state);
 
+    // Tell RMF whether this robot is still reachable. A robot whose VDA5050
+    // state has gone stale is decommissioned, so RMF stops dispatching to it
+    // and stops trusting its last pose; it is recommissioned when state
+    // starts arriving again. Acts only on a change, so calling it every
+    // update cycle is cheap. No-op until the robot has been added to RMF.
+    void set_online(bool online);
+
 private:
     rclcpp::Logger _logger;
     std::string _name;
     rmf::RobotActivityStateMachine _sm;
     std::shared_ptr<EasyFullControl::EasyRobotUpdateHandle> _update_handle;
+    // nullopt until set_online() has been told either way.
+    std::optional<bool> _online;
 };
 
 }  // namespace vda5050_fleet_adapter_full_control::core

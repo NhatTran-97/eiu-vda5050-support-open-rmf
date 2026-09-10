@@ -14,6 +14,7 @@
 
 #include "vda5050_fleet_adapter_full_control/mqtt/mqtt_client.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/state_handler.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/factsheet_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/transform.hpp"
 
 namespace vda5050_fleet_adapter_full_control::rmf {
@@ -57,8 +58,19 @@ public:
                   double x, double y, double theta, const std::string &map_id,
                   std::optional<double> speed_limit = std::nullopt);
 
-    // Publish a cancelOrder instantAction.
+    // Publish a cancelOrder instantAction: the AGV drops the current order
+    // entirely. Use pause() instead for a hold the robot can resume from.
     void stop(const std::string &name);
+
+    // Publish a startPause instantAction: the AGV stops moving but keeps its
+    // current order, so resume() can continue it. Unlike stop(), the tracked
+    // order id is deliberately kept, so is_command_completed() still refers
+    // to the order the robot is holding.
+    void pause(const std::string &name);
+
+    // Publish a stopPause instantAction, continuing the order the AGV was
+    // holding after pause().
+    void resume(const std::string &name);
 
     // Publish a custom instantAction; returns the generated actionId.
     std::string execute_instant_action(
@@ -68,6 +80,14 @@ public:
     // Publish a stateRequest instantAction so the robot reports its state
     // immediately, instead of waiting for the next periodic state.
     void request_state(const std::string &name);
+
+    // Publish an initPosition instantAction telling the AGV to re-seed its
+    // localization at (x, y, theta), given in RMF coordinates and converted
+    // to the robot frame here. Returns the generated actionId so the caller
+    // can follow it with get_action_state(), or an empty string if the robot
+    // is unknown. AGVs commonly refuse this while an order is running.
+    std::string init_position(const std::string &name, double x, double y,
+                              double theta, const std::string &map_id);
 
     // ── AGV -> RMF (uplink) ──────────────────────────────────────────────
     std::optional<RobotData> get_data(const std::string &name);
@@ -92,6 +112,10 @@ private:
         std::string current_order_id;
         std::string target_node_id;
         std::optional<vda5050::ParsedState> last_state;
+        // What the AGV declared about itself. Arrives once per MQTT session:
+        // the robot publishes it retained on connect, so subscribing is
+        // enough -- this adapter never has to ask for it.
+        std::optional<vda5050::ParsedFactsheet> factsheet;
         std::string last_node_id;
         std::optional<bool> connected;  // nullopt = unknown
         std::chrono::steady_clock::time_point last_state_time{};
@@ -113,6 +137,19 @@ private:
     // Publish a fully-formed payload to a topic, logging (not throwing) if
     // it gets dropped.
     void publish_raw(const std::string &topic, const std::string &payload);
+    // The blockingType to send this robot for `action_type`: whatever its
+    // factsheet declares, or `preferred` when no factsheet has arrived yet.
+    // Call under _mutex.
+    static std::string blocking_type_for(const RobotContext &ctx,
+                                         const std::string &action_type,
+                                         const std::string &preferred);
+    // Log anything about a pending navigation that looks unusable (empty
+    // ids, non-finite pose, a speed limit the AGV's factsheet says it cannot
+    // do). Warn-only by design -- see the call site. Call under _mutex.
+    void warn_if_unroutable(const RobotContext &ctx, const std::string &dest_node_id,
+                            double x, double y, double theta,
+                            const std::string &map_id,
+                            std::optional<double> speed_limit) const;
 
     // Wired to _mqtt_client's callbacks.
     void on_connected();

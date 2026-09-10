@@ -109,6 +109,12 @@ void RobotActivityStateMachine::on_stop(ConstActivityIdentifierPtr activity)
         return;
     }
 
+    // cancelOrder, not startPause: RMF calls this to abandon the navigation
+    // command outright (it does its own holding by issuing different
+    // navigate commands). Pausing here would leave the AGV holding an order
+    // RMF believes is gone. A resumable hold is the operator-driven flow
+    // instead -- RobotUpdateHandle::interrupt() paired with
+    // Connector::pause()/resume().
     RCLCPP_INFO(_logger, "[%s] stop", _name.c_str());
     _connector.stop(_name);
     _nav_exec.reset();
@@ -149,12 +155,51 @@ void RobotActivityStateMachine::on_action(const std::string &category,
     _state = State::EXECUTING_ACTION;
 }
 
+void RobotActivityStateMachine::on_localize(const EasyFullControl::Destination &estimate,
+                                            EasyFullControl::CommandExecution execution)
+{
+    const Eigen::Vector3d p = estimate.position();
+
+    std::lock_guard<std::mutex> lock(_mutex);
+    RCLCPP_INFO(_logger, "[%s] localize -> (%.2f, %.2f, %.2f) map '%s'",
+                _name.c_str(), p.x(), p.y(), p.z(), estimate.map().c_str());
+
+    const std::string action_id =
+        _connector.init_position(_name, p.x(), p.y(), p.z(), estimate.map());
+    if (action_id.empty())
+    {
+        RCLCPP_ERROR(_logger,
+                     "[%s] initPosition was not published - robot is not registered "
+                     "with the VDA5050 connector; staying %s",
+                     _name.c_str(), _state == State::IDLE ? "IDLE" : "as-is");
+        return;
+    }
+
+    _localize_action_id = action_id;
+    _localize_exec = std::move(execution);
+    _state = State::LOCALIZING;
+}
+
 RobotActivityStateMachine::ConstActivityIdentifierPtr RobotActivityStateMachine::on_state_update()
 {
     std::lock_guard<std::mutex> lock(_mutex);
 
     if (_state == State::NAVIGATING && _nav_exec.has_value())
     {
+        // RMF dropped this command without routing it through on_stop() --
+        // otherwise _nav_exec would already be reset. Stop the AGV too, or it
+        // keeps driving to a destination nobody is waiting for.
+        if (!_nav_exec->okay())
+        {
+            RCLCPP_WARN(_logger,
+                        "[%s] navigation was stopped by RMF -- cancelling the AGV's order",
+                        _name.c_str());
+            _connector.stop(_name);
+            _nav_exec.reset();
+            _state = State::IDLE;
+            return nullptr;
+        }
+
         if (_connector.is_command_completed(_name))
         {
             RCLCPP_INFO(_logger, "[%s] navigation completed", _name.c_str());
@@ -180,8 +225,67 @@ RobotActivityStateMachine::ConstActivityIdentifierPtr RobotActivityStateMachine:
         return _nav_exec->identifier();
     }
 
+    if (_state == State::LOCALIZING && _localize_exec.has_value())
+    {
+        // Nothing to cancel on the AGV: initPosition either took effect or
+        // it did not, and VDA5050 offers no way to withdraw an instant
+        // action already sent.
+        if (!_localize_exec->okay())
+        {
+            RCLCPP_WARN(_logger, "[%s] localization was stopped by RMF", _name.c_str());
+            _localize_exec.reset();
+            _localize_action_id.clear();
+            _state = State::IDLE;
+            return nullptr;
+        }
+
+        const auto status = _connector.get_action_state(_name, _localize_action_id);
+        if (status == "FINISHED")
+        {
+            RCLCPP_INFO(_logger, "[%s] re-localized (initPosition %s)", _name.c_str(),
+                        _localize_action_id.c_str());
+            _localize_exec->finished();
+            _localize_exec.reset();
+            _localize_action_id.clear();
+            _state = State::IDLE;
+            return nullptr;
+        }
+        if (status == "FAILED")
+        {
+            // finished() is deliberately not called: CommandExecution has no
+            // error(), and confirming a re-localization the AGV rejected
+            // would leave RMF planning from a pose the robot never adopted.
+            // The operator sees this log and can retry.
+            RCLCPP_ERROR(_logger,
+                         "[%s] initPosition %s FAILED on the AGV -- RMF still believes "
+                         "this robot is where it was; re-issue the localization once "
+                         "the AGV is idle",
+                         _name.c_str(), _localize_action_id.c_str());
+            _localize_exec.reset();
+            _localize_action_id.clear();
+            _state = State::IDLE;
+            return nullptr;
+        }
+        return _localize_exec->identifier();
+    }
+
     if (_state == State::EXECUTING_ACTION && _action_exec.has_value())
     {
+        // Same trade-off on_stop() documents: VDA5050 cannot withdraw an
+        // instant action already sent, so the AGV keeps executing it while
+        // RMF has moved on. Release it here rather than polling forever.
+        if (!_action_exec->okay())
+        {
+            RCLCPP_WARN(_logger,
+                        "[%s] action %s was stopped by RMF -- the AGV may still be "
+                        "executing it, VDA5050 offers no way to cancel it",
+                        _name.c_str(), _action_id.c_str());
+            _action_exec.reset();
+            _action_id.clear();
+            _state = State::IDLE;
+            return nullptr;
+        }
+
         const auto status = _connector.get_action_state(_name, _action_id);
         if (status == "FINISHED")
         {
