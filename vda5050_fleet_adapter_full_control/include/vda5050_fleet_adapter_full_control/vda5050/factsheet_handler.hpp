@@ -55,8 +55,7 @@ public:
 
     // Selects the preferred blocking type when supported, otherwise the first
     // declared type. Returns `preferred` when no declaration is available.
-    std::string blocking_type_for(const std::string &action_type,
-                                  const std::string &preferred = "HARD") const;
+    std::string blocking_type_for(const std::string &action_type, const std::string &preferred = "HARD") const;
 
     // True when at least one supported factsheet field was parsed.
     bool has_content() const;

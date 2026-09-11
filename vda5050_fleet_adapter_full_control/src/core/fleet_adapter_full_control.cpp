@@ -167,6 +167,10 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         std::map<std::string, RobotSetup> robot_setup;
 
         std::map<std::string, std::shared_ptr<rmf::VdaRobotCommandHandle>> robots;
+        // One counter per robot, bumped on every add_robot() attempt --
+        // handle_cb checks its own captured value against it, so a
+        // superseded (timed-out) attempt can't register a stale handle.
+        std::map<std::string, std::shared_ptr<std::atomic<int>>> registration_generation;
         std::set<std::pair<std::string, std::string>> seen_identities;
         for (const auto &name : fleet_config->known_robots())
         {
@@ -181,7 +185,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             connector->add_robot(name, rc.manufacturer, rc.serial, rc.transform);
             robots[name] = std::make_shared<rmf::VdaRobotCommandHandle>(
                 logger, name, *connector, graph, nominal_speed,
-                adapter->node()->get_clock());
+                adapter->node()->get_clock(), config.honor_waypoint_timing());
 
             RobotSetup setup;
             setup.responsive_wait = fleet_config->default_responsive_wait();
@@ -208,6 +212,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                 }
             }
             robot_setup[name] = setup;
+            registration_generation[name] = std::make_shared<std::atomic<int>>(0);
         }
 
         // Register operator controls on the adapter node.
@@ -289,9 +294,23 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             }
 
                             const RobotSetup setup = robot_setup.at(name);
-                            auto handle_cb = [command, name, logger, setup](
+                            const auto generation = registration_generation.at(name);
+                            const int this_attempt = ++(*generation);
+                            auto handle_cb = [command, name, logger, setup, generation,
+                                              this_attempt](
                                 std::shared_ptr<rmf_fleet_adapter::agv::RobotUpdateHandle> handle)
                             {
+                                if (generation->load() != this_attempt)
+                                {
+                                    // Arrived after a retry started a newer
+                                    // attempt -- registering it risks a
+                                    // second RMF participant for this robot.
+                                    RCLCPP_WARN(logger,
+                                                "Robot '%s' registration callback arrived "
+                                                "after a retry superseded it -- ignoring",
+                                                name.c_str());
+                                    return;
+                                }
                                 // Apply settings owned by the FullControl caller.
                                 if (setup.charger_index.has_value())
                                 {

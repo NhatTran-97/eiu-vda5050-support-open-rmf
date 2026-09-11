@@ -43,6 +43,13 @@ public:
     const std::string &interface_name() const { return _interface_name; }
     double update_rate_hz() const { return _update_rate_hz; }
     const MqttConfig &mqtt() const { return _mqtt; }
+    // When true, an order releases only as far as Plan::Waypoint::time()
+    // allows, growing via VDA5050 order updates as those times pass --
+    // the AGV waits at the release boundary instead of outrunning RMF's
+    // schedule. Off by default: a lone robot has nothing to protect
+    // against. Also permanently disables RobotUpdateHandle::maximum_delay()
+    // (see set_update_handle()).
+    bool honor_waypoint_timing() const { return _honor_waypoint_timing; }
 
     // Missing optional values use the default manufacturer, the robot name as
     // serial, and an identity transform.
@@ -51,6 +58,7 @@ public:
 private:
     std::string _interface_name = "uagv";
     double _update_rate_hz = 10.0;
+    bool _honor_waypoint_timing = false;
     MqttConfig _mqtt;
     YAML::Node _robots_cfg;
 };

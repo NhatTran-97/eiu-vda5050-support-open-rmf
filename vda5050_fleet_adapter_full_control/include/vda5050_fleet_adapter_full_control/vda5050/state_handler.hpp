@@ -93,9 +93,7 @@ public:
 
     // Checks route completion for a tracked order and optional target node.
     // The caller must clear its tracked order after issuing cancelOrder.
-    bool order_finished(const std::string &order_id,
-                        const std::string &target_node_id = "",
-                        const std::vector<std::string> &order_action_ids = {}) const;
+    bool order_finished(const std::string &order_id, const std::string &target_node_id = "", const std::vector<std::string> &order_action_ids = {}) const;
 
     // Returns false when a supplied action is reported in a non-terminal state.
     // Missing and unrelated action states are ignored.

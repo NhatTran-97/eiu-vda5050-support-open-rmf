@@ -12,9 +12,8 @@ namespace vda5050_fleet_adapter_full_control::rmf {
 class Transform
 {
 public:
-    Transform(double rotation = 0.0, double scale = 1.0, double tx = 0.0, double ty = 0.0)
-      : _rotation(rotation), _scale(scale), _tx(tx), _ty(ty),
-        _c(std::cos(rotation)), _s(std::sin(rotation))
+    Transform(double rotation = 0.0, double scale = 1.0, double tx = 0.0, double ty = 0.0) : _rotation(rotation), _scale(scale), _tx(tx), _ty(ty),
+                                                                                            _c(std::cos(rotation)), _s(std::sin(rotation))
     {
     }
 

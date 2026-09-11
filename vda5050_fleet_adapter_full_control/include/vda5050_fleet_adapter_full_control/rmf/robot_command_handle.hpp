@@ -32,12 +32,14 @@ public:
     using RequestCompleted = Base::RequestCompleted;
 
     // `connector` and `graph` must outlive this object. `clock` must use
-    // the same time source as the RMF plan.
+    // the same time source as the RMF plan. See Config::honor_waypoint_timing()
+    // for what `honor_waypoint_timing` does.
     VdaRobotCommandHandle(rclcpp::Logger logger, std::string name,
                           Connector &connector,
                           std::shared_ptr<const rmf_traffic::agv::Graph> graph,
                           double nominal_speed,
-                          rclcpp::Clock::SharedPtr clock);
+                          rclcpp::Clock::SharedPtr clock,
+                          bool honor_waypoint_timing = false);
 
     // rmf_fleet_adapter::agv::RobotCommandHandle
     void follow_new_path(
@@ -71,22 +73,32 @@ public:
     std::string resume();
 
     // Derives a stable VDA5050 nodeId from RMF waypoint metadata.
-    static std::string derive_node_id(const std::string &name,
-                                      std::optional<std::size_t> graph_index,
-                                      double x, double y);
+    static std::string derive_node_id(const std::string &name, std::optional<std::size_t> graph_index, double x, double y);
 
 private:
-    // Progress state for the active RMF path.
+    // Progress state for the active RMF path. May be indexed from RMF
+    // waypoints[1], not [0] -- see follow_new_path(); waypoint_offset
+    // records which, so ArrivalEstimator's path_index can add it back.
     struct ActivePath
     {
         // VDA5050 orderId associated with this path.
         std::string order_id;
         std::vector<std::string> node_ids;  // one per RMF path index
         std::vector<Eigen::Vector3d> positions;
-        // Planned arrival times used for schedule diagnostics. The current
-        // VDA5050 order does not encode waypoint hold times.
+        // Planned arrival times used for schedule diagnostics. The current VDA5050 order does not encode waypoint hold times.
         std::vector<rmf_traffic::Time> times;
         std::size_t next_index = 0;
+        // 0 or 1: how many leading RMF waypoints were dropped as redundant
+        // with the AGV's current pose before this path was built.
+        std::size_t waypoint_offset = 0;
+        // How many leading route points are released, as last published --
+        // meaningful only when honor_waypoint_timing() is on. Mirrors
+        // Connector::RobotContext::current_released_count.
+        std::size_t released_count = 0;
+        // Set once a stuck-order timeout has already triggered a replan
+        // for this path, so a stuck order is reported and replanned once,
+        // not every update() tick until it resolves.
+        bool replan_requested = false;
         ArrivalEstimator arrival_estimator;
         RequestCompleted finished;
     };
@@ -95,11 +107,11 @@ private:
     std::string node_id_for(const rmf_traffic::agv::Plan::Waypoint &wp) const;
 
     // Returns the most restrictive approach-lane speed limit for a waypoint.
-    std::optional<double> lane_speed_limit(
-        const rmf_traffic::agv::Plan::Waypoint &wp) const;
+    std::optional<double> lane_speed_limit(const rmf_traffic::agv::Plan::Waypoint &wp) const;
+
     // Estimates travel time from the measured or nominal linear speed.
-    double estimate_seconds(const Eigen::Vector3d &from, const Eigen::Vector3d &to,
-                            const std::optional<vda5050::Velocity> &velocity) const;
+    double estimate_seconds(const Eigen::Vector3d &from, const Eigen::Vector3d &to, const std::optional<vda5050::Velocity> &velocity) const;
+    
     // Applies the current commission decision to RMF when it changes.
     void apply_commission();
 
@@ -109,6 +121,7 @@ private:
     std::shared_ptr<const rmf_traffic::agv::Graph> _graph;
     double _nominal_speed;
     rclcpp::Clock::SharedPtr _clock;
+    bool _honor_waypoint_timing;
 
     // Protects command state shared by RMF and the update loop.
     mutable std::mutex _mutex;

@@ -15,6 +15,7 @@
 #include "vda5050_fleet_adapter_full_control/mqtt/mqtt_client.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/state_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/factsheet_handler.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/order_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/transform.hpp"
 
 namespace vda5050_fleet_adapter_full_control::rmf {
@@ -54,6 +55,10 @@ struct RobotData
     vda5050::SafetyState safety_state;
     // First FATAL error type reported by the AGV.
     std::string fatal_error;
+    // state.paused: the AGV itself reports being on hold, regardless of who
+    // requested it (this fleet's own pause(), a local control panel, or
+    // another master).
+    bool paused = false;
     // The AGV is asking for more of the order horizon to be released.
     bool new_base_request = false;
     // agvPosition.localizationScore, when the AGV scores its localization.
@@ -62,7 +67,7 @@ struct RobotData
     // True when the AGV can accept master-control orders.
     bool ready_for_orders() const
     {
-        return operable && !safety_state.triggered() && fatal_error.empty();
+        return operable && !safety_state.triggered() && fatal_error.empty() && !paused;
     }
 };
 
@@ -71,8 +76,7 @@ struct RobotData
 class Connector
 {
 public:
-    Connector(rclcpp::Logger logger, std::string broker_url,
-              std::string interface_name,
+    Connector(rclcpp::Logger logger, std::string broker_url, std::string interface_name,
               std::optional<std::string> username = std::nullopt,
               std::optional<std::string> password = std::nullopt);
     ~Connector();
@@ -103,9 +107,21 @@ public:
         CommandStatus status = CommandStatus::queued;
         std::string order_id;
     };
+
+    // `released_count`: how many of `route`'s points are released;
+    // nullopt releases the whole route. A smaller value leaves the rest
+    // as VDA5050 horizon, grown later by release_more().
     NavigateResult navigate_route(const std::string &name,
                                   const std::vector<RoutePoint> &route,
-                                  const std::string &map_id);
+                                  const std::string &map_id,
+                                  std::optional<std::size_t> released_count = std::nullopt);
+
+    // Releases more of the route already sent by navigate_route(): same
+    // orderId, orderUpdateId incremented, already-released nodes/edges
+    // unchanged (a valid stitch, not a new order). Returns
+    // transport_failed, with no state change, if there's no active route
+    // to extend or `released_count` doesn't exceed what's released.
+    CommandStatus release_more(const std::string &name, std::size_t released_count);
 
     // Sets an operator speed cap for subsequent orders. The effective edge
     // limit is the minimum of this value and the navigation-graph limit.
@@ -141,6 +157,11 @@ public:
     // AGV -> RMF
     std::optional<RobotData> get_data(const std::string &name);
     bool is_command_completed(const std::string &name);
+
+    // True when the AGV has reported a different orderId (or none) for
+    // longer than `timeout_s` -- covers a rejected or silently dropped
+    // order.
+    bool is_order_stuck(const std::string &name, double timeout_s = 15.0) const;
     std::optional<std::string> get_action_state(const std::string &name,
                                                 const std::string &action_id);
     bool is_online(const std::string &name, double state_timeout_s = 10.0);
@@ -164,6 +185,19 @@ private:
         std::string target_node_id;
         // Actions associated with the tracked order.
         std::vector<std::string> order_action_ids;
+        // VDA5050 orderUpdateId of current_order_id: 0 for a fresh order,
+        // incremented by each release_more() extending it.
+        int order_update_id = 0;
+        // Route/base/map last dispatched, kept so release_more() can
+        // rebuild the order with a larger released portion. Robot frame,
+        // not RMF's.
+        std::vector<vda5050::RouteWaypoint> current_route;
+        std::string current_base_id;
+        vda5050::RobotPose current_base;
+        std::string current_map_id;
+        // How many of current_route's points are released in the order as
+        // last published (by navigate_route() or release_more()).
+        std::size_t current_released_count = 0;
         std::optional<vda5050::ParsedState> last_state;
         // Visualization data is used only to refine pose and velocity.
         std::optional<vda5050::ParsedVisualization> last_visualization;
@@ -190,14 +224,18 @@ private:
 
     // Subscribes to a robot's uplink topics.
     void subscribe_robot(const RobotContext &ctx);
+
     // Finds a robot by MQTT topic. Caller must hold _mutex.
     RobotContext *match_robot(const std::string &topic);
+
     // Publishes a serialized payload without throwing.
     CommandStatus publish_raw(const std::string &topic, const std::string &payload);
+
     // Selects a factsheet-compatible blocking type. Caller must hold _mutex.
     static std::string blocking_type_for(const RobotContext &ctx,
                                          const std::string &action_type,
                                          const std::string &preferred);
+                                         
     // Reports invalid or unsupported navigation inputs. Caller must hold _mutex.
     void warn_if_unroutable(const RobotContext &ctx, const std::string &dest_node_id,
                             double x, double y, double theta,

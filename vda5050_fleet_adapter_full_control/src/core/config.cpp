@@ -34,12 +34,16 @@ Config::Config(const std::string &config_file)
         throw std::runtime_error("vda5050.interface_name must not be empty");
     }
 
-    // The update period requires a finite, positive frequency.
+    // Capped at 100 Hz: the update loop converts 1/rate to whole
+    // milliseconds, so above 1000 Hz it would floor to a busy-loop.
     _update_rate_hz = vda["update_rate_hz"] ? vda["update_rate_hz"].as<double>() : 10.0;
-    if (!std::isfinite(_update_rate_hz) || !(_update_rate_hz > 0.0))
+    if (!std::isfinite(_update_rate_hz) || !(_update_rate_hz > 0.0) || _update_rate_hz > 100.0)
     {
-        throw std::runtime_error("vda5050.update_rate_hz must be a finite value > 0");
+        throw std::runtime_error("vda5050.update_rate_hz must be a finite value in (0, 100]");
     }
+
+    _honor_waypoint_timing =
+        vda["honor_waypoint_timing"] ? vda["honor_waypoint_timing"].as<bool>() : false;
 
     const YAML::Node mqtt = vda["mqtt"];
     const std::string host = (mqtt && mqtt["host"]) ? mqtt["host"].as<std::string>() : "localhost";

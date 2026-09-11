@@ -38,16 +38,13 @@ class OperatorInterface
 {
 public:
     // `node` and `connector` must outlive this object.
-    OperatorInterface(rclcpp::Node &node, rmf::Connector &connector,
-                      std::map<std::string, RobotHooks> hooks);
+    OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, std::map<std::string, RobotHooks> hooks);
 
 private:
-    void on_init_position(const std::string &robot_name,
-                          const geometry_msgs::msg::PoseWithCovarianceStamped &msg);
+    void on_init_position(const std::string &robot_name, const geometry_msgs::msg::PoseWithCovarianceStamped &msg);
 
     // Validate speed-limit updates before ROS commits them.
-    rcl_interfaces::msg::SetParametersResult on_set_parameters(
-        const std::vector<rclcpp::Parameter> &parameters);
+    rcl_interfaces::msg::SetParametersResult on_set_parameters(const std::vector<rclcpp::Parameter> &parameters);
 
     // Apply speed-limit updates after ROS commits them.
     void on_parameters_set(const std::vector<rclcpp::Parameter> &parameters);
@@ -63,9 +60,11 @@ private:
     rmf::Connector &_connector;
     std::map<std::string, RobotHooks> _hooks;
 
-    std::vector<rclcpp::Subscription<
-        geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr> _init_position_subs;
+    std::vector<rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr> _init_position_subs;
     std::vector<rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr> _services;
+    // Held only to keep the registrations alive for this object's lifetime;
+    // dropping either shared_ptr deregisters its callback. Not read again
+    // after construction.
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr _on_set_params;
     rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr _post_set_params;
 };

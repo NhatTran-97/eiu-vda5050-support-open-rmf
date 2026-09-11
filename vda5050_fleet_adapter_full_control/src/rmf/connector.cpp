@@ -30,6 +30,9 @@ bool has_required_state_fields(const nlohmann::json &raw)
            raw.contains("errors") && raw["errors"].is_array() &&
            raw.contains("operatingMode") && raw["operatingMode"].is_string() &&
            raw.contains("safetyState") && raw["safetyState"].is_object() &&
+           raw["safetyState"].contains("eStop") && raw["safetyState"]["eStop"].is_string() &&
+           raw["safetyState"].contains("fieldViolation") &&
+           raw["safetyState"]["fieldViolation"].is_boolean() &&
            raw.contains("batteryState") && raw["batteryState"].is_object() &&
            raw["batteryState"].contains("batteryCharge") &&
            raw["batteryState"]["batteryCharge"].is_number();
@@ -118,7 +121,8 @@ void Connector::add_robot(const std::string &name, const std::string &manufactur
 
 Connector::NavigateResult Connector::navigate_route(const std::string &name,
                                                      const std::vector<RoutePoint> &route,
-                                                     const std::string &map_id)
+                                                     const std::string &map_id,
+                                                     std::optional<std::size_t> released_count)
 {
     if (route.empty())
     {
@@ -179,7 +183,8 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
     }
 
     const auto order = vda5050::build_route_order(
-        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id, 0);
+        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id, 0,
+        released_count);
 
     const std::string order_topic = vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER);
     const CommandStatus status = publish_raw(order_topic, order.dump());
@@ -205,12 +210,97 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
             // Track completion against the final route node.
             ctx.target_node_id = route.back().node_id;
             ctx.order_action_ids.clear();
+            // This is a fresh orderId, so its own update sequence restarts;
+            // kept alongside the route so release_more() can extend it.
+            ctx.order_update_id = 0;
+            ctx.current_route = waypoints;
+            ctx.current_base_id = base_id;
+            ctx.current_base = base;
+            ctx.current_map_id = map_id;
+            ctx.current_released_count = std::min(released_count.value_or(route.size()), route.size());
         }
     }
 
-    RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s' over %zu waypoint(s), ending at '%s'",
-                name.c_str(), order_id.c_str(), route.size(), route.back().node_id.c_str());
+    RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s' over %zu waypoint(s) (%zu released), ending at '%s'",
+                name.c_str(), order_id.c_str(), route.size(),
+                std::min(released_count.value_or(route.size()), route.size()),
+                route.back().node_id.c_str());
     return {CommandStatus::queued, order_id};
+}
+
+CommandStatus Connector::release_more(const std::string &name, std::size_t released_count)
+{
+    std::string order_id, base_id, manufacturer, serial, interface_name, map_id;
+    std::vector<vda5050::RouteWaypoint> waypoints;
+    vda5050::RobotPose base{};
+    int header_id = 0;
+    int order_update_id = 0;
+    std::size_t clamped = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _robots.find(name);
+        if (it == _robots.end())
+        {
+            RCLCPP_ERROR(_logger, "[VDA5050] release_more: unknown robot '%s'", name.c_str());
+            return CommandStatus::transport_failed;
+        }
+        RobotContext &ctx = *it->second;
+
+        clamped = std::min(released_count, ctx.current_route.size());
+        if (ctx.current_order_id.empty() || ctx.current_route.empty() ||
+            clamped <= ctx.current_released_count)
+        {
+            // Nothing to extend, or release doesn't grow past what's
+            // already released -- re-publishing an identical order only
+            // risks minOrderInterval in warn_if_order_oversized().
+            return CommandStatus::transport_failed;
+        }
+
+        order_id = ctx.current_order_id;
+        order_update_id = ++ctx.order_update_id;
+        waypoints = ctx.current_route;
+        base_id = ctx.current_base_id;
+        base = ctx.current_base;
+        map_id = ctx.current_map_id;
+        header_id = ctx.next_order_header();
+        manufacturer = ctx.manufacturer;
+        serial = ctx.serial;
+        interface_name = ctx.interface_name;
+    }
+
+    const auto order = vda5050::build_route_order(
+        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id,
+        order_update_id, clamped);
+
+    const std::string order_topic =
+        vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER);
+    const CommandStatus status = publish_raw(order_topic, order.dump());
+
+    if (status == CommandStatus::transport_failed)
+    {
+        // The orderUpdateId counter is not rolled back: VDA5050 only
+        // requires it to increase, not to be gap-free, and the next
+        // successful release_more() will simply use the next value.
+        RCLCPP_ERROR(_logger,
+                     "[VDA5050] %s -> order '%s' update %d NOT published (transport failure)",
+                     name.c_str(), order_id.c_str(), order_update_id);
+        return status;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _robots.find(name);
+        if (it != _robots.end())
+        {
+            it->second->current_released_count = clamped;
+        }
+    }
+
+    RCLCPP_INFO(_logger,
+                "[VDA5050] %s -> order '%s' update %d: released %zu/%zu route point(s)",
+                name.c_str(), order_id.c_str(), order_update_id, clamped, waypoints.size());
+    return status;
 }
 
 bool Connector::set_speed_limit(const std::string &name, std::optional<double> limit)
@@ -727,11 +817,29 @@ void Connector::report_state_changes(RobotContext &ctx)
     {
         if (s.new_base_request)
         {
-            RCLCPP_INFO(_logger,
-                        "[VDA5050] %s requests a new base -- releasing the horizon of "
-                        "order '%s'",
-                        ctx.name.c_str(),
-                        ctx.current_order_id.empty() ? "(none)" : ctx.current_order_id.c_str());
+            // Purely diagnostic -- release is driven by Plan::Waypoint::
+            // time() (see honor_waypoint_timing()), never by this request,
+            // or the AGV could run ahead of other robots' itineraries.
+            const std::size_t total = ctx.current_route.size();
+            if (ctx.current_released_count >= total)
+            {
+                RCLCPP_WARN(_logger,
+                            "[VDA5050] %s requests a new base but order '%s' has no more "
+                            "route points to release (%zu/%zu already released) -- the AGV's "
+                            "own base tracking may have diverged from this adapter's",
+                            ctx.name.c_str(),
+                            ctx.current_order_id.empty() ? "(none)" : ctx.current_order_id.c_str(),
+                            ctx.current_released_count, total);
+            }
+            else
+            {
+                RCLCPP_INFO(_logger,
+                            "[VDA5050] %s requests a new base -- waiting at the release "
+                            "boundary of order '%s' (%zu/%zu route point(s) released)",
+                            ctx.name.c_str(),
+                            ctx.current_order_id.empty() ? "(none)" : ctx.current_order_id.c_str(),
+                            ctx.current_released_count, total);
+            }
         }
         ctx.last_new_base_request = s.new_base_request;
     }
@@ -816,7 +924,8 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
             RCLCPP_WARN(_logger,
                         "[VDA5050] %s: state message missing/mistyping a VDA5050-required "
                         "field (orderId/lastNodeId/driving/nodeStates/edgeStates/"
-                        "actionStates/errors/operatingMode/safetyState/batteryState.batteryCharge) "
+                        "actionStates/errors/operatingMode/safetyState.{eStop,fieldViolation}/"
+                        "batteryState.batteryCharge) "
                         "-- rejecting rather than caching it with fallback values",
                         ctx->name.c_str());
             return;
@@ -925,6 +1034,7 @@ std::optional<RobotData> Connector::get_data(const std::string &name)
     data.operable = s.operable();
     data.safety_state = s.safety_state;
     data.fatal_error = s.first_fatal_error();
+    data.paused = s.paused;
     data.new_base_request = s.new_base_request;
     data.localization_score = s.localization_score;
 
@@ -1020,6 +1130,33 @@ bool Connector::is_command_completed(const std::string &name)
     }
 
     return false;
+}
+
+bool Connector::is_order_stuck(const std::string &name, double timeout_s) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it == _robots.end())
+    {
+        return false;
+    }
+
+    const RobotContext &ctx = *it->second;
+    if (ctx.current_order_id.empty())
+    {
+        return false;
+    }
+
+    const std::string reported_order_id =
+        ctx.last_state.has_value() ? ctx.last_state->order_id : std::string{};
+    if (reported_order_id == ctx.current_order_id)
+    {
+        return false;
+    }
+
+    const double since_dispatch = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - ctx.last_order_time).count();
+    return since_dispatch > timeout_s;
 }
 
 std::optional<std::string> Connector::get_action_state(

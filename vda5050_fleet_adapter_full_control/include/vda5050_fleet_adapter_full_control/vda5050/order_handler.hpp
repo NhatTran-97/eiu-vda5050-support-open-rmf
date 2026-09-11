@@ -25,8 +25,13 @@ struct RouteWaypoint
 };
 
 // Builds a route order with the base node at sequenceId 0, edges on odd
-// sequenceIds, and route nodes on even sequenceIds. Nodes are released and
-// edges do not include trajectories.
+// sequenceIds, and route nodes on even sequenceIds. Edges do not include
+// trajectories.
+//
+// `released_count`: how many route points, from the base, are released
+// (the base itself always is). nullopt releases the whole route; a
+// smaller value leaves the rest as VDA5050 horizon, grown later via an
+// order update (see order_update_id) on the same order_id.
 //
 // Preconditions:
 // - `order_id`, `base_node_id`, `route`, and `map_id` are non-empty.
@@ -37,7 +42,8 @@ nlohmann::json build_route_order(int header_id, const std::string &order_id,
                                 const std::string &base_node_id, const RobotPose &base,
                                 const std::vector<RouteWaypoint> &route,
                                 const std::string &map_id,
-                                int order_update_id = 0);
+                                int order_update_id = 0,
+                                std::optional<std::size_t> released_count = std::nullopt);
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050
 

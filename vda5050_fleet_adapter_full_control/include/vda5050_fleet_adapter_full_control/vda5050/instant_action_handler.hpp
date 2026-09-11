@@ -38,10 +38,9 @@ struct InstantActionRequest
 
 // Builds a custom instant action. Parameter value types are preserved.
 InstantActionRequest build_instant_action(
-    int header_id, const std::string &manufacturer, const std::string &serial,
-    const std::string &action_type,
-    const nlohmann::json &parameters = nlohmann::json::object(),
-    const std::string &blocking_type = "HARD");
+    int header_id, const std::string &manufacturer, const std::string &serial, const std::string &action_type, 
+                                    const nlohmann::json &parameters = nlohmann::json::object(),
+                                    const std::string &blocking_type = "HARD");
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050
 

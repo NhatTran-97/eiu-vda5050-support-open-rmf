@@ -11,6 +11,9 @@ Behaviour:
   * on each `order`, simulates driving from the current pose to the end node,
     streaming `state` (driving=true) and finally reporting arrival
     (lastNodeId = end node, driving=false, node/edge states cleared),
+  * honours `released` on nodes/edges: holds (driving=false) at the last
+    released node instead of driving past it, and only continues once an
+    order-update (same orderId, higher orderUpdateId) releases more,
   * on `cancelOrder`, stops and clears the active order,
   * publishes periodic `state`.
 
@@ -48,12 +51,24 @@ class MockRobot:
         self.order_id = ""
         self.order_update_id = 0
         self.driving = False
+        # True only while held at a release boundary, waiting for an
+        # order-update to extend the base -- mirrors a real VDA5050 client.
+        self.new_base_request = False
         self.node_states = []
         self.edge_states = []
         self.action_states = []
         self.header = 0
 
+        # Full node/edge arrays of the active order, including unreleased
+        # ones -- an order-update swaps these in place without restarting
+        # the drive thread. nodes[0] is the base node the AGV stands on.
+        self.nodes = []
+        self.edges = []
+
         self.lock = threading.Lock()
+        # Wraps `lock`: lets the drive thread block at a release boundary
+        # and be woken by an order-update without a separate lock.
+        self.cond = threading.Condition(self.lock)
         self._drive_thread = None
         self._cancel = threading.Event()
         # Set by startPause, cleared by stopPause. The drive loop waits on it
@@ -126,6 +141,7 @@ class MockRobot:
                 "actionStates": list(self.action_states),
                 "driving": self.driving,
                 "paused": self.paused.is_set(),
+                "newBaseRequest": self.new_base_request,
                 "operatingMode": "AUTOMATIC",
                 "batteryState": {"batteryCharge": 95.0, "charging": False},
                 "agvPosition": {
@@ -145,66 +161,117 @@ class MockRobot:
         if not nodes:
             return
         order_id = order.get("orderId", "")
+        update_id = order.get("orderUpdateId", 0)
+
+        with self.cond:
+            is_update = bool(order_id) and order_id == self.order_id
+            if is_update:
+                if update_id <= self.order_update_id:
+                    return  # stale/duplicate order-update
+                # Same order still in flight: swap in the wider node/edge
+                # arrays and wake the drive thread if it is holding at a
+                # release boundary. Does not touch the running thread.
+                self.nodes = nodes
+                self.edges = edges
+                self.order_update_id = update_id
+                self.cond.notify_all()
+
+        if is_update:
+            released = sum(1 for n in nodes if n.get("released"))
+            print(f"[mock] order {order_id[:8]} update {update_id}: "
+                  f"released {released}/{len(nodes)}", flush=True)
+            return
+
         print(f"[mock] order {order_id[:8]} -> {nodes[-1].get('nodeId')} "
               f"({len(nodes)} node(s))", flush=True)
 
-        # Interrupt any drive already in flight.
+        # A genuinely new order: interrupt any drive already in flight.
         self._cancel.set()
         if self._drive_thread and self._drive_thread.is_alive():
             self._drive_thread.join(timeout=2.0)
         self._cancel.clear()
 
-        with self.lock:
+        with self.cond:
             self.order_id = order_id
-            self.order_update_id = order.get("orderUpdateId", 0)
+            self.order_update_id = update_id
+            self.nodes = nodes
+            self.edges = edges
+            # lastNodeSequenceId is scoped to the current order -- the
+            # base is always sequenceId 0.
+            self.last_node_sequence_id = 0
 
-        self._drive_thread = threading.Thread(
-            target=self._drive_route, args=(nodes, edges), daemon=True)
+        self._drive_thread = threading.Thread(target=self._drive_route, daemon=True)
         self._drive_thread.start()
 
     @staticmethod
     def _node_state(node: dict) -> dict:
         return {"nodeId": node.get("nodeId"),
                 "sequenceId": node.get("sequenceId", 0),
-                "released": True}
+                "released": bool(node.get("released", True))}
 
     @staticmethod
     def _edge_state(edge: dict) -> dict:
         return {"edgeId": edge.get("edgeId"),
                 "sequenceId": edge.get("sequenceId", 0),
-                "released": True}
+                "released": bool(edge.get("released", True))}
 
-    def _drive_route(self, nodes: list, edges: list):
-        """Execute a whole order the way a VDA5050 client does: drive the nodes
-        in sequenceId order, reporting lastNodeId at each one and draining
-        nodeStates/edgeStates as they are passed. nodes[0] is the base node the
-        AGV is already standing on."""
-        remaining = nodes[1:]
-        if not remaining:
-            node_id = nodes[0].get("nodeId")
+    def _await_release(self, index: int) -> bool:
+        """Blocks while self.nodes[index] is not yet released, holding
+        position and publishing state. Returns False if cancelled."""
+        while True:
+            with self.cond:
+                if self._cancel.is_set():
+                    self.new_base_request = False
+                    return False
+                if self.nodes[index].get("released", True):
+                    self.new_base_request = False
+                    return True
+                self.driving = False
+                self.new_base_request = True
+                self.node_states = [self._node_state(n) for n in self.nodes[index:]]
+                self.edge_states = [self._edge_state(e) for e in self.edges[index - 1:]]
+            self.publish_state()
+            with self.cond:
+                if not self.nodes[index].get("released", True) and not self._cancel.is_set():
+                    self.cond.wait(timeout=1.0)
+
+    def _drive_route(self):
+        """Execute self.nodes/self.edges the way a VDA5050 client does:
+        drive in sequenceId order, holding at the last released node until
+        an order-update releases more. self.nodes[0] is the base node the
+        AGV is already standing on; the node/edge arrays keep a fixed
+        length for the life of the order, only their `released` flags grow."""
+        with self.lock:
+            total = len(self.nodes)
+
+        if total < 2:
             with self.lock:
-                self.last_node_id = node_id
-                self.last_node_sequence_id = nodes[0].get("sequenceId", 0)
+                if self.nodes:
+                    self.last_node_id = self.nodes[0].get("nodeId")
+                    self.last_node_sequence_id = self.nodes[0].get("sequenceId", 0)
                 self.driving = False
                 self.node_states = []
                 self.edge_states = []
             self.publish_state()
-            print(f"[mock] already at {node_id}", flush=True)
+            print(f"[mock] already at {self.last_node_id}", flush=True)
             return
 
-        for index, node in enumerate(remaining):
-            pos = node.get("nodePosition", {})
-            tx = pos.get("x", self.x)
-            ty = pos.get("y", self.y)
-            tth = pos.get("theta", self.theta)
-            node_id = node.get("nodeId")
+        for index in range(1, total):
+            if not self._await_release(index):
+                return
 
-            # Everything still ahead of the AGV, including the node it is
-            # driving towards and the edge it is on.
             with self.lock:
+                node = self.nodes[index]
+                pos = node.get("nodePosition", {})
+                tx = pos.get("x", self.x)
+                ty = pos.get("y", self.y)
+                tth = pos.get("theta", self.theta)
+                node_id = node.get("nodeId")
+                # Everything still ahead of the AGV, including the node it
+                # is driving towards and the edge it is on.
                 self.driving = True
-                self.node_states = [self._node_state(n) for n in remaining[index:]]
-                self.edge_states = [self._edge_state(e) for e in edges[index:]]
+                self.node_states = [self._node_state(n) for n in self.nodes[index:]]
+                self.edge_states = [self._edge_state(e) for e in self.edges[index - 1:]]
             self.publish_state()
 
             sx, sy, sth = self.x, self.y, self.theta
@@ -240,13 +307,13 @@ class MockRobot:
                 with self.lock:
                     self.driving = True
 
-            last = index + 1 >= len(remaining)
+            last = index + 1 >= total
             with self.lock:
                 self.x, self.y, self.theta = tx, ty, tth
                 self.last_node_id = node_id
                 self.last_node_sequence_id = node.get("sequenceId", 0)
-                self.node_states = [self._node_state(n) for n in remaining[index + 1:]]
-                self.edge_states = [self._edge_state(e) for e in edges[index + 1:]]
+                self.node_states = [self._node_state(n) for n in self.nodes[index + 1:]]
+                self.edge_states = [self._edge_state(e) for e in self.edges[index:]]
                 self.driving = not last
             self.publish_state()
             print(f"[mock] {'arrived' if last else 'reached'} {node_id}", flush=True)
@@ -271,6 +338,7 @@ class MockRobot:
                 self._cancel.set()
                 with self.lock:
                     self.driving = False
+                    self.new_base_request = False
                     self.node_states = []
                     self.edge_states = []
                     self.order_id = ""

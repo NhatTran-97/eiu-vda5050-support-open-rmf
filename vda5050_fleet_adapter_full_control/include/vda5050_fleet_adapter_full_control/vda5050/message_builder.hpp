@@ -43,16 +43,12 @@ nlohmann::json make_order(int header_id, const std::string &manufacturer, const 
                           const std::string &order_id = "", int order_update_id = 0);
 // `blocking_type` must be NONE, SOFT, or HARD. Parameter value types are
 // preserved when converted to VDA5050 actionParameters.
-nlohmann::json make_action(const std::string &action_type, const std::string &blocking_type = "HARD",
-                           const std::string &action_id = "",
+nlohmann::json make_action(const std::string &action_type, const std::string &blocking_type = "HARD", const std::string &action_id = "",
                            const nlohmann::json &parameters = nlohmann::json::object());
 
-nlohmann::json make_instant_actions(int header_id,
-                                    const std::string &manufacturer,
-                                    const std::string &serial, const nlohmann::json &actions);
+nlohmann::json make_instant_actions(int header_id, const std::string &manufacturer, const std::string &serial, const nlohmann::json &actions);
 
-nlohmann::json cancel_order_action(const std::string &action_id = "",
-                                   const std::string &blocking_type = "HARD");
+nlohmann::json cancel_order_action(const std::string &action_id = "", const std::string &blocking_type = "HARD");
 
 std::string make_uuid();
 
