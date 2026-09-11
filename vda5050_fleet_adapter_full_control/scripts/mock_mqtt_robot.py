@@ -44,6 +44,7 @@ class MockRobot:
         self.x, self.y, self.theta = args.x, args.y, args.theta
         self.map_id = args.map
         self.last_node_id = args.start_node
+        self.last_node_sequence_id = 0
         self.order_id = ""
         self.order_update_id = 0
         self.driving = False
@@ -55,6 +56,9 @@ class MockRobot:
         self.lock = threading.Lock()
         self._drive_thread = None
         self._cancel = threading.Event()
+        # Set by startPause, cleared by stopPause. The drive loop waits on it
+        # without dropping the order, the way a VDA5050 client holds.
+        self.paused = threading.Event()
 
         self.client = mqtt.Client()
         self.client.on_connect = self._on_connect
@@ -116,12 +120,12 @@ class MockRobot:
                 "orderId": self.order_id,
                 "orderUpdateId": self.order_update_id,
                 "lastNodeId": self.last_node_id,
-                "lastNodeSequenceId": 0,
+                "lastNodeSequenceId": self.last_node_sequence_id,
                 "nodeStates": list(self.node_states),
                 "edgeStates": list(self.edge_states),
                 "actionStates": list(self.action_states),
                 "driving": self.driving,
-                "paused": False,
+                "paused": self.paused.is_set(),
                 "operatingMode": "AUTOMATIC",
                 "batteryState": {"batteryCharge": 95.0, "charging": False},
                 "agvPosition": {
@@ -136,12 +140,13 @@ class MockRobot:
     # ── Order handling ─────────────────────────────────────────────────────────
 
     def _handle_order(self, order: dict):
-        nodes = order.get("nodes", [])
+        nodes = sorted(order.get("nodes", []), key=lambda n: n.get("sequenceId", 0))
+        edges = sorted(order.get("edges", []), key=lambda e: e.get("sequenceId", 0))
         if not nodes:
             return
-        end = max(nodes, key=lambda n: n.get("sequenceId", 0))
         order_id = order.get("orderId", "")
-        print(f"[mock] order {order_id[:8]} -> {end.get('nodeId')}", flush=True)
+        print(f"[mock] order {order_id[:8]} -> {nodes[-1].get('nodeId')} "
+              f"({len(nodes)} node(s))", flush=True)
 
         # Interrupt any drive already in flight.
         self._cancel.set()
@@ -154,21 +159,32 @@ class MockRobot:
             self.order_update_id = order.get("orderUpdateId", 0)
 
         self._drive_thread = threading.Thread(
-            target=self._drive, args=(end,), daemon=True)
+            target=self._drive_route, args=(nodes, edges), daemon=True)
         self._drive_thread.start()
 
-    def _drive(self, end_node: dict):
-        pos = end_node.get("nodePosition", {})
-        tx = pos.get("x", self.x)
-        ty = pos.get("y", self.y)
-        tth = pos.get("theta", self.theta)
-        node_id = end_node.get("nodeId")
-        end_seq = end_node.get("sequenceId", 2)
+    @staticmethod
+    def _node_state(node: dict) -> dict:
+        return {"nodeId": node.get("nodeId"),
+                "sequenceId": node.get("sequenceId", 0),
+                "released": True}
 
-        dist = ((tx - self.x) ** 2 + (ty - self.y) ** 2) ** 0.5
-        if dist <= 0.05:                       # already there (hold order)
+    @staticmethod
+    def _edge_state(edge: dict) -> dict:
+        return {"edgeId": edge.get("edgeId"),
+                "sequenceId": edge.get("sequenceId", 0),
+                "released": True}
+
+    def _drive_route(self, nodes: list, edges: list):
+        """Execute a whole order the way a VDA5050 client does: drive the nodes
+        in sequenceId order, reporting lastNodeId at each one and draining
+        nodeStates/edgeStates as they are passed. nodes[0] is the base node the
+        AGV is already standing on."""
+        remaining = nodes[1:]
+        if not remaining:
+            node_id = nodes[0].get("nodeId")
             with self.lock:
                 self.last_node_id = node_id
+                self.last_node_sequence_id = nodes[0].get("sequenceId", 0)
                 self.driving = False
                 self.node_states = []
                 self.edge_states = []
@@ -176,36 +192,64 @@ class MockRobot:
             print(f"[mock] already at {node_id}", flush=True)
             return
 
-        steps = max(1, int(dist / 0.3))        # ~0.3 m per step
-        sx, sy, sth = self.x, self.y, self.theta
-        with self.lock:
-            self.driving = True
-            self.node_states = [
-                {"nodeId": node_id, "sequenceId": end_seq, "released": True}]
-        self.publish_state()
+        for index, node in enumerate(remaining):
+            pos = node.get("nodePosition", {})
+            tx = pos.get("x", self.x)
+            ty = pos.get("y", self.y)
+            tth = pos.get("theta", self.theta)
+            node_id = node.get("nodeId")
 
-        for i in range(1, steps + 1):
-            if self._cancel.is_set():
-                with self.lock:
-                    self.driving = False
-                self.publish_state()
-                return
-            f = i / steps
+            # Everything still ahead of the AGV, including the node it is
+            # driving towards and the edge it is on.
             with self.lock:
-                self.x = sx + (tx - sx) * f
-                self.y = sy + (ty - sy) * f
-                self.theta = sth + (tth - sth) * f
+                self.driving = True
+                self.node_states = [self._node_state(n) for n in remaining[index:]]
+                self.edge_states = [self._edge_state(e) for e in edges[index:]]
             self.publish_state()
-            time.sleep(self.args.step_time)
 
-        with self.lock:
-            self.x, self.y, self.theta = tx, ty, tth
-            self.last_node_id = node_id
-            self.driving = False
-            self.node_states = []
-            self.edge_states = []
-        self.publish_state()
-        print(f"[mock] arrived {node_id}", flush=True)
+            sx, sy, sth = self.x, self.y, self.theta
+            dist = ((tx - sx) ** 2 + (ty - sy) ** 2) ** 0.5
+            steps = max(1, int(dist / 0.3))    # ~0.3 m per step
+
+            for i in range(1, steps + 1):
+                if self._cancel.is_set():
+                    with self.lock:
+                        self.driving = False
+                    self.publish_state()
+                    return
+                f = i / steps
+                with self.lock:
+                    self.x = sx + (tx - sx) * f
+                    self.y = sy + (ty - sy) * f
+                    self.theta = sth + (tth - sth) * f
+                self.publish_state()
+                time.sleep(self.args.step_time)
+
+                # Hold here for as long as startPause is in force. The order,
+                # the route and the progress so far all stay put.
+                while self.paused.is_set() and not self._cancel.is_set():
+                    with self.lock:
+                        self.driving = False
+                    self.publish_state()
+                    time.sleep(0.5)
+                if self._cancel.is_set():
+                    with self.lock:
+                        self.driving = False
+                    self.publish_state()
+                    return
+                with self.lock:
+                    self.driving = True
+
+            last = index + 1 >= len(remaining)
+            with self.lock:
+                self.x, self.y, self.theta = tx, ty, tth
+                self.last_node_id = node_id
+                self.last_node_sequence_id = node.get("sequenceId", 0)
+                self.node_states = [self._node_state(n) for n in remaining[index + 1:]]
+                self.edge_states = [self._edge_state(e) for e in edges[index + 1:]]
+                self.driving = not last
+            self.publish_state()
+            print(f"[mock] {'arrived' if last else 'reached'} {node_id}", flush=True)
 
     def _handle_instant_actions(self, ia: dict):
         for a in ia.get("actions", []):
@@ -213,6 +257,16 @@ class MockRobot:
             aid = a.get("actionId", "")
             if kind == "stateRequest":
                 self.publish_state()
+            elif kind == "startPause":
+                self.paused.set()
+                with self.lock:
+                    self.driving = False
+                self.publish_state()
+                print("[mock] startPause -- holding", flush=True)
+            elif kind == "stopPause":
+                self.paused.clear()
+                self.publish_state()
+                print("[mock] stopPause -- carrying on", flush=True)
             elif kind == "cancelOrder":
                 self._cancel.set()
                 with self.lock:

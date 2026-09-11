@@ -18,7 +18,7 @@ nlohmann::json build_state_request(int header_id, const std::string &manufacture
                                    const std::string &blocking_type)
 {
     nlohmann::json actions = nlohmann::json::array();
-    actions.push_back(make_action("stateRequest", blocking_type, "", {}));
+    actions.push_back(make_action("stateRequest", blocking_type));
     return make_instant_actions(header_id, manufacturer, serial, actions);
 }
 
@@ -27,7 +27,7 @@ nlohmann::json build_start_pause(int header_id, const std::string &manufacturer,
                                  const std::string &blocking_type)
 {
     nlohmann::json actions = nlohmann::json::array();
-    actions.push_back(make_action("startPause", blocking_type, "", {}));
+    actions.push_back(make_action("startPause", blocking_type));
     return make_instant_actions(header_id, manufacturer, serial, actions);
 }
 
@@ -36,14 +36,14 @@ nlohmann::json build_stop_pause(int header_id, const std::string &manufacturer,
                                 const std::string &blocking_type)
 {
     nlohmann::json actions = nlohmann::json::array();
-    actions.push_back(make_action("stopPause", blocking_type, "", {}));
+    actions.push_back(make_action("stopPause", blocking_type));
     return make_instant_actions(header_id, manufacturer, serial, actions);
 }
 
 InstantActionRequest build_instant_action(
     int header_id, const std::string &manufacturer, const std::string &serial,
     const std::string &action_type,
-    const std::vector<std::pair<std::string, std::string>> &parameters,
+    const nlohmann::json &parameters,
     const std::string &blocking_type)
 {
     const auto action = make_action(action_type, blocking_type, "", parameters);

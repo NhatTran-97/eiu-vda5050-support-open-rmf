@@ -23,7 +23,7 @@ public:
     {
         const double rx = _scale * (_c * x - _s * y) + _tx;
         const double ry = _scale * (_s * x + _c * y) + _ty;
-        return {rx, ry, theta + _rotation};
+        return {rx, ry, wrap(theta + _rotation)};
     }
 
     // Robot frame (x, y, theta) -> RMF.
@@ -33,10 +33,22 @@ public:
         const double y0 = (y - _ty) / _scale;
         const double rx = _c * x0 + _s * y0;
         const double ry = -_s * x0 + _c * y0;
-        return {rx, ry, theta - _rotation};
+        return {rx, ry, wrap(theta - _rotation)};
     }
 
 private:
+    // Normalize heading to the range [-pi, pi).
+    static double wrap(double theta)
+    {
+        constexpr double kPi = 3.14159265358979323846;
+        theta = std::fmod(theta + kPi, 2.0 * kPi);
+        if (theta < 0.0)
+        {
+            theta += 2.0 * kPi;
+        }
+        return theta - kPi;
+    }
+
     double _rotation;
     double _scale;
     double _tx;

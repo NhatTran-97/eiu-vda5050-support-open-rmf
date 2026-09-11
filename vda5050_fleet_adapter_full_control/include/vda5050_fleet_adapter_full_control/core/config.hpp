@@ -32,13 +32,9 @@ struct RobotConfig
     rmf::Transform transform;
 };
 
-// Reads the `vda5050:` block of config_file once at construction. Throws
-// (a yaml-cpp exception, or std::runtime_error from a semantic check below)
-// if the file is missing, the `vda5050:` block itself is absent, a present
-// field has the wrong type, or a value fails validation (empty identity,
-// non-finite/out-of-range number, zero transform scale). A field that is
-// simply absent *within* an existing vda5050: block falls back to the same
-// defaults the old main.cpp hardcoded.
+// Parses the `vda5050` configuration block. Invalid YAML, invalid field
+// types, and unsupported values are reported as exceptions. Optional fields
+// use the defaults declared by this class.
 class Config
 {
 public:
@@ -48,9 +44,8 @@ public:
     double update_rate_hz() const { return _update_rate_hz; }
     const MqttConfig &mqtt() const { return _mqtt; }
 
-    // manufacturer defaults to "unknown", serial defaults to `name`,
-    // transform defaults to identity, when the robot has no entry (or a
-    // partial one) under vda5050.robots.<name>.
+    // Missing optional values use the default manufacturer, the robot name as
+    // serial, and an identity transform.
     RobotConfig robot_config(const std::string &name) const;
 
 private:

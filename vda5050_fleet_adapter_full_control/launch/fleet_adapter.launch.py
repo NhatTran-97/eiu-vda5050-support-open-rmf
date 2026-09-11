@@ -1,4 +1,4 @@
-"""Launch the C++ VDA5050 EasyFullControl fleet adapter.
+"""Launch the C++ VDA5050 fleet adapter.
 
 Override paths if needed:
   ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py \
@@ -21,7 +21,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "config_file",
             default_value=PathJoinSubstitution([pkg, "config", "config.yaml"]),
-            description="EasyFullControl + vda5050 config YAML"),
+            description="rmf_fleet + vda5050 config YAML"),
         DeclareLaunchArgument(
             "nav_graph",
             default_value=PathJoinSubstitution([pkg, "maps", "nav_graph.yaml"]),

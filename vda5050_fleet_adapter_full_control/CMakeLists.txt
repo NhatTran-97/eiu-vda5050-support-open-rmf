@@ -15,7 +15,10 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rmf_fleet_adapter REQUIRED)
 find_package(rmf_traffic REQUIRED)
+find_package(rmf_traffic_ros2 REQUIRED)
 find_package(rmf_battery REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
@@ -38,9 +41,9 @@ add_library(${PROJECT_NAME}_core SHARED
   src/vda5050/order_handler.cpp
   src/vda5050/instant_action_handler.cpp
   src/rmf/connector.cpp
-  src/rmf/robot_activity_state_machine.cpp
-  src/core/robot.cpp
+  src/rmf/robot_command_handle.cpp
   src/core/config.cpp
+  src/core/operator_interface.cpp
 )
 
 
@@ -58,10 +61,13 @@ target_link_libraries(${PROJECT_NAME}_core PUBLIC
   ${PAHO_MQTT_C_LIB}
 )
 ament_target_dependencies(${PROJECT_NAME}_core PUBLIC
-  rclcpp rmf_traffic rmf_battery)
+  rclcpp rmf_traffic rmf_traffic_ros2 rmf_battery geometry_msgs std_srvs)
 
 # ─── Node executable ──────────────────────────────────────────────────────────
-add_executable(fleet_adapter src/main.cpp src/core/fleet_adapter.cpp)
+add_executable(fleet_adapter
+  src/main.cpp
+  src/core/fleet_adapter_full_control.cpp
+)
 target_link_libraries(fleet_adapter ${PROJECT_NAME}_core)
 
 
@@ -80,6 +86,7 @@ install(PROGRAMS
         scripts/cancel_task.py
         scripts/mock_mqtt_robot.py
         scripts/test_dispatch_e2e.py
+        scripts/test_pause_resume.py
         DESTINATION lib/${PROJECT_NAME})
 
 

@@ -6,31 +6,42 @@
 
 namespace vda5050_fleet_adapter_full_control::vda5050 {
 
-nlohmann::json build_navigate_order(
+nlohmann::json build_route_order(
     int header_id, const std::string &order_id,
     const std::string &manufacturer, const std::string &serial,
     const std::string &base_node_id, const RobotPose &base,
-    const std::string &dest_node_id, const RobotPose &dest,
+    const std::vector<RouteWaypoint> &route,
     const std::string &map_id,
-    std::optional<double> speed_limit)
+    int order_update_id)
 {
     if (order_id.empty())
     {
-        throw std::invalid_argument(
-            "build_navigate_order: order_id must not be empty -- the caller "
-            "must generate it before calling, so it can track the same id "
-            "make_order() ends up sending.");
+        throw std::invalid_argument("build_route_order: order_id must not be empty -- the caller "
+            "must generate it before calling, so it can track the same id " "make_order() ends up sending.");
     }
 
     nlohmann::json nodes = nlohmann::json::array();
-    nodes.push_back(make_node(base_node_id, 0, base.x, base.y, base.theta, map_id));
-    nodes.push_back(make_node(dest_node_id, 2, dest.x, dest.y, dest.theta, map_id));
-
     nlohmann::json edges = nlohmann::json::array();
-    edges.push_back(make_edge("e_" + base_node_id + "_" + dest_node_id, 1,
-                              base_node_id, dest_node_id, true, speed_limit));
 
-    return make_order(header_id, manufacturer, serial, nodes, edges, order_id, 0);
+    nodes.push_back(make_node(base_node_id, 0, base.x, base.y, base.theta, map_id));
+
+    std::string previous_node_id = base_node_id;
+    for (std::size_t i = 0; i < route.size(); ++i)
+    {
+        const auto &wp = route[i];
+        // Nodes take even sequenceIds, the edges between them the odd ones
+        // in between: base is 0, so waypoint i is node 2*(i+1) and reaches it over edge 2*i+1.
+        const int edge_sequence = static_cast<int>(2 * i + 1);
+        const int node_sequence = static_cast<int>(2 * (i + 1));
+
+        edges.push_back(make_edge("e_" + previous_node_id + "_" + wp.node_id, edge_sequence, previous_node_id, wp.node_id, true, wp.speed_limit));
+
+        nodes.push_back(make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, map_id));
+
+        previous_node_id = wp.node_id;
+    }
+
+    return make_order(header_id, manufacturer, serial, nodes, edges, order_id, order_update_id);
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050

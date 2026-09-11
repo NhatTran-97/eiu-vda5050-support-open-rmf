@@ -34,8 +34,7 @@ Config::Config(const std::string &config_file)
         throw std::runtime_error("vda5050.interface_name must not be empty");
     }
 
-    // Infinite/non-finite would make the update loop's period 1/rate collapse
-    // to 0ms, turning it into a busy-loop.
+    // The update period requires a finite, positive frequency.
     _update_rate_hz = vda["update_rate_hz"] ? vda["update_rate_hz"].as<double>() : 10.0;
     if (!std::isfinite(_update_rate_hz) || !(_update_rate_hz > 0.0))
     {
@@ -89,8 +88,7 @@ RobotConfig Config::robot_config(const std::string &name) const
     {
         const auto t = rc["transform"];
         const double rot = t["rotation"] ? t["rotation"].as<double>() : 0.0;
-        // Transform::to_rmf() divides by scale -- zero/non-finite here means
-        // every reported robot position becomes a division-by-zero/NaN.
+        // Transform::to_rmf() requires an invertible scale.
         const double scale = t["scale"] ? t["scale"].as<double>() : 1.0;
         if (!std::isfinite(scale) || scale == 0.0)
         {

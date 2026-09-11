@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <random>
 #include <unistd.h>
 
 #include <rclcpp/logging.hpp>
@@ -14,10 +16,9 @@ namespace vda5050_fleet_adapter_full_control::rmf {
 
 namespace {
 
-// Required for order_finished()/is_command_completed() to mean anything: a state message missing or mistyping these is not safe to cache, since
-// get_array()'s "missing == empty" fallback would otherwise look
-// indistinguishable from a genuinely drained order.
-bool has_required_completion_fields(const nlohmann::json &raw)
+// Validate the state fields required for completion, readiness, and battery
+// reporting. Invalid messages are rejected without replacing the last valid state.
+bool has_required_state_fields(const nlohmann::json &raw)
 {
     return raw.is_object() &&
            raw.contains("orderId") && raw["orderId"].is_string() &&
@@ -25,20 +26,39 @@ bool has_required_completion_fields(const nlohmann::json &raw)
            raw.contains("driving") && raw["driving"].is_boolean() &&
            raw.contains("nodeStates") && raw["nodeStates"].is_array() &&
            raw.contains("edgeStates") && raw["edgeStates"].is_array() &&
-           raw.contains("actionStates") && raw["actionStates"].is_array();
+           raw.contains("actionStates") && raw["actionStates"].is_array() &&
+           raw.contains("errors") && raw["errors"].is_array() &&
+           raw.contains("operatingMode") && raw["operatingMode"].is_string() &&
+           raw.contains("safetyState") && raw["safetyState"].is_object() &&
+           raw.contains("batteryState") && raw["batteryState"].is_object() &&
+           raw["batteryState"].contains("batteryCharge") &&
+           raw["batteryState"]["batteryCharge"].is_number();
+}
+
+// Build a readable client ID that remains unique across hosts and containers.
+std::string make_mqtt_client_id(const std::string &interface_name)
+{
+    char hostname[256] = {};
+    if (::gethostname(hostname, sizeof(hostname) - 1) != 0)
+    {
+        std::snprintf(hostname, sizeof(hostname), "unknown-host");
+    }
+
+    std::random_device rd;
+    std::uniform_int_distribution<std::uint32_t> dist;
+
+    // Preserve space for the process and random uniqueness suffixes.
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "_%.32s_%d_%08x", hostname, ::getpid(), dist(rd));
+    return "rmf_vda5050_adapter_" + interface_name + buf;
 }
 
 }  // namespace
 
-Connector::Connector(rclcpp::Logger logger, std::string broker_url,
-                     std::string interface_name,
-                     std::optional<std::string> username,
-                     std::optional<std::string> password)
-  : _logger(std::move(logger)),
-    _interface_name(std::move(interface_name)),
-    _mqtt_client(std::move(broker_url),
-                "rmf_vda5050_adapter_" + std::to_string(::getpid()),
-                std::move(username), std::move(password))
+Connector::Connector(rclcpp::Logger logger, std::string broker_url, std::string interface_name, std::optional<std::string> username, std::optional<std::string> password)
+                            : _logger(std::move(logger)),
+                                _interface_name(std::move(interface_name)),
+                                _mqtt_client(std::move(broker_url), make_mqtt_client_id(_interface_name), std::move(username), std::move(password))
 {
     _mqtt_client.set_on_connected([this]() { on_connected(); });
     _mqtt_client.set_on_connection_lost(
@@ -96,14 +116,21 @@ void Connector::add_robot(const std::string &name, const std::string &manufactur
     request_state(name);
 }
 
-void Connector::navigate(const std::string &name, const std::string &dest_node_id,
-                         double x, double y, double theta, const std::string &map_id,
-                         std::optional<double> speed_limit)
+Connector::NavigateResult Connector::navigate_route(const std::string &name,
+                                                     const std::vector<RoutePoint> &route,
+                                                     const std::string &map_id)
 {
-    std::string order_id;
+    if (route.empty())
+    {
+        RCLCPP_WARN(_logger, "[VDA5050] navigate_route: empty route for '%s'", name.c_str());
+        return {};
+    }
+
+    const std::string order_id = vda5050::make_uuid();
     std::string base_id;
     std::string manufacturer, serial, interface_name;
-    vda5050::RobotPose dest{}, base{};
+    std::vector<vda5050::RouteWaypoint> waypoints;
+    vda5050::RobotPose base{};
     int header_id = 0;
 
     {
@@ -111,47 +138,128 @@ void Connector::navigate(const std::string &name, const std::string &dest_node_i
         auto it = _robots.find(name);
         if (it == _robots.end())
         {
-            RCLCPP_ERROR(_logger, "[VDA5050] navigate: unknown robot '%s'", name.c_str());
-            return;
+            RCLCPP_ERROR(_logger, "[VDA5050] navigate_route: unknown robot '%s'", name.c_str());
+            return {};
         }
         RobotContext &ctx = *it->second;
 
-        // Warn, never refuse: EasyFullControl's CommandExecution has no
-        // error() to report a rejected navigation with, so refusing to
-        // publish would leave RMF waiting on a command that can never
-        // finish. A malformed order at least surfaces as an AGV-side error
-        // in the next state message.
-        warn_if_unroutable(ctx, dest_node_id, x, y, theta, map_id, speed_limit);
+        waypoints.reserve(route.size());
+        for (const auto &p : route)
+        {
+            // Apply the most restrictive graph and operator speed limits.
+            std::optional<double> speed_limit = p.speed_limit;
+            if (ctx.operator_speed_limit.has_value())
+            {
+                speed_limit = speed_limit.has_value()
+                                  ? std::min(*speed_limit, *ctx.operator_speed_limit)
+                                  : ctx.operator_speed_limit;
+            }
 
-        const auto robot_dest = ctx.transform.to_robot(x, y, theta);
-        dest = {robot_dest[0], robot_dest[1], robot_dest[2]};
-        base = dest;
+            warn_if_unroutable(ctx, p.node_id, p.x, p.y, p.theta, map_id, speed_limit);
+            const auto robot_pose = ctx.transform.to_robot(p.x, p.y, p.theta);
+            waypoints.push_back(vda5050::RouteWaypoint{
+                p.node_id, {robot_pose[0], robot_pose[1], robot_pose[2]}, speed_limit});
+        }
+
+        // Build the base node from the latest reported AGV state.
+        base = waypoints.front().pose;
         base_id = ctx.last_node_id.empty() ? (ctx.serial + "_start") : ctx.last_node_id;
         if (ctx.last_state.has_value() && ctx.last_state->has_position())
         {
             base = {*ctx.last_state->x, *ctx.last_state->y, *ctx.last_state->theta};
         }
 
-        order_id = vda5050::make_uuid();
-        ctx.current_order_id = order_id;
-        ctx.target_node_id = dest_node_id;
         header_id = ctx.next_order_header();
+
+        // The order contains one base node and one edge per route point.
+        warn_if_order_oversized(ctx, route.size() + 1, route.size());
         manufacturer = ctx.manufacturer;
         serial = ctx.serial;
         interface_name = ctx.interface_name;
     }
 
-    const auto order = vda5050::build_navigate_order(
-        header_id, order_id, manufacturer, serial,
-        base_id, base, dest_node_id, dest, map_id, speed_limit);
+    const auto order = vda5050::build_route_order(
+        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id, 0);
 
     const std::string order_topic = vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER);
-    publish_raw(order_topic, order.dump());
-    RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s' to node '%s' (%.2f, %.2f)",
-                name.c_str(), order_id.c_str(), dest_node_id.c_str(), dest.x, dest.y);
+    const CommandStatus status = publish_raw(order_topic, order.dump());
+
+    if (status == CommandStatus::transport_failed)
+    {
+        // Do not track an order that was not queued for transport.
+        RCLCPP_ERROR(_logger,
+                     "[VDA5050] %s -> order '%s' NOT published (transport failure) -- not "
+                     "tracking it",
+                     name.c_str(), order_id.c_str());
+        return {CommandStatus::transport_failed, {}};
+    }
+
+    // Commit tracking only after the transport accepts the request.
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _robots.find(name);
+        if (it != _robots.end())
+        {
+            RobotContext &ctx = *it->second;
+            ctx.current_order_id = order_id;
+            // Track completion against the final route node.
+            ctx.target_node_id = route.back().node_id;
+            ctx.order_action_ids.clear();
+        }
+    }
+
+    RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s' over %zu waypoint(s), ending at '%s'",
+                name.c_str(), order_id.c_str(), route.size(), route.back().node_id.c_str());
+    return {CommandStatus::queued, order_id};
 }
 
-void Connector::stop(const std::string &name)
+bool Connector::set_speed_limit(const std::string &name, std::optional<double> limit)
+{
+    if (limit.has_value() && (!std::isfinite(*limit) || *limit <= 0.0))
+    {
+        RCLCPP_ERROR(_logger,
+                     "[VDA5050] %s: speed limit %.3f is not a usable speed -- pass no "
+                     "limit to clear the cap instead",
+                     name.c_str(), *limit);
+        return false;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _robots.find(name);
+        if (it == _robots.end())
+        {
+            RCLCPP_ERROR(_logger, "[VDA5050] set_speed_limit: unknown robot '%s'",
+                         name.c_str());
+            return false;
+        }
+        it->second->operator_speed_limit = limit;
+    }
+
+    if (limit.has_value())
+    {
+        RCLCPP_INFO(_logger, "[VDA5050] %s: operator speed limit set to %.2f m/s -- applies to the "
+                    "next order, not the one already being driven", name.c_str(), *limit);
+    }
+    else
+    {
+        RCLCPP_INFO(_logger, "[VDA5050] %s: operator speed limit cleared -- the next order carries " "only the nav graph's own lane limits",  name.c_str());
+    }
+    return true;
+}
+
+std::optional<double> Connector::speed_limit(const std::string &name) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it == _robots.end())
+    {
+        return std::nullopt;
+    }
+    return it->second->operator_speed_limit;
+}
+
+CommandStatus Connector::stop(const std::string &name)
 {
     std::string topic;
     nlohmann::json msg;
@@ -160,7 +268,7 @@ void Connector::stop(const std::string &name)
         auto it = _robots.find(name);
         if (it == _robots.end())
         {
-            return;
+            return CommandStatus::transport_failed;
         }
         RobotContext &ctx = *it->second;
 
@@ -169,13 +277,29 @@ void Connector::stop(const std::string &name)
                                           blocking_type_for(ctx, "cancelOrder", "HARD"));
         topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
                                vda5050::TOPIC_INSTANT_ACTIONS);
-        // Cleared here, synchronously, before publish -- so is_command_completed()
-        // never asks order_finished() about an order we just cancelled.
-        ctx.current_order_id.clear();
-        ctx.target_node_id.clear();
     }
-    publish_raw(topic, msg.dump());
+
+    const CommandStatus status = publish_raw(topic, msg.dump());
+    if (status == CommandStatus::transport_failed)
+    {
+        // Preserve active-order tracking when cancelOrder is not queued.
+        RCLCPP_ERROR(_logger, "[VDA5050] %s -> cancelOrder NOT published (transport failure) -- " "still tracking the order as active", name.c_str());
+        return status;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _robots.find(name);
+        if (it != _robots.end())
+        {
+            RobotContext &ctx = *it->second;
+            ctx.current_order_id.clear();
+            ctx.target_node_id.clear();
+            ctx.order_action_ids.clear();
+        }
+    }
     RCLCPP_INFO(_logger, "[VDA5050] %s -> cancelOrder", name.c_str());
+    return status;
 }
 
 std::string Connector::init_position(const std::string &name, double x, double y,
@@ -195,15 +319,10 @@ std::string Connector::init_position(const std::string &name, double x, double y
 
         const auto robot_pose = ctx.transform.to_robot(x, y, theta);
 
-        // Values go out as strings: make_action() carries every parameter as
-        // a JSON string (see its own documented limitation). Clients that
-        // parse them numerically -- as tb3_vda5050_bridge does with
-        // std::stod -- accept this; a strictly typed third-party client may
-        // not.
-        const std::vector<std::pair<std::string, std::string>> params{
-            {"x", std::to_string(robot_pose[0])},
-            {"y", std::to_string(robot_pose[1])},
-            {"theta", std::to_string(robot_pose[2])},
+        const nlohmann::json params{
+            {"x", robot_pose[0]},
+            {"y", robot_pose[1]},
+            {"theta", robot_pose[2]},
             {"mapId", map_id},
         };
 
@@ -211,24 +330,26 @@ std::string Connector::init_position(const std::string &name, double x, double y
                                                 ctx.manufacturer, ctx.serial,
                                                 "initPosition", params,
                                                 blocking_type_for(ctx, "initPosition", "NONE"));
-        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
-                               vda5050::TOPIC_INSTANT_ACTIONS);
+        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
 
         if (!ctx.current_order_id.empty())
         {
-            RCLCPP_WARN(_logger,
-                        "[VDA5050] %s: sending initPosition while order '%s' is still "
+            RCLCPP_WARN(_logger,"[VDA5050] %s: sending initPosition while order '%s' is still "
                         "tracked -- AGVs commonly refuse to re-localize mid-order",
                         name.c_str(), ctx.current_order_id.c_str());
         }
     }
-    publish_raw(topic, request.message.dump());
-    RCLCPP_INFO(_logger, "[VDA5050] %s -> initPosition (%.2f, %.2f, %.2f) on '%s'",
-                name.c_str(), x, y, theta, map_id.c_str());
+    if (publish_raw(topic, request.message.dump()) == CommandStatus::transport_failed)
+    {
+        RCLCPP_ERROR(_logger, "[VDA5050] %s -> initPosition NOT published (transport failure)",
+                     name.c_str());
+        return {};
+    }
+    RCLCPP_INFO(_logger, "[VDA5050] %s -> initPosition (%.2f, %.2f, %.2f) on '%s'", name.c_str(), x, y, theta, map_id.c_str());
     return request.action_id;
 }
 
-void Connector::pause(const std::string &name)
+CommandStatus Connector::pause(const std::string &name)
 {
     std::string topic;
     nlohmann::json msg;
@@ -237,7 +358,7 @@ void Connector::pause(const std::string &name)
         auto it = _robots.find(name);
         if (it == _robots.end())
         {
-            return;
+            return CommandStatus::transport_failed;
         }
         RobotContext &ctx = *it->second;
 
@@ -247,11 +368,20 @@ void Connector::pause(const std::string &name)
         topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
                                vda5050::TOPIC_INSTANT_ACTIONS);
     }
-    publish_raw(topic, msg.dump());
-    RCLCPP_INFO(_logger, "[VDA5050] %s -> startPause", name.c_str());
+    const CommandStatus status = publish_raw(topic, msg.dump());
+    if (status == CommandStatus::queued)
+    {
+        RCLCPP_INFO(_logger, "[VDA5050] %s -> startPause", name.c_str());
+    }
+    else
+    {
+        RCLCPP_ERROR(_logger, "[VDA5050] %s -> startPause NOT published (transport failure)",
+                     name.c_str());
+    }
+    return status;
 }
 
-void Connector::resume(const std::string &name)
+CommandStatus Connector::resume(const std::string &name)
 {
     std::string topic;
     nlohmann::json msg;
@@ -260,23 +390,28 @@ void Connector::resume(const std::string &name)
         auto it = _robots.find(name);
         if (it == _robots.end())
         {
-            return;
+            return CommandStatus::transport_failed;
         }
         RobotContext &ctx = *it->second;
 
-        msg = vda5050::build_stop_pause(ctx.next_instant_actions_header(),
-                                        ctx.manufacturer, ctx.serial,
-                                        blocking_type_for(ctx, "stopPause", "NONE"));
-        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
-                               vda5050::TOPIC_INSTANT_ACTIONS);
+        msg = vda5050::build_stop_pause(ctx.next_instant_actions_header(),  ctx.manufacturer, ctx.serial, blocking_type_for(ctx, "stopPause", "NONE"));
+        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
     }
-    publish_raw(topic, msg.dump());
-    RCLCPP_INFO(_logger, "[VDA5050] %s -> stopPause", name.c_str());
+    const CommandStatus status = publish_raw(topic, msg.dump());
+    if (status == CommandStatus::queued)
+    {
+        RCLCPP_INFO(_logger, "[VDA5050] %s -> stopPause", name.c_str());
+    }
+    else
+    {
+        RCLCPP_ERROR(_logger, "[VDA5050] %s -> stopPause NOT published (transport failure)", name.c_str());
+    }
+    return status;
 }
 
 std::string Connector::execute_instant_action(
     const std::string &name, const std::string &action_type,
-    const std::vector<std::pair<std::string, std::string>> &parameters)
+    const nlohmann::json &parameters)
 {
     std::string topic;
     vda5050::InstantActionRequest request;
@@ -291,31 +426,40 @@ std::string Connector::execute_instant_action(
 
         if (ctx.factsheet.has_value() && !ctx.factsheet->supports_action(action_type))
         {
-            RCLCPP_WARN(_logger,
-                        "[VDA5050] %s: action '%s' is not in the AGV's factsheet "
-                        "(protocolFeatures.agvActions) -- sending it anyway",
+            RCLCPP_WARN(_logger, "[VDA5050] %s: action '%s' is not in the AGV's factsheet " "(protocolFeatures.agvActions) -- sending it anyway",
+                        name.c_str(), action_type.c_str());
+        }
+        else if (ctx.factsheet.has_value() && !ctx.factsheet->supports_scope(action_type, "INSTANT"))
+        {
+            // This API publishes only INSTANT-scoped actions.
+            RCLCPP_WARN(_logger,"[VDA5050] %s: action '%s' is scoped NODE/EDGE only in the AGV's "
+                        "factsheet, not INSTANT -- sending it as an instantAction anyway",
                         name.c_str(), action_type.c_str());
         }
 
+        const std::string blocking_type = blocking_type_for(ctx, action_type, "HARD");
+        warn_if_action_conflicts(ctx, action_type, blocking_type);
+
         request = vda5050::build_instant_action(ctx.next_instant_actions_header(),
-                                                ctx.manufacturer, ctx.serial,
-                                                action_type, parameters,
-                                                blocking_type_for(ctx, action_type, "HARD"));
-        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
-                               vda5050::TOPIC_INSTANT_ACTIONS);
+                                                ctx.manufacturer, ctx.serial, action_type, parameters, blocking_type);
+        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
     }
-    publish_raw(topic, request.message.dump());
+    if (publish_raw(topic, request.message.dump()) == CommandStatus::transport_failed)
+    {
+        RCLCPP_ERROR(_logger,"[VDA5050] %s -> action '%s' NOT published (transport failure)", name.c_str(), action_type.c_str());
+        return {};
+    }
     return request.action_id;
 }
 
 void Connector::subscribe_robot(const RobotContext &ctx)
 {
     for (const char *leaf :
-         {vda5050::TOPIC_STATE, vda5050::TOPIC_CONNECTION, vda5050::TOPIC_VISUALIZATION,
-          vda5050::TOPIC_FACTSHEET})
+         {
+            vda5050::TOPIC_STATE, vda5050::TOPIC_CONNECTION, vda5050::TOPIC_VISUALIZATION, vda5050::TOPIC_FACTSHEET
+        })
     {
-        _mqtt_client.subscribe(
-            vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, leaf), 1);
+        _mqtt_client.subscribe(vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, leaf), 1);
     }
 }
 
@@ -332,47 +476,129 @@ Connector::RobotContext *Connector::match_robot(const std::string &topic)
     return nullptr;
 }
 
-void Connector::warn_if_unroutable(const RobotContext &ctx,
-                                   const std::string &dest_node_id,
-                                   double x, double y, double theta,
-                                   const std::string &map_id,
-                                   std::optional<double> speed_limit) const
+void Connector::warn_if_unroutable(const RobotContext &ctx, const std::string &dest_node_id,
+                                   double x, double y, double theta, const std::string &map_id, std::optional<double> speed_limit) const
 {
     if (dest_node_id.empty())
     {
-        RCLCPP_WARN(_logger,
-                    "[VDA5050] %s: navigating to an empty nodeId -- the AGV cannot "
-                    "echo it back as lastNodeId, so this order can never complete",
-                    ctx.name.c_str());
+        RCLCPP_WARN(_logger,"[VDA5050] %s: navigating to an empty nodeId -- the AGV cannot "
+                    "echo it back as lastNodeId, so this order can never complete", ctx.name.c_str());
     }
     if (map_id.empty())
     {
-        RCLCPP_WARN(_logger, "[VDA5050] %s: navigating with an empty mapId",
-                    ctx.name.c_str());
+        RCLCPP_WARN(_logger, "[VDA5050] %s: navigating with an empty mapId", ctx.name.c_str());
     }
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(theta))
     {
-        RCLCPP_WARN(_logger,
-                    "[VDA5050] %s: destination is not finite (%.3f, %.3f, %.3f)",
-                    ctx.name.c_str(), x, y, theta);
+        RCLCPP_WARN(_logger, "[VDA5050] %s: destination is not finite (%.3f, %.3f, %.3f)", ctx.name.c_str(), x, y, theta);
     }
 
     if (speed_limit.has_value())
     {
         if (!std::isfinite(*speed_limit) || *speed_limit <= 0.0)
         {
-            RCLCPP_WARN(_logger, "[VDA5050] %s: speed limit %.3f is not a usable speed",
-                        ctx.name.c_str(), *speed_limit);
+            RCLCPP_WARN(_logger, "[VDA5050] %s: speed limit %.3f is not a usable speed", ctx.name.c_str(), *speed_limit);
         }
-        else if (ctx.factsheet.has_value() && ctx.factsheet->speed_max.has_value() &&
-                 *speed_limit > *ctx.factsheet->speed_max)
+        else if (ctx.factsheet.has_value() && ctx.factsheet->speed_max.has_value() && *speed_limit > *ctx.factsheet->speed_max)
         {
-            RCLCPP_WARN(_logger,
-                        "[VDA5050] %s: speed limit %.3f exceeds the AGV's declared "
-                        "speedMax %.3f (factsheet)",
-                        ctx.name.c_str(), *speed_limit, *ctx.factsheet->speed_max);
+            RCLCPP_WARN(_logger, "[VDA5050] %s: speed limit %.3f exceeds the AGV's declared " "speedMax %.3f (factsheet)", ctx.name.c_str(), *speed_limit, *ctx.factsheet->speed_max);
         }
     }
+}
+
+void Connector::warn_if_action_conflicts(const RobotContext &ctx,
+                                         const std::string &action_type,
+                                         const std::string &blocking_type) const
+{
+    if (!ctx.last_state.has_value())
+    {
+        return;
+    }
+    const auto &s = *ctx.last_state;
+
+    // HARD and SOFT actions require motion to stop; NONE may run in parallel.
+    if (s.driving && blocking_type != "NONE")
+    {
+        RCLCPP_WARN(_logger,
+                    "[VDA5050] %s: sending '%s' (blockingType %s) while the AGV is still "
+                    "driving -- %s actions expect it stationary and may be queued or "
+                    "rejected",
+                    ctx.name.c_str(), action_type.c_str(), blocking_type.c_str(),
+                    blocking_type.c_str());
+    }
+
+    if (!ctx.factsheet.has_value())
+    {
+        return;
+    }
+
+    // A running HARD-only action holds exclusive execution.
+    for (const auto &running : s.action_states)
+    {
+        const std::string status = running.value("actionStatus", std::string{});
+        // Ignore action states that do not provide a status.
+        if (status.empty() || vda5050::is_terminal_action_status(status))
+        {
+            continue;
+        }
+        const std::string running_type = running.value("actionType", std::string{});
+        if (running_type.empty() || running_type == action_type)
+        {
+            continue;
+        }
+        // Report only conflicts whose blocking type is unambiguous.
+        const auto it = ctx.factsheet->agv_actions.find(running_type);
+        if (it != ctx.factsheet->agv_actions.end() &&
+            it->second.blocking_types.size() == 1 &&
+            it->second.blocking_types.front() == "HARD")
+        {
+            RCLCPP_WARN(_logger,
+                        "[VDA5050] %s: sending '%s' while '%s' (action %s) is still %s "
+                        "and only ever runs HARD -- it holds exclusivity, this action "
+                        "may be queued or rejected",
+                        ctx.name.c_str(), action_type.c_str(), running_type.c_str(),
+                        running.value("actionId", std::string{}).c_str(), status.c_str());
+        }
+    }
+}
+
+void Connector::warn_if_order_oversized(RobotContext &ctx, std::size_t node_count,
+                                        std::size_t edge_count) const
+{
+    if (ctx.factsheet.has_value())
+    {
+        const auto &fs = *ctx.factsheet;
+        if (fs.max_order_nodes.has_value() && node_count > *fs.max_order_nodes)
+        {
+            RCLCPP_WARN(_logger,
+                        "[VDA5050] %s: order has %zu node(s), exceeding the AGV's "
+                        "declared protocolLimits.maxArrayLens['order.nodes'] (%u) -- it "
+                        "may reject this order",
+                        ctx.name.c_str(), node_count, *fs.max_order_nodes);
+        }
+        if (fs.max_order_edges.has_value() && edge_count > *fs.max_order_edges)
+        {
+            RCLCPP_WARN(_logger,
+                        "[VDA5050] %s: order has %zu edge(s), exceeding the AGV's "
+                        "declared protocolLimits.maxArrayLens['order.edges'] (%u) -- it "
+                        "may reject this order",
+                        ctx.name.c_str(), edge_count, *fs.max_order_edges);
+        }
+
+        if (fs.min_order_interval.has_value())
+        {
+            const double since_last = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - ctx.last_order_time).count();
+            if (since_last < *fs.min_order_interval)
+            {
+                RCLCPP_WARN(_logger,
+                            "[VDA5050] %s: order published %.2fs after the previous one, "
+                            "under the AGV's declared minOrderInterval (%.2fs)",
+                            ctx.name.c_str(), since_last, *fs.min_order_interval);
+            }
+        }
+    }
+    ctx.last_order_time = std::chrono::steady_clock::now();
 }
 
 std::string Connector::blocking_type_for(const RobotContext &ctx,
@@ -386,15 +612,15 @@ std::string Connector::blocking_type_for(const RobotContext &ctx,
     return ctx.factsheet->blocking_type_for(action_type, preferred);
 }
 
-void Connector::publish_raw(const std::string &topic, const std::string &payload)
+CommandStatus Connector::publish_raw(const std::string &topic, const std::string &payload)
 {
     if (!_mqtt_client.publish(topic, payload))
     {
-        // publish() also returns false when Paho itself threw (see on_error()
-        // for that detail) -- this line only means "not delivered", not
-        // necessarily "offline".
+        // Detailed transport failures are reported through on_error().
         RCLCPP_WARN(_logger, "[VDA5050] publish failed, dropping message to %s", topic.c_str());
+        return CommandStatus::transport_failed;
     }
+    return CommandStatus::queued;
 }
 
 void Connector::request_state(const std::string &name)
@@ -432,6 +658,130 @@ void Connector::on_error(const std::string &context, const std::string &what)
     RCLCPP_WARN(_logger, "[VDA5050] %s: %s", context.c_str(), what.c_str());
 }
 
+void Connector::report_state_changes(RobotContext &ctx)
+{
+    const auto &s = *ctx.last_state;
+
+    // Report changes in errors and pause state.
+    std::string errors_key;
+    for (const auto &e : s.errors)
+    {
+        errors_key += e.dump() + ";";
+    }
+    if (s.paused)
+    {
+        errors_key += "paused;";
+    }
+    if (errors_key != ctx.last_errors_key)
+    {
+        if (errors_key.empty())
+        {
+            RCLCPP_INFO(_logger, "[VDA5050] %s: errors cleared", ctx.name.c_str());
+        }
+        else
+        {
+            RCLCPP_ERROR(_logger, "[VDA5050] %s reports: %s", ctx.name.c_str(),
+                         errors_key.c_str());
+        }
+        ctx.last_errors_key = errors_key;
+    }
+
+    // Report changes in safety state.
+    const std::string safety_key =
+        s.safety_state.e_stop + (s.safety_state.field_violation ? "|field" : "");
+    if (safety_key != ctx.last_safety_key)
+    {
+        if (s.safety_state.triggered())
+        {
+            RCLCPP_ERROR(_logger,
+                         "[VDA5050] %s SAFETY: eStop '%s'%s -- the AGV will not drive",
+                         ctx.name.c_str(), s.safety_state.e_stop.c_str(),
+                         s.safety_state.field_violation ? ", protective field violated" : "");
+        }
+        else if (!ctx.last_safety_key.empty())
+        {
+            RCLCPP_INFO(_logger, "[VDA5050] %s safety cleared", ctx.name.c_str());
+        }
+        ctx.last_safety_key = safety_key;
+    }
+
+    // Report changes in operating mode.
+    if (s.operating_mode != ctx.last_mode_key)
+    {
+        if (s.operable())
+        {
+            RCLCPP_INFO(_logger, "[VDA5050] %s operating mode: %s", ctx.name.c_str(),
+                        s.operating_mode.c_str());
+        }
+        else
+        {
+            RCLCPP_WARN(_logger,
+                        "[VDA5050] %s operating mode: %s -- under local control, it will "
+                        "not act on orders from this fleet adapter",
+                        ctx.name.c_str(), s.operating_mode.c_str());
+        }
+        ctx.last_mode_key = s.operating_mode;
+    }
+
+    if (s.new_base_request != ctx.last_new_base_request)
+    {
+        if (s.new_base_request)
+        {
+            RCLCPP_INFO(_logger,
+                        "[VDA5050] %s requests a new base -- releasing the horizon of "
+                        "order '%s'",
+                        ctx.name.c_str(),
+                        ctx.current_order_id.empty() ? "(none)" : ctx.current_order_id.c_str());
+        }
+        ctx.last_new_base_request = s.new_base_request;
+    }
+
+    // Report VDA5050 informational messages.
+    std::string info_key;
+    for (const auto &i : s.information)
+    {
+        info_key += i.dump() + ";";
+    }
+    if (info_key != ctx.last_info_key)
+    {
+        if (!info_key.empty())
+        {
+            RCLCPP_INFO(_logger, "[VDA5050] %s info: %s", ctx.name.c_str(), info_key.c_str());
+        }
+        ctx.last_info_key = info_key;
+    }
+
+    // Report the current load set.
+    std::string loads_key;
+    for (const auto &l : s.loads)
+    {
+        loads_key += l.value("loadId", std::string{"?"}) + "(" +
+                     l.value("loadType", std::string{"?"}) + ");";
+    }
+    if (loads_key != ctx.last_loads_key)
+    {
+        RCLCPP_INFO(_logger, "[VDA5050] %s loads: %s", ctx.name.c_str(),
+                    loads_key.empty() ? "(empty)" : loads_key.c_str());
+        ctx.last_loads_key = loads_key;
+    }
+
+    // Report maps declared by the AGV.
+    std::string maps_key;
+    for (const auto &m : s.maps)
+    {
+        maps_key += m.value("mapId", std::string{"?"}) + ":" +
+                    m.value("mapStatus", std::string{"?"}) + ";";
+    }
+    if (maps_key != ctx.last_maps_key)
+    {
+        if (!maps_key.empty())
+        {
+            RCLCPP_INFO(_logger, "[VDA5050] %s maps: %s", ctx.name.c_str(), maps_key.c_str());
+        }
+        ctx.last_maps_key = maps_key;
+    }
+}
+
 void Connector::handle_message(const std::string &topic, const std::string &payload)
 {
     nlohmann::json raw;
@@ -461,11 +811,13 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
 
     if (ends_with(vda5050::TOPIC_STATE))
     {
-        if (!has_required_completion_fields(raw))
+        if (!has_required_state_fields(raw))
         {
             RCLCPP_WARN(_logger,
-                        "[VDA5050] %s: state message missing required fields "
-                        "(orderId/lastNodeId/driving/nodeStates/edgeStates/actionStates), ignoring",
+                        "[VDA5050] %s: state message missing/mistyping a VDA5050-required "
+                        "field (orderId/lastNodeId/driving/nodeStates/edgeStates/"
+                        "actionStates/errors/operatingMode/safetyState/batteryState.batteryCharge) "
+                        "-- rejecting rather than caching it with fallback values",
                         ctx->name.c_str());
             return;
         }
@@ -476,31 +828,18 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
             ctx->last_node_id = ctx->last_state->last_node_id;
         }
 
-        // Errors and pause were parsed and then dropped, so a faulted robot
-        // still looked healthy to RMF and nothing appeared in the log.
-        // Report on change.
-        std::string errors_key;
-        for (const auto &e : ctx->last_state->errors)
+        report_state_changes(*ctx);
+    }
+    else if (ends_with(vda5050::TOPIC_VISUALIZATION))
+    {
+        vda5050::ParsedVisualization viz(raw);
+        // Ignore visualization messages without a usable pose.
+        if (!viz.has_position())
         {
-            errors_key += e.dump() + ";";
+            return;
         }
-        if (ctx->last_state->paused)
-        {
-            errors_key += "paused;";
-        }
-        if (errors_key != ctx->last_errors_key)
-        {
-            if (errors_key.empty())
-            {
-                RCLCPP_INFO(_logger, "[VDA5050] %s: errors cleared", ctx->name.c_str());
-            }
-            else
-            {
-                RCLCPP_ERROR(_logger, "[VDA5050] %s reports: %s", ctx->name.c_str(),
-                            errors_key.c_str());
-            }
-            ctx->last_errors_key = errors_key;
-        }
+        ctx->last_visualization = std::move(viz);
+        ctx->last_visualization_time = std::chrono::steady_clock::now();
     }
     else if (ends_with(vda5050::TOPIC_CONNECTION))
     {
@@ -531,16 +870,16 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
         }
 
         std::string actions;
-        for (const auto &[type, blocking] : fs.agv_actions)
+        for (const auto &[type, info] : fs.agv_actions)
         {
             actions += actions.empty() ? "" : ", ";
             actions += type;
-            if (!blocking.empty())
+            if (!info.blocking_types.empty())
             {
                 actions += "(";
-                for (std::size_t i = 0; i < blocking.size(); ++i)
+                for (std::size_t i = 0; i < info.blocking_types.size(); ++i)
                 {
-                    actions += (i == 0 ? "" : "|") + blocking[i];
+                    actions += (i == 0 ? "" : "|") + info.blocking_types[i];
                 }
                 actions += ")";
             }
@@ -571,11 +910,40 @@ std::optional<RobotData> Connector::get_data(const std::string &name)
     }
 
     const auto &s = *ctx.last_state;
-    const auto rmf_pos = ctx.transform.to_rmf(*s.x, *s.y, *s.theta);
+
     RobotData data;
     data.map_name = s.map_id;
-    data.position = rmf_pos;
+    data.position = ctx.transform.to_rmf(*s.x, *s.y, *s.theta);
     data.battery_soc = std::clamp(s.battery_soc.value_or(1.0), 0.0, 1.0);
+    data.charging = s.charging;
+    data.order_id = s.order_id;
+    data.last_node_id = ctx.last_node_id;
+    data.last_node_sequence_id = s.last_node_sequence_id;
+    data.velocity = s.velocity;
+    data.distance_since_last_node = s.distance_since_last_node;
+    data.operating_mode = s.operating_mode;
+    data.operable = s.operable();
+    data.safety_state = s.safety_state;
+    data.fatal_error = s.first_fatal_error();
+    data.new_base_request = s.new_base_request;
+    data.localization_score = s.localization_score;
+
+    // Prefer fresher visualization pose and velocity over state telemetry.
+    if (ctx.last_visualization.has_value() &&
+        ctx.last_visualization_time > ctx.last_state_time)
+    {
+        const auto &v = *ctx.last_visualization;
+        // Do not combine telemetry from different map frames.
+        if (v.map_id.empty() || v.map_id == s.map_id)
+        {
+            data.position = ctx.transform.to_rmf(*v.x, *v.y, *v.theta);
+            if (v.velocity.has_value())
+            {
+                data.velocity = v.velocity;
+            }
+        }
+    }
+
     return data;
 }
 
@@ -605,15 +973,36 @@ bool Connector::is_command_completed(const std::string &name)
         return false;
     }
 
-    if (s.order_finished(ctx.current_order_id, ctx.target_node_id))
+    if (s.order_finished(ctx.current_order_id, ctx.target_node_id, ctx.order_action_ids))
     {
         return true;
     }
 
-    // The order has drained and the robot has stopped, so the only thing
-    // still failing is the final node check. That condition will never flip
-    // on its own, so name it once instead of letting the navigation hang
-    // without a word.
+    // Report order actions that are still active after navigation settles.
+    if (s.node_states.empty() && s.edge_states.empty() && !s.driving &&
+        !s.actions_settled(ctx.order_action_ids))
+    {
+        std::string pending;
+        for (const auto &id : ctx.order_action_ids)
+        {
+            const auto status = s.action_status(id);
+            if (status.has_value() && !vda5050::is_terminal_action_status(*status))
+            {
+                pending += pending.empty() ? "" : ", ";
+                pending += id + "=" + *status;
+            }
+        }
+        const std::string key = ctx.current_order_id + "|actions|" + pending;
+        if (ctx.last_incomplete_key != key)
+        {
+            ctx.last_incomplete_key = key;
+            RCLCPP_INFO(_logger,"[VDA5050] %s reached the end of order '%s'; waiting on action(s): %s",
+                            name.c_str(), ctx.current_order_id.c_str(), pending.c_str());
+        }
+        return false;
+    }
+
+    // Report a final-node mismatch after the order has drained.
     if (s.node_states.empty() && s.edge_states.empty() &&
         !ctx.target_node_id.empty() && s.last_node_id != ctx.target_node_id)
     {
@@ -621,13 +1010,12 @@ bool Connector::is_command_completed(const std::string &name)
         if (ctx.last_incomplete_key != key)
         {
             ctx.last_incomplete_key = key;
-            RCLCPP_WARN(_logger,
-                        "[VDA5050] %s drained order '%s' but reports lastNodeId '%s' "
-                        "while the order targeted '%s'. Navigation cannot complete "
-                        "until the robot echoes the nodeId this adapter sends.",
-                        name.c_str(), ctx.current_order_id.c_str(),
-                        s.last_node_id.empty() ? "(empty)" : s.last_node_id.c_str(),
-                        ctx.target_node_id.c_str());
+            RCLCPP_WARN(_logger,"[VDA5050] %s drained order '%s' but reports lastNodeId '%s' "
+                                "while the order targeted '%s'. Navigation cannot complete "
+                                "until the robot echoes the nodeId this adapter sends.",
+                                name.c_str(), ctx.current_order_id.c_str(),
+                                s.last_node_id.empty() ? "(empty)" : s.last_node_id.c_str(),
+                                ctx.target_node_id.c_str());
         }
     }
 

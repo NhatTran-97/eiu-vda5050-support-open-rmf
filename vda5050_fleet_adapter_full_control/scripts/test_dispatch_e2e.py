@@ -13,11 +13,11 @@ Verifies the full dispatch -> navigate -> complete loop using a simulated AGV
 Prerequisites (already running, same ROS_DOMAIN_ID):
   ros2 run rmf_traffic_ros2 rmf_traffic_schedule
   ros2 run rmf_task_ros2 rmf_task_dispatcher
-  ros2 launch vda5050_fleet_adapter fleet_adapter.launch.py
+  ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py
 
 Usage:
-  python3 test_dispatch_e2e.py --target wp6
-  python3 test_dispatch_e2e.py --target wp2_parking --no-mock   # external robot
+  python3 test_dispatch_e2e.py --target Patrol_C2
+  python3 test_dispatch_e2e.py --target Patrol_B2 --no-mock   # external robot
 """
 import argparse
 import json
@@ -72,7 +72,7 @@ class Watcher:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="E2E test for vda5050_fleet_adapter.")
-    p.add_argument("--target", default="wp6", help="waypoint the robot must reach")
+    p.add_argument("--target", default="Patrol_C2", help="waypoint the robot must reach")
     p.add_argument("--host", default="localhost")
     p.add_argument("--port", type=int, default=1883)
     p.add_argument("--interface", default="TB3")

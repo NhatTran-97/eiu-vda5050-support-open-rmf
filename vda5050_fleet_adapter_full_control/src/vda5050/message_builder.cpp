@@ -50,9 +50,7 @@ std::string make_uuid()
     std::uniform_int_distribution<uint32_t> d;
     char buf[37];
     const uint32_t a = d(gen), b = d(gen), c = d(gen), e = d(gen);
-    std::snprintf(buf, sizeof(buf), "%08x-%04x-4%03x-%04x-%04x%08x",
-                  a, (b >> 16) & 0xFFFF, b & 0x0FFF,
-                  ((c >> 16) & 0x3FFF) | 0x8000, c & 0xFFFF, e);
+    std::snprintf(buf, sizeof(buf), "%08x-%04x-4%03x-%04x-%04x%08x", a, (b >> 16) & 0xFFFF, b & 0x0FFF, ((c >> 16) & 0x3FFF) | 0x8000, c & 0xFFFF, e);
     return buf;
 }
 
@@ -112,19 +110,19 @@ nlohmann::json make_order(int header_id, const std::string& manufacturer, const 
 
 nlohmann::json make_action(const std::string& action_type, const std::string& blocking_type,
                             const std::string& action_id,
-                            const std::vector<std::pair<std::string, std::string>>& parameters)
+                            const nlohmann::json& parameters)
 {
     nlohmann::json action = {
         {"actionType", action_type},
         {"actionId", action_id.empty() ? make_uuid() : action_id},
         {"blockingType", blocking_type},
     };
-    if (!parameters.empty())
+    if (parameters.is_object() && !parameters.empty())
     {
         nlohmann::json params = nlohmann::json::array();
-        for (const auto& [k, v] : parameters)
+        for (auto it = parameters.begin(); it != parameters.end(); ++it)
         {
-            params.push_back({{"key", k}, {"value", v}});
+            params.push_back({{"key", it.key()}, {"value", it.value()}});
         }
         action["actionParameters"] = params;
     }

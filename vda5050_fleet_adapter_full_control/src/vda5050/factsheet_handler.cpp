@@ -40,6 +40,15 @@ std::vector<std::string> get_string_array(const nlohmann::json &j, const char *k
     return out;
 }
 
+std::optional<std::uint32_t> get_uint(const nlohmann::json &j, const char *key)
+{
+    if (j.contains(key) && j.at(key).is_number_unsigned())
+    {
+        return j.at(key).get<std::uint32_t>();
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 ParsedFactsheet::ParsedFactsheet(const nlohmann::json &raw)
@@ -82,8 +91,28 @@ ParsedFactsheet::ParsedFactsheet(const nlohmann::json &raw)
                 {
                     continue;
                 }
-                agv_actions[type] = get_string_array(a, "blockingTypes");
+                AgvAction info;
+                info.blocking_types = get_string_array(a, "blockingTypes");
+                info.scopes = get_string_array(a, "actionScopes");
+                agv_actions[type] = std::move(info);
             }
+        }
+    }
+
+    if (raw.contains("protocolLimits") && raw["protocolLimits"].is_object())
+    {
+        const auto &limits = raw["protocolLimits"];
+        if (limits.contains("maxArrayLens") && limits["maxArrayLens"].is_object())
+        {
+            const auto &arr = limits["maxArrayLens"];
+            // VDA5050 §9.4 uses the literal dot-notation key "order.nodes" /
+            // "order.edges", not a nested "order": {"nodes": ...} object.
+            max_order_nodes = get_uint(arr, "order.nodes");
+            max_order_edges = get_uint(arr, "order.edges");
+        }
+        if (limits.contains("timing") && limits["timing"].is_object())
+        {
+            min_order_interval = get_number(limits["timing"], "minOrderInterval");
         }
     }
 }
@@ -97,12 +126,12 @@ std::string ParsedFactsheet::blocking_type_for(const std::string &action_type,
                                                const std::string &preferred) const
 {
     const auto it = agv_actions.find(action_type);
-    if (it == agv_actions.end() || it->second.empty())
+    if (it == agv_actions.end() || it->second.blocking_types.empty())
     {
         return preferred;
     }
 
-    const auto &declared = it->second;
+    const auto &declared = it->second.blocking_types;
     if (std::find(declared.begin(), declared.end(), preferred) != declared.end())
     {
         return preferred;
@@ -110,11 +139,26 @@ std::string ParsedFactsheet::blocking_type_for(const std::string &action_type,
     return declared.front();
 }
 
+bool ParsedFactsheet::supports_scope(const std::string &action_type,
+                                    const std::string &scope) const
+{
+    const auto it = agv_actions.find(action_type);
+    if (it == agv_actions.end() || it->second.scopes.empty())
+    {
+        // Undeclared action, or declared without actionScopes: unknown, not "no" -- do not block on a factsheet that simply omits this field.
+        return true;
+    }
+    const auto &scopes = it->second.scopes;
+    return std::find(scopes.begin(), scopes.end(), scope) != scopes.end();
+}
+
 bool ParsedFactsheet::has_content() const
 {
     return !series_name.empty() || !agv_kinematic.empty() || !agv_class.empty() ||
            !localization_types.empty() || !navigation_types.empty() ||
-           speed_min.has_value() || speed_max.has_value() || !agv_actions.empty();
+           speed_min.has_value() || speed_max.has_value() || !agv_actions.empty() ||
+           max_order_nodes.has_value() || max_order_edges.has_value() ||
+           min_order_interval.has_value();
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050
