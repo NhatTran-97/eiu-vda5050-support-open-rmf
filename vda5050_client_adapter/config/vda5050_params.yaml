@@ -15,7 +15,7 @@
       manufacturer:   "ROBOTIS"        # Manufacturer identifier
       serial_number:  "0001"       # AGV serial number
 
-      state_publish_interval: 30.0       # State message interval (sec)
+      state_publish_interval: 3.0       # State message interval (sec)
       visualization_interval: 1.0        # Visualization interval (sec)
       position_publish_min_interval: 1.0 # Min interval for on-position-update state publishes (sec)
       hard_action_pause_timeout: 30.0    # Max wait for HARD action pause confirmation (sec)

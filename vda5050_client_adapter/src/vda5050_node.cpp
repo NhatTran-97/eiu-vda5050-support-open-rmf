@@ -299,6 +299,10 @@ void VDA5050Node::setup_ros_interfaces() {
     "~/edge_completed", rclcpp::QoS(10),
     std::bind(&VDA5050Node::on_edge_completed, this, _1));
 
+  order_dropped_sub_ = create_subscription<std_msgs::msg::String>(
+    "~/order_dropped", rclcpp::QoS(10),
+    std::bind(&VDA5050Node::on_order_dropped, this, _1));
+
   // ── Timers ───────────────────────────────────────────────────────────────
   state_timer_ = create_wall_timer(
     std::chrono::duration<double>(state_publish_interval_), [this]() 
@@ -912,6 +916,30 @@ void VDA5050Node::on_edge_completed(
   clear_errors_by_type("navigationOrderError");
   action_manager_->on_edge_left(msg->edge_id, msg->sequence_id);
   sync_order_activity();
+  sync_action_blocking();
+  publish_state();
+}
+
+// Receive notice (msg) that the bridge dropped order msg->data outside the cancelOrder flow
+// (initPosition invalidating its start pose, a stuck-order timeout, or a local-UI cancel that
+// never reaches this adapter) -- without this, remaining_base_nodes_/order_active_ stay stale
+// and every subsequent real node_reached/edge_entered is rejected as "out of order", and any
+// new order from Master Control is rejected as "cannot replace the active order".
+void VDA5050Node::on_order_dropped(const std_msgs::msg::String::SharedPtr msg)
+{
+  if (!order_manager_->has_active_order() ||
+      msg->data != order_manager_->current_order_id())
+  {
+    return;
+  }
+
+  RCLCPP_WARN(get_logger(),
+              "Order '%s' dropped by the driver outside the cancelOrder flow -- clearing local "
+              "order tracking",
+              msg->data.c_str());
+  action_manager_->cancel_all("");
+  order_manager_->cancel_order(msg->data);
+  clear_errors_by_type("navigationOrderError");
   sync_action_blocking();
   publish_state();
 }

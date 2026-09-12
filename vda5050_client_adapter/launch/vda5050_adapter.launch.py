@@ -13,6 +13,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -35,8 +36,14 @@ def generate_launch_description():
         default_value="0001",
         description="AGV serial number",
     )
+    # Named specifically (not "params_file") -- DeclareLaunchArgument names
+    # are shared across the whole launch tree, not scoped per include. A
+    # generic name here collided with tb3_vda5050_bridge's bridge.launch.py
+    # when both are included from bringup_nav.launch.py: bridge.launch.py
+    # loads first and claims "params_file", so this file's own default was
+    # silently ignored and it inherited bridge_params.yaml instead.
     params_file_arg = DeclareLaunchArgument(
-        "params_file",
+        "adapter_params_file",
         default_value=default_params,
         description="Path to the ROS2 parameters YAML file",
     )
@@ -48,11 +55,16 @@ def generate_launch_description():
         name="vda5050_client_adapter",
         output="screen",
         parameters=[
-            LaunchConfiguration("params_file"),
+            LaunchConfiguration("adapter_params_file"),
             {
-                "mqtt.broker_url": LaunchConfiguration("broker_url"),
-                "vda5050.manufacturer": LaunchConfiguration("manufacturer"),
-                "vda5050.serial_number": LaunchConfiguration("serial_number"),
+                # ParameterValue(..., value_type=str) forces the resolved
+                # substitution to stay a string -- otherwise a numeric-looking
+                # override (e.g. serial_number "0001") gets YAML-inferred as
+                # an integer and clashes with the string type already
+                # declared by params_file.
+                "mqtt.broker_url": ParameterValue(LaunchConfiguration("broker_url"), value_type=str),
+                "vda5050.manufacturer": ParameterValue(LaunchConfiguration("manufacturer"), value_type=str),
+                "vda5050.serial_number": ParameterValue(LaunchConfiguration("serial_number"), value_type=str),
             },
         ],
         remappings=[

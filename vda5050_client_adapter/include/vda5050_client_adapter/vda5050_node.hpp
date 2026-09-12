@@ -135,6 +135,9 @@ private:
   void on_node_reached(const vda5050_msgs::msg::NodeState::SharedPtr msg);
   void on_edge_entered(const vda5050_msgs::msg::EdgeState::SharedPtr msg);
   void on_edge_completed(const vda5050_msgs::msg::EdgeState::SharedPtr msg);
+  // Robot dropped its order outside the cancelOrder flow (e.g. initPosition, a stuck-order
+  // timeout, or a local-UI cancel that bypasses this adapter) -- clear local order tracking to match.
+  void on_order_dropped(const std_msgs::msg::String::SharedPtr msg);
 
   // ── OrderManager callbacks ─────────────────────────────────────────────────
   void on_order_accepted(const std::string& order_id,
@@ -226,6 +229,7 @@ private:
   rclcpp::Subscription<vda5050_msgs::msg::NodeState>::SharedPtr    node_reached_sub_;
   rclcpp::Subscription<vda5050_msgs::msg::EdgeState>::SharedPtr    edge_entered_sub_;
   rclcpp::Subscription<vda5050_msgs::msg::EdgeState>::SharedPtr    edge_completed_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr           order_dropped_sub_;
 
   // ── Timers ─────────────────────────────────────────────────────────────────
   rclcpp::TimerBase::SharedPtr state_timer_;
