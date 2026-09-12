@@ -97,6 +97,7 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options)
   edge_completed_pub_ = create_publisher<vda5050_msgs::msg::EdgeState>(adapter_topic("edge_completed"), rclcpp::QoS(10));
   action_state_feedback_pub_ = create_publisher<vda5050_msgs::msg::ActionState>(adapter_topic("action_state_feedback"), rclcpp::QoS(10));
   error_pub_ = create_publisher<vda5050_msgs::msg::Error>(adapter_topic("error"), rclcpp::QoS(10));
+  order_dropped_pub_ = create_publisher<std_msgs::msg::String>(adapter_topic("order_dropped"), rclcpp::QoS(10));
 
   nav2_client_ = rclcpp_action::create_client<NavigateToPose>(this, nav2_action_name_);
 
@@ -337,9 +338,13 @@ void BridgeNode::on_action_cancel(const std_msgs::msg::String::SharedPtr msg)
     order_session_.clear();
     state_machine_.on_cancel_requested();
     publish_bridge_status();
-    if (!cancelled_order_id.empty()) 
+    if (!cancelled_order_id.empty())
     {
       persist_order_state(cancelled_order_id, cancelled_cursor, true);
+      // Covers robot_local_ui, which publishes "cancel:" straight to this topic and never
+      // goes through vda5050_client_adapter's own OrderManager -- a no-op if the adapter
+      // already cleared it itself (its own cancelOrder flow does that before publishing here).
+      notify_order_dropped(cancelled_order_id);
     }
     return;
   }
@@ -372,13 +377,18 @@ void BridgeNode::on_action_execute(const vda5050_msgs::msg::Action::SharedPtr ms
   publish_action_feedback(*msg, "FINISHED", "Completed (no-op handler)");
 }
 
-// Send operator's x/y/theta (from action) to AMCL for initial pose; fails if order active.
+// Send operator's x/y/theta (from action) to AMCL for initial pose; fails while Nav2 is driving.
 void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
 {
-  // Refused while an order is active: it would move the believed position out from under a live Nav2 goal.
-  if (order_session_.has_order()) { RCLCPP_WARN(get_logger(),"initPosition (id=%s) rejected: an order is currently active",
+  // Only a live Nav2 goal blocks re-localizing -- that is the case the guard exists for, since
+  // moving the believed position mid-goal sends the robot down a path computed for elsewhere.
+  // Order-session state must NOT gate this: an order whose navigation was interrupted (process
+  // restart, Nav2 unavailable, a goal that never resolved) stays "in progress" forever with
+  // nothing driving it, and re-localizing is exactly how an operator recovers from that.
+  if (current_goal_handle_) {
+      RCLCPP_WARN(get_logger(),"initPosition (id=%s) rejected: robot is executing a navigation goal",
                                     action.action_id.c_str());
-                                    publish_action_feedback( action, "FAILED","initPosition refused while an order is active — cancel or finish ""the current order first");
+                                    publish_action_feedback( action, "FAILED","initPosition refused while the robot is navigating — cancel or finish ""the current order first");
       return;
   }
 
@@ -408,6 +418,21 @@ void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
 
   initial_pose_pub_->publish(pose);
   RCLCPP_INFO(get_logger(), "initPosition (id=%s): published initial pose (%.2f, %.2f, %.2f rad) to %s", action.action_id.c_str(), x, y, theta, initial_pose_topic_.c_str());
+
+  // Any order still tracked here was planned from the pose just invalidated, so it can never be
+  // resumed correctly -- drop it rather than leave it blocking the next dispatch.
+  if (order_session_.has_order()) {
+    const auto dropped_order_id = order_session_.order_id();
+    const auto dropped_cursor = order_session_.current_node_index();
+    cancel_nav2_retry();
+    order_session_.clear();
+    state_machine_.on_cancel_requested();
+    publish_bridge_status();
+    persist_order_state(dropped_order_id, dropped_cursor, true);
+    notify_order_dropped(dropped_order_id);
+    RCLCPP_INFO(get_logger(), "Dropped order %s: its start pose was invalidated by initPosition", dropped_order_id.c_str());
+  }
+
   publish_action_feedback(action, "FINISHED", "Initial pose published to AMCL");
 }
 
@@ -863,6 +888,16 @@ void BridgeNode::fail_stuck_order(const std::string& reason)
   state_machine_.on_navigation_failed();
   publish_bridge_status();
   persist_order_state(order_id, cursor, true);
+  notify_order_dropped(order_id);
+}
+
+// Tell the adapter order (order_id) was dropped outside the normal cancelOrder flow, so its
+// own OrderManager clears remaining_base_nodes_/order_active_ instead of going stale.
+void BridgeNode::notify_order_dropped(const std::string& order_id)
+{
+  std_msgs::msg::String msg;
+  msg.data = order_id;
+  order_dropped_pub_->publish(msg);
 }
 
 // Read order state from file into (order_id, cursor, terminal); return false if absent/broken.

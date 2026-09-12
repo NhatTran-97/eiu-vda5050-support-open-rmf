@@ -101,6 +101,7 @@ private:
   rclcpp::Publisher<vda5050_msgs::msg::EdgeState>::SharedPtr        edge_completed_pub_;
   rclcpp::Publisher<vda5050_msgs::msg::ActionState>::SharedPtr      action_state_feedback_pub_;
   rclcpp::Publisher<vda5050_msgs::msg::Error>::SharedPtr            error_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr               order_dropped_pub_;
 
   // ── Nav2 action client ──────────────────────────────────────────────────────
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
@@ -168,6 +169,9 @@ private:
   void cancel_nav2_retry();
   // Fail active order with reason (reason), publish error, persist as complete.
   void fail_stuck_order(const std::string& reason);
+  // Tell the adapter order (order_id) was dropped outside the normal cancelOrder flow, so its
+  // own OrderManager clears remaining_base_nodes_/order_active_ instead of going stale.
+  void notify_order_dropped(const std::string& order_id);
   // Check if robot is already within target tolerances; if so, complete node locally without Nav2.
   bool try_complete_in_place(const NavigationTarget& target);
   // Send Nav2 goal for target (target), or arm retry if Nav2 action server not ready yet.

@@ -43,9 +43,9 @@ flowchart TB
 
     Node --> Session
     Node --> SM
-    Node -->|"pub/sub"| Adapter["vda5050_client_adapter topics"]
-    Node -->|"send/cancel goal"| Nav2["NavigateToPose"]
-    Node -->|"read odom/battery"| Robot["TB3 telemetry"]
+    Node -->|pub/sub| Adapter["vda5050_client_adapter topics"]
+    Node -->|send/cancel goal| Nav2["NavigateToPose"]
+    Node -->|read odom, battery| Robot["TB3 telemetry"]
 ```
 
 ### `BridgeNode`
