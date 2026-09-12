@@ -388,8 +388,7 @@ void VdaRobotCommandHandle::on_perform_action(const std::string &category,
 
 void VdaRobotCommandHandle::update(const RobotData &data)
 {
-    // Read the update handle under the lock; set_update_handle() may write
-    // it from a different thread.
+    // Read the update handle under the lock; set_update_handle() may write it from a different thread.
     std::shared_ptr<RobotUpdateHandle> handle;
     {
         std::lock_guard<std::mutex> lock(_mutex);

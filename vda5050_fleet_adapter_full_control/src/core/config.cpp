@@ -45,6 +45,15 @@ Config::Config(const std::string &config_file)
     _honor_waypoint_timing =
         vda["honor_waypoint_timing"] ? vda["honor_waypoint_timing"].as<bool>() : false;
 
+    if (vda["ui_websocket_uri"] && !vda["ui_websocket_uri"].IsNull())
+    {
+        const std::string uri = vda["ui_websocket_uri"].as<std::string>();
+        if (!uri.empty())
+        {
+            _server_uri = uri;
+        }
+    }
+
     const YAML::Node mqtt = vda["mqtt"];
     const std::string host = (mqtt && mqtt["host"]) ? mqtt["host"].as<std::string>() : "localhost";
     if (host.empty())

@@ -29,7 +29,10 @@ rmf_fleet:
     delivery: true
   actions: ["dock"]
 
-  finishing_request: "charge"   # park | charge | nothing
+  finishing_request: "nothing"   # park | charge | nothing
+  # "charge" left the robot permanently stuck: it waits for a real
+  # charging=true signal that never arrives since account_for_battery_drain
+  # is off and the robot only parks at the charger, doesn't actually charge.
 
   robots:
     tb3_1:

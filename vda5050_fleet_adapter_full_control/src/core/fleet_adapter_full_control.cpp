@@ -57,15 +57,24 @@ int run_fleet_adapter_full_control(int argc, char **argv)
 
     try
     {
+        // VDA5050 and MQTT settings; parsed first since server_uri() feeds
+        // into fleet_config below.
+        const Config config(args.config_file);
+
         // Reuse RMF's FleetConfiguration parser for fleet, graph, and task
         // planning parameters. Robot control is registered through FullControl.
         auto fleet_config = EasyFullControl::FleetConfiguration::from_config_files(
-            args.config_file, args.nav_graph);
+            args.config_file, args.nav_graph, config.server_uri());
         if (!fleet_config)
         {
             RCLCPP_FATAL(logger, "Failed to parse fleet configuration from %s",
                          args.config_file.c_str());
             return 1;
+        }
+        if (config.server_uri())
+        {
+            RCLCPP_INFO(logger, "Broadcasting task/fleet updates to %s",
+                        config.server_uri()->c_str());
         }
 
         const auto traits = fleet_config->vehicle_traits();
@@ -147,9 +156,6 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         {
             fleet->set_lift_emergency_level(lift, level);
         }
-
-        // VDA5050 and MQTT settings
-        const Config config(args.config_file);
 
         auto connector = std::make_shared<rmf::Connector>(
             logger, config.mqtt().broker_url, config.interface_name(),

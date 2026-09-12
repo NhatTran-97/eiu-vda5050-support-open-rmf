@@ -39,9 +39,8 @@ std::string OperatorInterface::robot_of_speed_limit_parameter(const std::string 
     return parameter.substr(prefix.size());
 }
 
-OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connector,
-                                     std::map<std::string, RobotHooks> hooks)
-  : _node(node), _connector(connector), _hooks(std::move(hooks))
+OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, std::map<std::string, RobotHooks> hooks) 
+                                                            : _node(node), _connector(connector), _hooks(std::move(hooks))
 {
     for (const auto &[name, robot_hooks] : _hooks)
     {

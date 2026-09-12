@@ -51,6 +51,13 @@ public:
     // (see set_update_handle()).
     bool honor_waypoint_timing() const { return _honor_waypoint_timing; }
 
+    // Websocket URI RMF pushes task_state_update/task_log_update/
+    // fleet_state_update/fleet_log_update to (e.g. "ws://localhost:9000"),
+    // for a UI to render authoritative task status instead of inferring it
+    // from /fleet_states. nullopt (default) disables the broadcast entirely
+    // -- unset, this is the same zero-behavior-change default RMF itself uses.
+    const std::optional<std::string> &server_uri() const { return _server_uri; }
+
     // Missing optional values use the default manufacturer, the robot name as
     // serial, and an identity transform.
     RobotConfig robot_config(const std::string &name) const;
@@ -59,6 +66,7 @@ private:
     std::string _interface_name = "uagv";
     double _update_rate_hz = 10.0;
     bool _honor_waypoint_timing = false;
+    std::optional<std::string> _server_uri;
     MqttConfig _mqtt;
     YAML::Node _robots_cfg;
 };
