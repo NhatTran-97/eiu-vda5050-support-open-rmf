@@ -11,6 +11,7 @@
 #include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/node.hpp>
 #include <rclcpp/node_interfaces/node_parameters_interface.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/trigger.hpp>
 
 #include "vda5050_fleet_adapter_full_control/rmf/connector.hpp"
@@ -28,9 +29,10 @@ struct RobotHooks
 // Exposes operator controls that are not part of RobotCommandHandle.
 //
 // Per robot <name>:
-//   <node>/<name>/init_position  (geometry_msgs/PoseWithCovarianceStamped)
-//   <node>/<name>/pause          (std_srvs/Trigger)
-//   <node>/<name>/resume         (std_srvs/Trigger)
+//   <node>/<name>/init_position         (geometry_msgs/PoseWithCovarianceStamped)
+//   <node>/<name>/init_position_result  (std_msgs/String, published back: "ok" or "error: <reason>")
+//   <node>/<name>/pause                 (std_srvs/Trigger)
+//   <node>/<name>/resume                (std_srvs/Trigger)
 //
 // Per-robot speed cap:
 //   speed_limit.<name>  (double, m/s; 0.0 disables the cap)
@@ -61,6 +63,7 @@ private:
     std::map<std::string, RobotHooks> _hooks;
 
     std::vector<rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr> _init_position_subs;
+    std::map<std::string, rclcpp::Publisher<std_msgs::msg::String>::SharedPtr> _init_position_result_pubs;
     std::vector<rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr> _services;
     // Held only to keep the registrations alive for this object's lifetime;
     // dropping either shared_ptr deregisters its callback. Not read again

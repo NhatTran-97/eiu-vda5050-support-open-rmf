@@ -29,10 +29,13 @@ rmf_fleet:
     delivery: true
   actions: ["dock"]
 
-  finishing_request: "nothing"   # park | charge | nothing
-  # "charge" left the robot permanently stuck: it waits for a real
-  # charging=true signal that never arrives since account_for_battery_drain
-  # is off and the robot only parks at the charger, doesn't actually charge.
+  finishing_request: "park"   # park | charge | nothing
+  # "park" sends the robot back to its charger waypoint (robots.<name>.charger
+  # below) after every task -- including a cancelled one, since that also
+  # empties the queue -- and leaves it idle there without waiting for a real
+  # charging=true signal. "charge" waits for that signal and gets stuck
+  # forever here, since account_for_battery_drain is off and the robot only
+  # parks at the charger, doesn't actually charge.
 
   robots:
     tb3_1:

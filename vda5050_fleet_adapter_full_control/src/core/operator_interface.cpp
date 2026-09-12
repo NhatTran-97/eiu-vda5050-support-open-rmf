@@ -44,6 +44,9 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
 {
     for (const auto &[name, robot_hooks] : _hooks)
     {
+        _init_position_result_pubs[name] = _node.create_publisher<std_msgs::msg::String>(
+            "~/" + name + "/init_position_result", rclcpp::QoS(1));
+
         _init_position_subs.push_back(
             _node.create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
                 "~/" + name + "/init_position", rclcpp::QoS(1),
@@ -97,13 +100,11 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
                     speed_limit_parameter(name).c_str());
     }
 
-    _on_set_params = _node.add_on_set_parameters_callback(
-        [this](const std::vector<rclcpp::Parameter> &parameters)
+    _on_set_params = _node.add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &parameters)
         {
             return on_set_parameters(parameters);
         });
-    _post_set_params = _node.add_post_set_parameters_callback(
-        [this](const std::vector<rclcpp::Parameter> &parameters)
+    _post_set_params = _node.add_post_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &parameters)
         {
             on_parameters_set(parameters);
         });
@@ -178,6 +179,21 @@ void OperatorInterface::on_init_position(
     const std::string &robot_name,
     const geometry_msgs::msg::PoseWithCovarianceStamped &msg)
 {
+    // A fire-and-forget topic (no service round trip): publish the outcome on a companion
+    // topic so an operator UI can tell "silently ignored"/"not published" apart from success,
+    // instead of only ever seeing "published" the instant the request left the UI process.
+    const auto publish_result = [this, &robot_name](const std::string &result)
+    {
+        const auto it = _init_position_result_pubs.find(robot_name);
+        if (it == _init_position_result_pubs.end())
+        {
+            return;
+        }
+        std_msgs::msg::String out;
+        out.data = result;
+        it->second->publish(out);
+    };
+
     // Use the map from the robot's latest state report.
     const auto data = _connector.get_data(robot_name);
     if (!data.has_value())
@@ -186,6 +202,7 @@ void OperatorInterface::on_init_position(
                     "init_position for '%s' ignored: no VDA5050 state yet, so the map "
                     "it is on is unknown",
                     robot_name.c_str());
+        publish_result("error: no VDA5050 state yet from the robot -- try again shortly");
         return;
     }
 
@@ -201,7 +218,10 @@ void OperatorInterface::on_init_position(
     {
         RCLCPP_ERROR(_node.get_logger(), "init_position for '%s' was not published",
                      robot_name.c_str());
+        publish_result("error: could not publish initPosition (MQTT transport failure)");
+        return;
     }
+    publish_result("ok");
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::core

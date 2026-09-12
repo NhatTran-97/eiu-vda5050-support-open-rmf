@@ -403,6 +403,41 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         data.map_name, Eigen::Vector3d(data.position[0], data.position[1], data.position[2]));
     handle->update_battery_soc(data.battery_soc);
 
+    // Ground truth from the robot's own reported state always wins over this cached flag --
+    // e.g. this process restarting mid-pause, or something outside pause()/resume() below
+    // (robot_local_ui, a raw VDA5050 startPause/stopPause) changing the AGV's real pause
+    // state without going through them. Left unreconciled, a stale _paused=true blocks
+    // every future pause() with "already paused" even once the AGV is driving normally again.
+    bool was_paused;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        was_paused = _paused;
+    }
+    if (data.paused != was_paused)
+    {
+        if (data.paused)
+        {
+            const auto saved_delay = handle->maximum_delay();
+            handle->maximum_delay(rmf_utils::optional<rmf_traffic::Duration>());
+            std::lock_guard<std::mutex> lock(_mutex);
+            _saved_maximum_delay = saved_delay;
+            _paused = true;
+        }
+        else
+        {
+            rmf_utils::optional<rmf_traffic::Duration> saved_delay;
+            {
+                std::lock_guard<std::mutex> lock(_mutex);
+                saved_delay = _saved_maximum_delay;
+            }
+            handle->maximum_delay(saved_delay);
+            std::lock_guard<std::mutex> lock(_mutex);
+            _paused = false;
+        }
+        RCLCPP_INFO(_logger, "[%s] AGV pause state changed to %s outside pause()/resume() -- syncing RMF",
+                    _name.c_str(), data.paused ? "paused" : "not paused");
+    }
+
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _ready_for_orders = data.ready_for_orders();

@@ -43,23 +43,8 @@ public:
     const std::string &interface_name() const { return _interface_name; }
     double update_rate_hz() const { return _update_rate_hz; }
     const MqttConfig &mqtt() const { return _mqtt; }
-    // When true, an order releases only as far as Plan::Waypoint::time()
-    // allows, growing via VDA5050 order updates as those times pass --
-    // the AGV waits at the release boundary instead of outrunning RMF's
-    // schedule. Off by default: a lone robot has nothing to protect
-    // against. Also permanently disables RobotUpdateHandle::maximum_delay()
-    // (see set_update_handle()).
     bool honor_waypoint_timing() const { return _honor_waypoint_timing; }
-
-    // Websocket URI RMF pushes task_state_update/task_log_update/
-    // fleet_state_update/fleet_log_update to (e.g. "ws://localhost:9000"),
-    // for a UI to render authoritative task status instead of inferring it
-    // from /fleet_states. nullopt (default) disables the broadcast entirely
-    // -- unset, this is the same zero-behavior-change default RMF itself uses.
     const std::optional<std::string> &server_uri() const { return _server_uri; }
-
-    // Missing optional values use the default manufacturer, the robot name as
-    // serial, and an identity transform.
     RobotConfig robot_config(const std::string &name) const;
 
 private:
