@@ -16,6 +16,33 @@ Rectangle {
     property url robotIconSource: ""
     property real robotMarkerSize: 34
 
+    // ── Click-to-pick: RobotControlDialog arms this to read a pose/waypoint
+    // straight off the map instead of typing coordinates. "" = picking off.
+    property string pickMode: ""
+    property var    pickPoint: null   // {x, y, yaw} in world coords, while dragging
+    // Persist after release so the operator can see, on the map, exactly what
+    // they picked -- the dialog only shows the numbers otherwise.
+    property var    pickedPose: null       // {x, y, yaw}
+    property string pickedWaypoint: ""
+    signal posePicked(real x, real y, real yaw)
+    signal waypointPicked(string name)
+    signal pickCancelled()
+
+    function clearPickedPose() { pickedPose = null }
+    function clearPickedWaypoint() { pickedWaypoint = "" }
+
+    // Nearest waypoint within a fixed pick radius, or "" if none close enough.
+    function nearestWaypoint(wx, wy) {
+        var best = ""
+        var bestDist = 0.6
+        for (var i = 0; i < waypoints.length; i++) {
+            var w = waypoints[i]
+            var d = Math.hypot(w.x - wx, w.y - wy)
+            if (d < bestDist) { bestDist = d; best = w.name }
+        }
+        return best
+    }
+
     // Robot pose comes from /fleet_states, already expressed in the RMF frame —
     // the same frame as the nav graph and the map image. The MQTT visualization
     // topic carries the pose in the robot's own frame, which only coincides with
@@ -40,6 +67,9 @@ Rectangle {
     onEdgesChanged: laneCanvas.requestPaint()
     onMapRobotsChanged: laneCanvas.requestPaint()
     onPlannedDestChanged: laneCanvas.requestPaint()
+    onPickPointChanged: laneCanvas.requestPaint()
+    onPickedPoseChanged: laneCanvas.requestPaint()
+    onPickedWaypointChanged: laneCanvas.requestPaint()
 
     Timer {
         id: geometryPaintTimer
@@ -56,6 +86,16 @@ Rectangle {
         return {
             x: (wx - mapProv.originX) / mapProv.resolution,
             y: mapProv.pixelH - (wy - mapProv.originY) / mapProv.resolution
+        }
+    }
+
+    // Inverse of worldToScreen, taking a point already expressed in overlay's
+    // local coordinate space (use overlay.mapFromItem(...) to get there from
+    // any other item — it accounts for the pan/zoom/fit transforms for us).
+    function screenToWorld(ox, oy) {
+        return {
+            x: ox * mapProv.resolution + mapProv.originX,
+            y: (mapProv.pixelH - oy) * mapProv.resolution + mapProv.originY
         }
     }
 
@@ -224,6 +264,50 @@ Rectangle {
                             }
                         }
                     }
+
+                    // Live preview of the pose being dragged out in pick mode.
+                    // worldToScreen flips the y axis, so a world-frame yaw maps
+                    // to -yaw in screen space (lane arrows above sidestep this
+                    // by measuring their angle directly between screen points).
+                    if (root.pickPoint) {
+                        var pk = root.worldToScreen(root.pickPoint.x, root.pickPoint.y)
+                        var screenYaw = -root.pickPoint.yaw
+                        ctx2d.setLineDash([])
+                        ctx2d.fillStyle = "#ffffff"; ctx2d.globalAlpha = 0.9
+                        ctx2d.beginPath(); ctx2d.arc(pk.x, pk.y, 6 / uiScale, 0, Math.PI*2); ctx2d.fill()
+                        ctx2d.strokeStyle = "#ffffff"; ctx2d.lineWidth = 2 / uiScale
+                        var arm = 22 / uiScale
+                        var tipX = pk.x + arm * Math.cos(screenYaw)
+                        var tipY = pk.y + arm * Math.sin(screenYaw)
+                        ctx2d.beginPath()
+                        ctx2d.moveTo(pk.x, pk.y)
+                        ctx2d.lineTo(tipX, tipY)
+                        ctx2d.stroke()
+                        fillTriangle(tipX, tipY, screenYaw, 7 / uiScale)
+                    }
+
+                    // Confirmed pick, kept on screen after release so the
+                    // operator can see exactly where "SET POSITION" will send
+                    // RMF -- distinct magenta so it's never mistaken for the
+                    // live white drag preview or the green route above.
+                    if (root.pickedPose) {
+                        var cp = root.worldToScreen(root.pickedPose.x, root.pickedPose.y)
+                        var cpYaw = -root.pickedPose.yaw
+                        ctx2d.setLineDash([])
+                        ctx2d.strokeStyle = "#FF3DAE"; ctx2d.globalAlpha = 0.5
+                        ctx2d.beginPath(); ctx2d.arc(cp.x, cp.y, 14 / uiScale, 0, Math.PI*2); ctx2d.stroke()
+                        ctx2d.fillStyle = "#FF3DAE"; ctx2d.globalAlpha = 1.0
+                        ctx2d.beginPath(); ctx2d.arc(cp.x, cp.y, 6 / uiScale, 0, Math.PI*2); ctx2d.fill()
+                        ctx2d.strokeStyle = "#FF3DAE"; ctx2d.lineWidth = 2.5 / uiScale
+                        var cArm = 26 / uiScale
+                        var cTipX = cp.x + cArm * Math.cos(cpYaw)
+                        var cTipY = cp.y + cArm * Math.sin(cpYaw)
+                        ctx2d.beginPath()
+                        ctx2d.moveTo(cp.x, cp.y)
+                        ctx2d.lineTo(cTipX, cTipY)
+                        ctx2d.stroke()
+                        fillTriangle(cTipX, cTipY, cpYaw, 8 / uiScale)
+                    }
                 }
             }
 
@@ -234,17 +318,27 @@ Rectangle {
                     property var   sp: root.worldToScreen(modelData.x, modelData.y)
                     property color pinColor: modelData.charger ? "#F39C12"
                               : (modelData.parking ? "#2980B9" : "#27AE60")
+                    property bool  picked: modelData.name === root.pickedWaypoint
                     x: sp.x; y: sp.y
                     z: 2
                     width: 1; height: 1
                     transformOrigin: Item.TopLeft
                     scale: 1 / Math.max(0.001, overlay.displayScale)
 
+                    // Highlight ring for a waypoint chosen via "PICK ON MAP".
+                    Rectangle {
+                        visible: parent.picked
+                        x: -18; y: -18
+                        width: 36; height: 36; radius: 18
+                        color: "transparent"
+                        border.color: "#FF3DAE"; border.width: 3
+                    }
                     Rectangle {
                         x: -11; y: -11
                         width: 22; height: 22; radius: 11
                         color: parent.pinColor
-                        border.color: C.bg; border.width: 1.5
+                        border.color: parent.picked ? "#FF3DAE" : C.bg
+                        border.width: parent.picked ? 2.5 : 1.5
                     }
                     Rectangle {
                         x: -4; y: -4
@@ -302,16 +396,99 @@ Rectangle {
     }
 
     // ── Interaction: scroll = zoom, drag = pan, double-click = reset ────────
+    // While pickMode is set, panning is suspended and the drag instead reads
+    // a pose (press = position, drag direction = heading) or a waypoint tap.
     MouseArea {
+        id: interactionArea
         anchors.fill: parent
-        drag.target: mapContent
+        drag.target: root.pickMode === "" ? mapContent : null
         drag.threshold: 0
         acceptedButtons: Qt.LeftButton
+        cursorShape: root.pickMode !== "" ? Qt.CrossCursor : Qt.ArrowCursor
         onWheel: (wheel) => {
             var factor = wheel.angleDelta.y > 0 ? 1.15 : (1.0 / 1.15)
             root.zoomAt(wheel.x, wheel.y, factor)
         }
-        onDoubleClicked: root.resetView()
+        onDoubleClicked: if (root.pickMode === "") root.resetView()
+
+        property var pickStart: null
+        onPressed: (mouse) => {
+            if (root.pickMode === "") return
+            var op = overlay.mapFromItem(interactionArea, mouse.x, mouse.y)
+            pickStart = root.screenToWorld(op.x, op.y)
+            root.pickPoint = { x: pickStart.x, y: pickStart.y, yaw: 0 }
+        }
+        onPositionChanged: (mouse) => {
+            if (root.pickMode === "" || !pickStart) return
+            var op = overlay.mapFromItem(interactionArea, mouse.x, mouse.y)
+            var cur = root.screenToWorld(op.x, op.y)
+            var yaw = Math.hypot(cur.x - pickStart.x, cur.y - pickStart.y) > 0.05
+                      ? Math.atan2(cur.y - pickStart.y, cur.x - pickStart.x)
+                      : root.pickPoint.yaw
+            root.pickPoint = { x: pickStart.x, y: pickStart.y, yaw: yaw }
+        }
+        onReleased: (mouse) => {
+            if (root.pickMode === "" || !pickStart) return
+            if (root.pickMode === "waypoint") {
+                var name = root.nearestWaypoint(pickStart.x, pickStart.y)
+                if (name !== "") {
+                    root.pickedWaypoint = name
+                    root.waypointPicked(name)
+                }
+            } else {
+                root.pickedPose = { x: pickStart.x, y: pickStart.y, yaw: root.pickPoint.yaw }
+                root.posePicked(pickStart.x, pickStart.y, root.pickPoint.yaw)
+            }
+            pickStart = null
+            root.pickPoint = null
+            root.pickMode = ""
+        }
+    }
+
+    // ── Pick-mode hint banner + cancel ──────────────────────────────────────
+    Rectangle {
+        visible: root.pickMode !== ""
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 10
+        z: 20
+        radius: 10
+        color: C.surfaceRaised
+        border.color: C.accent
+        border.width: 1
+        implicitWidth: hintRow.implicitWidth + 20
+        implicitHeight: hintRow.implicitHeight + 14
+
+        Row {
+            id: hintRow
+            anchors.centerIn: parent
+            spacing: 12
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.pickMode === "waypoint"
+                      ? "Click a waypoint pin to select it"
+                      : "Click and drag to set position + heading"
+                color: C.text
+                font.pixelSize: 12
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: "✕ Cancel"
+                color: C.err
+                font.pixelSize: 12
+                font.bold: true
+                MouseArea {
+                    anchors.fill: parent
+                    anchors.margins: -4
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        root.pickMode = ""
+                        root.pickPoint = null
+                        root.pickCancelled()
+                    }
+                }
+            }
+        }
     }
 
     // ── Zoom +/-/reset buttons ────────────────────────────────────────────────

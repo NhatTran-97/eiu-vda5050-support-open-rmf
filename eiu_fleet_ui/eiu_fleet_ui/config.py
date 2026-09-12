@@ -9,8 +9,8 @@ source of truth.
 Resolution order for the config file:
 
   1. $EIU_FLEET_CONFIG                       explicit path, wins over everything
-  2. <workspace>/src/vda5050_fleet_adapter/config/config.yaml
-  3. the installed share/ directory of vda5050_fleet_adapter
+  2. <workspace>/src/vda5050_fleet_adapter_full_control/config/config.yaml
+  3. the installed share/ directory of vda5050_fleet_adapter_full_control
   4. nothing found -> built-in defaults, and a warning saying so
 
 Individual fields can still be overridden for a one-off run via EIU_MQTT_HOST
@@ -27,7 +27,7 @@ from pathlib import Path
 import yaml
 from PySide6.QtCore import QObject, Property
 
-ADAPTER_PACKAGE = "vda5050_fleet_adapter"
+ADAPTER_PACKAGE = "vda5050_fleet_adapter_full_control"
 
 # Used only when no config file can be found at all. They match the adapter's
 # own fallbacks so the two ends still agree in that degraded case.
@@ -79,6 +79,7 @@ class FleetConfig:
     robots: tuple[RobotIdentity, ...]
     task_categories: tuple[str, ...]
     nav_graph: Path | None
+    websocket_uri: str | None  # e.g. "ws://localhost:9000"; None disables task events
     source: str  # where this came from, for the startup log
 
     def robot_for_topic(self, topic: str) -> RobotIdentity | None:
@@ -188,6 +189,8 @@ def load_fleet_config() -> FleetConfig:
         print("[CFG] no robots declared under vda5050.robots — the UI will show "
               "no VDA5050 telemetry. Check the config path above.", file=sys.stderr)
 
+    websocket_uri = vda.get("ui_websocket_uri") or None
+
     return FleetConfig(
         fleet_name=str(rmf.get("name") or "fleet"),
         interface_name=interface,
@@ -198,6 +201,7 @@ def load_fleet_config() -> FleetConfig:
         robots=robots,
         task_categories=_parse_categories(rmf),
         nav_graph=nav_graph,
+        websocket_uri=websocket_uri,
         source=source,
     )
 
@@ -235,6 +239,10 @@ class FleetSettings(QObject):
     @Property(str, constant=True)
     def robotNamesJson(self):
         return json.dumps([r.name for r in self._c.robots])
+
+    @Property(bool, constant=True)
+    def websocketEnabled(self):
+        return self._c.websocket_uri is not None
 
     @Property(str, constant=True)
     def primaryRobot(self):

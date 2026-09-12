@@ -402,19 +402,21 @@ Rectangle {
                     anchors.margins: 12
                     spacing: 8
 
-                    RowLayout {
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        spacing: 8
-                        ColumnLayout {
+                        spacing: 4
+                        Text {
+                            text: "ROBOT TELEMETRY"
+                            color: C.textDim
+                            font.pixelSize: 11 * root.uiScale
+                            font.bold: true
+                            font.letterSpacing: 1.0
+                        }
+                        // Selector and status badge share this row so the badge
+                        // sits level with the combo box, not the label above it.
+                        RowLayout {
                             Layout.fillWidth: true
-                            spacing: 1
-                            Text {
-                                text: "ROBOT TELEMETRY"
-                                color: C.textDim
-                                font.pixelSize: 11 * root.uiScale
-                                font.bold: true
-                                font.letterSpacing: 1.0
-                            }
+                            spacing: 8
                             ComboBox {
                                 id: robotSelector
                                 objectName: "robotSelector"
@@ -521,23 +523,24 @@ Rectangle {
                                     }
                                 }
                             }
-                        }
-                        Rectangle {
-                            Layout.preferredWidth: statusText.implicitWidth + 18
-                            Layout.preferredHeight: 25
-                            radius: 8
-                            color: "transparent"
-                            border.color: root.primaryRobot
-                                          ? C.cyan : C.border
-                            border.width: 1
-                            Text {
-                                id: statusText
-                                anchors.centerIn: parent
-                                text: root.robotStatus
-                                color: root.primaryRobot ? C.cyan : C.textDim
-                                font.family: fontMono
-                                font.pixelSize: 10 * root.uiScale
-                                font.bold: true
+                            Rectangle {
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: statusText.implicitWidth + 18
+                                Layout.preferredHeight: 25
+                                radius: 8
+                                color: "transparent"
+                                border.color: root.primaryRobot
+                                              ? C.cyan : C.border
+                                border.width: 1
+                                Text {
+                                    id: statusText
+                                    anchors.centerIn: parent
+                                    text: root.robotStatus
+                                    color: root.primaryRobot ? C.cyan : C.textDim
+                                    font.family: fontMono
+                                    font.pixelSize: 10 * root.uiScale
+                                    font.bold: true
+                                }
                             }
                         }
                     }

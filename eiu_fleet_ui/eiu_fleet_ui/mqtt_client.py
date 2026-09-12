@@ -1,15 +1,9 @@
-"""VDA5050 connectivity, over MQTT, for every robot the adapter is configured with.
+"""VDA5050 connectivity + telemetry over MQTT, for every configured robot.
 
 Broker address and each robot's topic prefix come from the adapter's config, so
 adding a robot there is all it takes for the UI to follow it — see config.py.
-
-Only the `connection` topic is subscribed. Pose and battery already reach the
-UI through /fleet_states in the RMF frame (see ros_bridge.py), which is the
-frame the map and robot table use; subscribing to the raw VDA5050 `state` and
-`visualization` topics as well would only duplicate that data in a different
-frame that nothing renders. The one thing RMF's fleet-wide watchdog cannot
-tell you — whether *this* robot's VDA5050 client is connected to the broker,
-right now — is what this class exists for.
+Message parsing itself lives in vda5050/state.py (no Qt dependency); this
+class only owns the paho connection, per-robot dispatch, and Qt-side throttling.
 """
 
 import json
@@ -19,22 +13,26 @@ import paho.mqtt.client as mqtt
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 
 from .config import FleetConfig, client_id
+from .vda5050.state import parse_state
 
 LEAF_CONNECTION = "connection"
+LEAF_STATE = "state"
 
 
 class MqttClient(QObject):
     """
-    Connects to the broker and tracks, per configured robot, whether its
-    VDA5050 client currently reports itself connected.
+    Connects to the broker and tracks, per configured robot, connectivity and
+    the latest parsed `state` message.
 
     QML receives:
         mqtt.connected        -> bool (broker connection status)
         mqtt.robotsOnlineJson -> JSON object {robot_name: bool}
+        mqtt.telemetryJson    -> JSON object {robot_name: RobotState.to_dict()}
     """
 
     stateChanged = Signal()
     onlineChanged = Signal()
+    telemetryChanged = Signal()
 
     def __init__(self, config: FleetConfig, parent=None):
         super().__init__(parent)
@@ -43,15 +41,18 @@ class MqttClient(QObject):
         self._connected = False
 
         # Paho callbacks run outside Qt's UI thread; they only ever touch
-        # _online under this lock. The Qt timer below is what publishes to
-        # QML, so a burst of reconnects cannot flood Qt's event queue.
+        # _online/_telemetry under this lock. The Qt timer below is what
+        # publishes to QML, so a burst of updates cannot flood Qt's event queue.
         self._lock = threading.Lock()
         self._online = {r.name: False for r in config.robots}
-        self._dirty = False
+        self._telemetry = {}
+        self._online_dirty = False
+        self._telemetry_dirty = False
         self._online_json = json.dumps(self._online)
+        self._telemetry_json = "{}"
 
         self._flush_timer = QTimer(self)
-        self._flush_timer.setInterval(200)   # connection state changes rarely
+        self._flush_timer.setInterval(200)
         self._flush_timer.timeout.connect(self._flush)
         self._flush_timer.start()
 
@@ -101,8 +102,9 @@ class MqttClient(QObject):
             self._connected = True
             for robot in self._config.robots:
                 client.subscribe(robot.topic(LEAF_CONNECTION))
+                client.subscribe(robot.topic(LEAF_STATE))
             print(f"[MQTT] broker connected, subscribed to "
-                  f"{len(self._config.robots)} connection topic(s)")
+                  f"{len(self._config.robots)} robot(s)' connection+state topics")
         else:
             print(f"[MQTT] connect failed rc={rc}")
         self.stateChanged.emit()
@@ -112,7 +114,7 @@ class MqttClient(QObject):
         with self._lock:
             for name in self._online:
                 self._online[name] = False
-            self._dirty = True
+            self._online_dirty = True
         print(f"[MQTT] disconnected rc={rc}")
         self.stateChanged.emit()
 
@@ -125,23 +127,35 @@ class MqttClient(QObject):
         except Exception:
             return
 
-        # { "connectionState": "ONLINE"/"OFFLINE"/"CONNECTIONBROKEN" }
-        online = data.get("connectionState", "") == "ONLINE"
-        with self._lock:
-            if self._online.get(robot.name) != online:
-                self._online[robot.name] = online
-                self._dirty = True
+        if msg.topic == robot.topic(LEAF_CONNECTION):
+            online = data.get("connectionState", "") == "ONLINE"
+            with self._lock:
+                if self._online.get(robot.name) != online:
+                    self._online[robot.name] = online
+                    self._online_dirty = True
+        elif msg.topic == robot.topic(LEAF_STATE):
+            state = parse_state(data)
+            with self._lock:
+                self._telemetry[robot.name] = state
+                self._telemetry_dirty = True
 
     def _flush(self):
-        """Move the latest online map onto the Qt thread and notify QML once."""
+        """Move the latest maps onto the Qt thread and notify QML, once each."""
         with self._lock:
-            if not self._dirty:
-                return
-            self._dirty = False
-            payload = json.dumps(self._online)
+            online_payload = json.dumps(self._online) if self._online_dirty else None
+            self._online_dirty = False
+            telemetry_payload = None
+            if self._telemetry_dirty:
+                telemetry_payload = json.dumps(
+                    {name: s.to_dict() for name, s in self._telemetry.items()})
+            self._telemetry_dirty = False
 
-        self._online_json = payload
-        self.onlineChanged.emit()
+        if online_payload is not None:
+            self._online_json = online_payload
+            self.onlineChanged.emit()
+        if telemetry_payload is not None:
+            self._telemetry_json = telemetry_payload
+            self.telemetryChanged.emit()
 
     # ── QML Properties ────────────────────────────────────────────────────────
 
@@ -152,3 +166,7 @@ class MqttClient(QObject):
     @Property(str, notify=onlineChanged)
     def robotsOnlineJson(self):
         return self._online_json
+
+    @Property(str, notify=telemetryChanged)
+    def telemetryJson(self):
+        return self._telemetry_json

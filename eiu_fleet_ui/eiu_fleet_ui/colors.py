@@ -26,6 +26,11 @@ class Colors(QObject):
     @Property(str, constant=True)
     def textDim(self):    return "#8EA6BE"
 
+    # Brighter than textDim so empty-field hints stay legible on surfaceAlt,
+    # while staying dimmer than `text` so a real value still reads as "filled in".
+    @Property(str, constant=True)
+    def placeholderText(self): return "#C7D6E8"
+
     @Property(str, constant=True)
     def accent(self):     return "#1E78FF"
 
@@ -33,7 +38,7 @@ class Colors(QObject):
     def accentDark(self): return "#1456B8"
 
     @Property(str, constant=True)
-    def success(self):    return "#20D6A0"
+    def success(self):    return "#20D0D6"
 
     @Property(str, constant=True)
     def warn(self):       return "#FFB547"

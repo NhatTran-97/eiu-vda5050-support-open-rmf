@@ -100,6 +100,8 @@ from .config import FleetSettings, load_fleet_config
 from .map_provider import MapProvider
 from .mqtt_client import MqttClient
 from .ros_bridge import RosBridge
+from .ros_control import RosControl
+from .task_websocket import TaskEventServer
 
 
 def main():
@@ -113,7 +115,9 @@ def main():
     app.setApplicationName("EIU Fleet UI")
     logo_dir = _resource_dir("logo")
     eiu_logo_path = logo_dir / "eiu_logo.png"
-    app.setWindowIcon(QIcon(str(eiu_logo_path)))
+    # Window/taskbar icon only -- the in-app logo (eiuLogoUrl below) keeps
+    # using eiu_logo.png untouched.
+    app.setWindowIcon(QIcon(str(_resource_dir("icons") / "logo_desktop.png")))
     font_sans, font_mono = _load_fonts(app)
 
     # ── Backend objects ───────────────────────────────────────────────────────
@@ -128,6 +132,9 @@ def main():
     map_prov   = MapProvider(fleet_cfg)
     mqtt       = MqttClient(fleet_cfg)
     ros        = RosBridge()
+    control    = RosControl(fleet_cfg)
+    ws_tasks   = TaskEventServer(fleet_cfg.websocket_uri)
+    ws_tasks.taskStateUpdate.connect(ros.apply_task_state_update)
 
     # ── QML engine + context properties ──────────────────────────────────────
     engine = QQmlApplicationEngine()
@@ -137,6 +144,8 @@ def main():
     ctx.setContextProperty("mapProv", map_prov)  # map image + waypoints
     ctx.setContextProperty("mqtt",    mqtt)      # robot position (MQTT)
     ctx.setContextProperty("ros",     ros)       # fleet_states + dispatch (RMF)
+    ctx.setContextProperty("control", control)   # pause/resume, speed limit, init_position
+    ctx.setContextProperty("wsTasks", ws_tasks)  # authoritative task state (websocket)
     ctx.setContextProperty("fontSans", font_sans)
     ctx.setContextProperty("fontMono", font_mono)
     ctx.setContextProperty(
@@ -156,7 +165,8 @@ def main():
     # ── Start backend services once QML has finished loading ─────────────────
     ros.set_waypoints(map_prov.waypoints())
     mqtt.connect_broker()
-    ros.start()
+    ros.start(on_node_ready=control.attach)
+    ws_tasks.listen()
     app.aboutToQuit.connect(mqtt.disconnect_broker)
     app.aboutToQuit.connect(ros.shutdown)   # cleanly shut down rclpy on exit
 

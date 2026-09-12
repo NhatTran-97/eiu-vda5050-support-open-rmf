@@ -28,18 +28,25 @@ _MODE_NAMES = {
     7: "DOCKING", 8: "ERROR", 9: "CLEANING",
 }
 
-# RMF task status -> display label
+# RMF task status -> display label. Covers both the dispatcher's own status
+# strings and rmf_api_msgs' task_state.json `status` enum (which spells it
+# "canceled", one L).
 _STATE_LABEL = {
-    "queued":      "queued",
-    "selected":    "queued",
-    "dispatching": "queued",
-    "underway":    "underway",
-    "completed":   "completed",
-    "failed":      "failed",
-    "cancelled":   "cancelled",
-    "killed":      "failed",
-    "blocked":     "underway",
-    "skipped":     "cancelled",
+    "queued":        "queued",
+    "selected":      "queued",
+    "dispatching":   "queued",
+    "uninitialized": "queued",
+    "standby":       "queued",
+    "underway":      "underway",
+    "delayed":       "underway",
+    "blocked":       "underway",
+    "completed":     "completed",
+    "failed":        "failed",
+    "error":         "failed",
+    "killed":        "failed",
+    "cancelled":     "cancelled",
+    "canceled":      "cancelled",
+    "skipped":       "cancelled",
 }
 
 def _fmt_time(ts) -> str:
@@ -86,17 +93,13 @@ class RosBridge(QObject):
         self._planned_dest = ""
         self._waypoints    = []       # list[dict] {name,x,y} from nav_graph
 
-        # _tasks and _tasks_json are written from the ROS executor thread
-        # (fleet_states / task_api_responses / dispatch_states) and from the Qt
-        # GUI thread (the dispatch and cancel_task slots QML calls). Every
-        # read-modify-write of either must hold this lock.
+
         self._task_lock = threading.RLock()
 
         # request_id ("eiu-xxx") → rmf internal task_id
         self._req_to_rmf: dict[str, str] = {}
 
-        # robot name → its task_id as of the last /fleet_states message. Used
-        # to infer task completion - see _on_fleet_state.
+  
         self._robot_last_task_id: dict[str, str] = {}
 
         self._node        = None
@@ -137,7 +140,12 @@ class RosBridge(QObject):
 
     # ── Start / shutdown ──────────────────────────────────────────────────────
 
-    def start(self):
+    def start(self, on_node_ready=None):
+        """`on_node_ready(node)`, if given, runs after the node and this
+        bridge's own entities exist but before the executor starts spinning
+        -- for callers (e.g. RosControl) that need their own clients/
+        publishers on the same node from the first spin iteration.
+        """
         # An explicit EIU_ROS_DOMAIN_ID wins; otherwise keep whatever the shell
         # already exported, and only fall back to 42 when nothing is set.
         domain = (os.environ.get("EIU_ROS_DOMAIN_ID")
@@ -193,6 +201,10 @@ class RosBridge(QObject):
             # slow DDS writer can never block Qt's UI thread.
             self._command_timer = self._node.create_timer(
                 0.05, self._drain_commands)
+
+            if on_node_ready:
+                on_node_ready(self._node)
+
             self._executor = SingleThreadedExecutor()
             self._executor.add_node(self._node)
             self._ok = True
@@ -523,6 +535,65 @@ class RosBridge(QObject):
             if updated:
                 self._publish_tasks()
 
+    # ── Websocket: authoritative task state (see task_websocket.py) ───────────
+
+    def apply_task_state_update(self, data: dict):
+        """A task_state.json payload from RMF's websocket broadcast -- the
+        real completion/failure signal /fleet_states and /task_api_responses
+        cannot provide (see _mark_task_completed, still the fallback when the
+        adapter has no ui_websocket_uri configured).
+        """
+        rmf_id = (data.get("booking") or {}).get("id", "")
+        if not rmf_id:
+            return
+
+        label = _STATE_LABEL.get(data.get("status", ""), "")
+        robot_name = (data.get("assigned_to") or {}).get("name", "")
+        finish_str = _fmt_time(data.get("unix_millis_finish_time"))
+
+        errors = (data.get("dispatch") or {}).get("errors") or []
+        error_text = "; ".join(
+            e.get("detail") or e.get("category", "") for e in errors if isinstance(e, dict))
+
+        # Loop/patrol tasks with rounds > 1 decompose into one phase per leg.
+        # completed/active/pending never shrink or reorder for a given task, so
+        # the total phase count is stable once known -- dividing it evenly by
+        # the requested round count gives phases-per-round without needing to
+        # know anything about how the loop task itself structures its phases.
+        completed_phases = data.get("completed") or []
+        total_phases = len(completed_phases) + len(data.get("pending") or [])
+        if data.get("active") is not None:
+            total_phases += 1
+
+        updated = False
+        with self._task_lock:
+            for task in self._tasks:
+                if task.get("rmf_id") != rmf_id:
+                    continue
+                if robot_name and task["robot"] != robot_name:
+                    task["robot"] = robot_name; updated = True
+                if label and task["state"] != label:
+                    task["state"] = label; updated = True
+                if finish_str and task.get("end", "—") == "—":
+                    task["end"] = finish_str; updated = True
+                if error_text and task.get("error") != error_text:
+                    task["error"] = error_text; updated = True
+
+                rounds = task.get("rounds", 1)
+                if rounds > 1:
+                    if label in ("completed", "failed", "cancelled"):
+                        remaining = 0
+                    elif total_phases > 0:
+                        phases_per_round = max(1, total_phases // rounds)
+                        remaining = max(0, rounds - len(completed_phases) // phases_per_round)
+                    else:
+                        remaining = task.get("rounds_remaining", rounds)
+                    if task.get("rounds_remaining") != remaining:
+                        task["rounds_remaining"] = remaining; updated = True
+                break
+            if updated:
+                self._publish_tasks()
+
     # ── Publish: dispatch task ─────────────────────────────────────────────────
 
     @Slot(str, str, int)
@@ -565,6 +636,8 @@ class RosBridge(QObject):
             "start":       datetime.datetime.now().strftime("%I:%M:%S %p"),
             "end":         "—",
             "state":       "queued",
+            "rounds":           int(loops),
+            "rounds_remaining": int(loops),
         }
         with self._task_lock:
             self._tasks.insert(0, rec)

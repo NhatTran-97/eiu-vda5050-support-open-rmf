@@ -11,8 +11,8 @@ A real-time fleet management dashboard for [Open-RMF](https://github.com/open-rm
 | Feature | Details |
 |---|---|
 | Live robot map | SLAM map + nav-graph overlay with waypoint pins and lane direction arrows |
-| Realtime robot marker | Arrow marker updated at ~10 Hz from MQTT VDA5050 visualization topic |
-| Active Robots panel | Name, fleet, estimated finish time, level, battery %, last-update time, status |
+| Active Robots panel | Name, fleet, estimated finish time, level, battery %, live speed, safety/error flag, last-update time, status |
+| VDA5050 telemetry | Speed, charging, safety state (eStop/field violation), FATAL errors, operating mode — parsed straight from each robot's `state` topic |
 | Tasks panel | Full task history — date, requester, destination, assigned robot, start/end time, state |
 | Dispatch task | Create patrol tasks (destination + loop count) sent to Open-RMF dispatcher |
 | Cancel task | One-click × button on any queued / underway task row |
@@ -34,18 +34,19 @@ flowchart TB
         subgraph backend ["Python Backend"]
             mp("MapProvider\nmap.yaml + nav_graph")
             rb("RosBridge\n/fleet_states · /task_api_*")
-            mc("MqttClient\nVDA5050 viz · state")
+            mc("MqttClient\nVDA5050 state · connection")
+            vs("vda5050/state.py\npure parsing, no Qt")
         end
 
         broker[("Mosquitto\nlocalhost:1883")]
 
-        subgraph docker ["Docker · Jazzy · Domain 7"]
+        subgraph docker ["Docker · Jazzy · Domain 42"]
             rmf("Open-RMF\nschedule + dispatcher")
-            fa("vda5050_fleet_adapter")
+            fa("vda5050_fleet_adapter_full_control")
         end
     end
 
-    subgraph robot ["🤖  TurtleBot3 · Humble · Domain 4"]
+    subgraph robot ["🤖  Robot · vda5050_client_adapter"]
         ca("vda5050_client_adapter")
         br("tb3_vda5050_bridge")
         nav2("Nav2")
@@ -55,12 +56,12 @@ flowchart TB
     main -->|"dispatch() · cancel_task()"| rb
     mp   -->|"wpJson · lanesJson · imagePath"| map
     rb   -->|"robotsJson · tasksJson"| main
-    rb   -->|"robotsJson · plannedDest"| map
-    mc   -->|"posX · posY · theta  ~10 Hz"| map
+    mc   -->|"parse_state()"| vs
+    mc   -->|"telemetryJson · robotsOnlineJson"| main
 
-    rb   <-->|"ROS 2 Domain 7\n/fleet_states · /task_api_*"| rmf
-    mc   -->|"MQTT subscribe"| broker
-    rmf  <-->|"EasyFullControl"| fa
+    rb   <-->|"ROS 2 Domain 42\n/fleet_states · /task_api_*"| rmf
+    mc   -->|"MQTT subscribe: state · connection"| broker
+    rmf  <-->|"FullControl"| fa
     fa   <-->|"VDA5050 JSON"| broker
     broker <-->|"VDA5050 JSON"| ca
     ca   <-->|"vda5050_msgs"| br
@@ -74,7 +75,8 @@ flowchart TB
 | `main.py` | Entry point — creates Qt app, QML engine, wires context properties, starts backends. Also installs an fd-level stderr filter to suppress rcutils DDS deserialization noise from cross-distro domain sharing. |
 | `map_provider.py` | Reads `map.yaml` (SLAM origin + resolution) and `nav_graph.yaml` (waypoints + lanes). Converts the grayscale PGM map to ARGB32 PNG for QML rendering. Exposes `wpJson` and `lanesJson` for the map canvas. Detects bidirectional lanes for dual-arrow rendering. |
 | `ros_bridge.py` | Subscribes to `/fleet_states` (robot position / battery / status / path) and `/task_api_responses` (task state updates). Publishes to `/task_api_requests` for `dispatch()` and `cancel_task()`. Maintains a local task list with rmf_id mapping and a grace-period miss counter to avoid false-completed states during task transitions. |
-| `mqtt_client.py` | Connects to the local MQTT broker. Subscribes to three VDA5050 topics: `visualization` (position + heading, ~10 Hz), `state` (battery, driving, orderId), and `connection` (online/offline). Emits `vizChanged` for the realtime robot arrow and `stateChanged` for slower status updates. |
+| `mqtt_client.py` | Connects to the local MQTT broker. Subscribes to each configured robot's `connection` (online/offline) and `state` (battery, safety, errors, velocity, order progress...) topics. Parsing itself lives in `vda5050/state.py`; this class only owns the paho connection and Qt-side throttling. Exposes `robotsOnlineJson` and `telemetryJson`. |
+| `vda5050/state.py` | Pure VDA5050 `state` message parsing — no Qt, no I/O. Mirrors `vda5050_fleet_adapter_full_control`'s own `ParsedState` field-for-field so the UI reads what the fleet adapter itself acts on. |
 | `colors.py` | Single source of truth for the dark-theme color palette exposed as QML context property `C`. |
 
 ### QML frontend files
@@ -90,19 +92,23 @@ flowchart TB
 
 ## Data flow
 
-### Robot position (realtime)
-```
-TB3 OpenCR → nav2 → vda5050_client_adapter → MQTT visualization topic
-    → MqttClient.vizChanged → mqtt.posX/Y/theta → QML binding → arrow marker rotates
-```
-Update rate: ~10 Hz.
-
 ### Robot fleet state (1 Hz)
 ```
-vda5050_fleet_adapter (Jazzy) → /fleet_states (ROS 2 domain 7)
+vda5050_fleet_adapter_full_control (Jazzy) → /fleet_states (ROS 2 domain 42)
     → RosBridge._on_fleet_state() → robotsJson → QML Active Robots table
 ```
 Includes: position, battery, mode (IDLE/WORKING/MOVING…), task_id, planned path.
+This is the RMF-frame view — same frame the map and robot table use.
+
+### VDA5050 telemetry (on change, ≥1 Hz)
+```
+robot → MQTT state topic → MqttClient._on_message() → vda5050.state.parse_state()
+    → telemetryJson → QML robotRow.tele
+```
+Includes everything `/fleet_states` doesn't carry: speed, charging, safety
+state, errors, operating mode, order/action progress. See
+`vda5050_fleet_adapter_full_control`'s own `state_handler.cpp` for the
+canonical field list — this module mirrors it.
 
 ### Task lifecycle
 ```
@@ -128,14 +134,14 @@ When `loops > 1`, `dispatch()` automatically finds the robot's nearest waypoint 
 
 | Dependency | Version | Notes |
 |---|---|---|
-| ROS 2 | Humble | Host machine (rclpy, rmf_fleet_msgs, rmf_task_msgs) |
+| ROS 2 | Jazzy | Runs in the same Docker container class as the fleet adapter (rclpy, rmf_fleet_msgs, rmf_task_msgs) |
 | PySide6 | ≥ 6.4 | `pip install PySide6` or `apt install python3-pyside6` |
 | paho-mqtt | ≥ 1.6 | `pip install paho-mqtt` |
 | PyYAML | any | `pip install pyyaml` |
-| Open-RMF | Jazzy | Running in Docker on domain 7 (see fleet adapter README) |
+| Open-RMF | Jazzy | Running in Docker on domain 42 (see `vda5050_fleet_adapter_full_control`'s README) |
 | MQTT broker | Mosquitto | `localhost:1883` |
 
-> **ROS domain:** The UI subscribes on `ROS_DOMAIN_ID=7` (configurable via env var `EIU_ROS_DOMAIN_ID`). Open-RMF must run on the same domain.
+> **ROS domain:** The UI subscribes on `ROS_DOMAIN_ID=42` (configurable via env var `EIU_ROS_DOMAIN_ID`). Open-RMF must run on the same domain.
 
 ---
 
@@ -148,13 +154,13 @@ colcon build --packages-select eiu_fleet_ui
 source install/setup.bash
 
 # 2. Make sure Open-RMF (Jazzy Docker) and MQTT broker are running
-#    See: vda5050_fleet_adapter/README.md
+#    See: vda5050_fleet_adapter_full_control/README.md
 
 # 3. Run
 ros2 run eiu_fleet_ui eiu_fleet_ui
 
 # Optional: override ROS domain
-EIU_ROS_DOMAIN_ID=7 ros2 run eiu_fleet_ui eiu_fleet_ui
+EIU_ROS_DOMAIN_ID=42 ros2 run eiu_fleet_ui eiu_fleet_ui
 ```
 
 ---
@@ -176,11 +182,16 @@ To use a different map, replace the files in `maps/` and rebuild.
 
 ## MQTT topics (VDA5050)
 
-| Topic | Direction | Content |
+Topic prefix per robot is `<interface_name>/v2/<manufacturer>/<serial>/`, read
+from the fleet adapter's `config.yaml` — never hardcoded (see `config.py`).
+
+| Topic (leaf) | Direction | Content |
 |---|---|---|
-| `TB3/v2/ROBOTIS/0001/visualization` | Robot → UI | `agvPosition: {x, y, theta}` — realtime pose |
-| `TB3/v2/ROBOTIS/0001/state` | Robot → UI | `driving`, `orderId`, `batteryState.batteryCharge` |
-| `TB3/v2/ROBOTIS/0001/connection` | Robot → UI | `connectionState: ONLINE/OFFLINE` |
+| `state` | Robot → UI | Full `ParsedState`-equivalent: `driving`, `paused`, `orderId`/`orderUpdateId`, `batteryState`, `velocity`, `safetyState`, `errors[]`, `operatingMode`, `nodeStates`/`edgeStates`/`actionStates`, `loads`, `maps`. Parsed by `vda5050/state.py`. |
+| `connection` | Robot → UI | `connectionState: ONLINE/OFFLINE/CONNECTIONBROKEN` |
+
+Not yet subscribed: `visualization` (10 Hz pose refinement — `/fleet_states`
+already covers the map's needs) and `factsheet` (robot capabilities/limits).
 
 ---
 
@@ -211,3 +222,5 @@ To use a different map, replace the files in `maps/` and rebuild.
 - Only one robot fleet (`tb3_fleet`) is configured in the current nav-graph. Adding more robots requires only updating `nav_graph.yaml` and the fleet adapter config.
 - `loops > 1` dispatch requires the robot to already be visible in `/fleet_states` so that `_nearest_wp_name` can find the current position.
 - Resume / interrupt is not yet implemented (Open-RMF supports `interrupt_task_request` / `resume_task_request`).
+- Direct robot control (pause/resume, speed limit, re-localize) is not yet wired into the UI, though the fleet adapter already exposes it (`<robot>/pause`, `<robot>/resume` services, `speed_limit.<robot>` ROS param, `<robot>/init_position` topic).
+- Task completion is currently inferred from a robot's `task_id` disappearing from `/fleet_states`, since the adapter doesn't publish to a websocket broadcast server yet — not the authoritative `task_state_update`/`task_log_update` events RMF can emit.

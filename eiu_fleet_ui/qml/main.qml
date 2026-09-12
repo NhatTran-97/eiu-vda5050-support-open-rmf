@@ -21,6 +21,11 @@ ApplicationWindow {
     // {robot_name: bool} — direct VDA5050 connectivity, distinct from rmfOnline
     // (which only says the /fleet_states pipe is alive, not any one robot).
     property var robotsOnline: ({})
+    // {robot_name: RobotState dict} — raw VDA5050 telemetry (speed, safety,
+    // errors, ...), keyed by whichever robots are actually reporting.
+    property var telemetry: ({})
+    // {robot_name: float} — operator speed cap currently applied, 0 = none.
+    property var speedLimits: ({})
     readonly property string monoFontFamily: fontMono
 
     readonly property int activeTaskCount: {
@@ -44,6 +49,47 @@ ApplicationWindow {
     function reloadRobots() { root.robots = JSON.parse(ros.robotsJson) }
     function reloadTasks()  { root.tasks = JSON.parse(ros.tasksJson) }
     function reloadRobotsOnline() { root.robotsOnline = JSON.parse(mqtt.robotsOnlineJson) }
+    function reloadTelemetry() { root.telemetry = JSON.parse(mqtt.telemetryJson) }
+    function telemetryFor(name) { return root.telemetry[name] || null }
+    function reloadSpeedLimits() { root.speedLimits = JSON.parse(control.speedLimitsJson) }
+
+    // root.robots (from /fleet_states) omits any robot RMF hasn't merged onto
+    // the nav graph yet -- but Robot Control (pause/speed/re-localize) talks
+    // to the fleet adapter directly over ROS and works before that merge, so
+    // gating the whole row on /fleet_states would make re-localizing a
+    // never-merged robot unreachable from this UI. Every configured robot
+    // gets a row; one missing from /fleet_states gets a placeholder instead.
+    readonly property var displayRobots: {
+        var known = JSON.parse(cfg.robotNamesJson)
+        var byName = {}
+        for (var i = 0; i < root.robots.length; i++)
+            byName[root.robots[i].name] = root.robots[i]
+
+        var out = []
+        for (var j = 0; j < known.length; j++) {
+            var name = known[j]
+            if (byName[name]) {
+                out.push(byName[name])
+                continue
+            }
+            var tele = root.telemetryFor(name)
+            out.push({
+                key: cfg.fleetName + "/" + name,
+                name: name,
+                fleet: cfg.fleetName,
+                model: "",
+                status: "NOT MERGED",
+                battery: (tele && tele.battery_soc != null) ? tele.battery_soc * 100 : 0,
+                level: (tele && tele.map_id) ? tele.map_id : "—",
+                task: "",
+                finish: "",
+                updated: "",
+                x: 0, y: 0, yaw: 0,
+                path: []
+            })
+        }
+        return out
+    }
 
     function statusColor(status) {
         if (status === "CHARGING")
@@ -53,7 +99,7 @@ ApplicationWindow {
             return C.cyan
         if (status === "EMERGENCY" || status === "ERROR")
             return C.err
-        if (status === "PAUSED" || status === "WAITING")
+        if (status === "PAUSED" || status === "WAITING" || status === "NOT MERGED")
             return C.warn
         return C.textDim
     }
@@ -82,6 +128,8 @@ ApplicationWindow {
         reloadRobots()
         reloadTasks()
         reloadRobotsOnline()
+        reloadTelemetry()
+        reloadSpeedLimits()
     }
 
     Connections {
@@ -93,6 +141,16 @@ ApplicationWindow {
     Connections {
         target: mqtt
         function onOnlineChanged() { root.reloadRobotsOnline() }
+        function onTelemetryChanged() { root.reloadTelemetry() }
+    }
+
+    Connections {
+        target: control
+        function onSpeedLimitsChanged() { root.reloadSpeedLimits() }
+    }
+
+    RobotControlDialog {
+        id: controlDialog
     }
 
     NewTaskDialog {
@@ -397,6 +455,38 @@ ApplicationWindow {
                         }
                     }
 
+                    // Only shown when vda5050.ui_websocket_uri is configured --
+                    // otherwise "WS OFFLINE" would just be noise for a feature
+                    // nobody enabled.
+                    Rectangle {
+                        visible: cfg.websocketEnabled
+                        Layout.preferredWidth: 128
+                        Layout.preferredHeight: 34
+                        radius: 17
+                        color: C.surface
+                        border.color: wsTasks.connected ? "#286A60" : "#673044"
+                        border.width: 1
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 7
+                            Rectangle {
+                                width: 7
+                                height: 7
+                                radius: 4
+                                color: wsTasks.connected ? C.success : C.err
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: wsTasks.connected ? "TASK EVENTS ON" : "TASK EVENTS OFF"
+                                color: C.text
+                                font.family: root.monoFontFamily
+                                font.pixelSize: 10
+                                font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+
                     Button {
                         id: newTaskButton
                         text: "+  NEW TASK"
@@ -644,7 +734,7 @@ ApplicationWindow {
                                             anchors.leftMargin: 10
                                             anchors.rightMargin: 10
                                             anchors.bottomMargin: 10
-                                            robots: root.robots
+                                            robots: root.displayRobots
                                             tasks: root.tasks
                                             robotsOnline: root.robotsOnline
                                             waypoints: root.waypoints
@@ -754,16 +844,37 @@ ApplicationWindow {
                                         ListView {
                                             anchors.fill: parent
                                             anchors.margins: 8
-                                            model: root.robots
+                                            model: root.displayRobots
                                             clip: true
                                             spacing: 3
                                             boundsBehavior: Flickable.StopAtBounds
 
                                             delegate: Rectangle {
+                                                id: robotRow
                                                 width: ListView.view.width
-                                                height: 74 * fleetPanel.contentScale
+                                                height: 110 * fleetPanel.contentScale
                                                 radius: 10
                                                 color: index % 2 === 0 ? C.surfaceAlt : "transparent"
+
+                                                // VDA5050 state.* telemetry for this robot, if any has arrived yet.
+                                                readonly property var tele: root.telemetryFor(modelData.name)
+                                                readonly property bool teleUnsafe: tele && (tele.safety.triggered || tele.fatal_error !== "")
+                                                // No usable pose on the fleet adapter side: it can't path-plan a new
+                                                // dispatch or a finishing_request return until re-localized.
+                                                readonly property bool notLocalized: tele && tele.position_initialized === false
+
+                                                // Multi-round loop task currently assigned to this robot, if any.
+                                                readonly property var currentTask: {
+                                                    if (!modelData.task) return null
+                                                    for (var i = 0; i < root.tasks.length; i++) {
+                                                        if (root.tasks[i].rmf_id === modelData.task)
+                                                            return root.tasks[i]
+                                                    }
+                                                    return null
+                                                }
+                                                readonly property int roundsRemaining:
+                                                    (currentTask && currentTask.rounds > 1)
+                                                    ? (currentTask.rounds_remaining || 0) : 0
 
                                                 RowLayout {
                                                     anchors.fill: parent
@@ -772,22 +883,22 @@ ApplicationWindow {
                                                     spacing: 10
 
                                                     Rectangle {
-                                                        Layout.preferredWidth: 42 * fleetPanel.contentScale
-                                                        Layout.preferredHeight: 42 * fleetPanel.contentScale
-                                                        radius: 12 * fleetPanel.contentScale
+                                                        Layout.preferredWidth: 52 * fleetPanel.contentScale
+                                                        Layout.preferredHeight: 52 * fleetPanel.contentScale
+                                                        radius: 14 * fleetPanel.contentScale
                                                         color: "#153B65"
                                                         border.color: "#285B8C"
                                                         Text {
                                                             anchors.centerIn: parent
                                                             text: modelData.name && modelData.name.length ? modelData.name.charAt(0).toUpperCase() : "R"
                                                             color: C.cyan
-                                                            font.pixelSize: 17 * fleetPanel.contentScale
+                                                            font.pixelSize: 21 * fleetPanel.contentScale
                                                             font.bold: true
                                                         }
                                                         // VDA5050 connectivity dot, straight from the robot's own
                                                         // `connection` topic — not inferred from /fleet_states age.
                                                         Rectangle {
-                                                            width: 10 * fleetPanel.contentScale
+                                                            width: 12 * fleetPanel.contentScale
                                                             height: width
                                                             radius: width / 2
                                                             anchors.right: parent.right
@@ -801,40 +912,93 @@ ApplicationWindow {
                                                     ColumnLayout {
                                                         Layout.fillWidth: true
                                                         spacing: 3
-                                                        Text { text: modelData.name; color: C.text; font.pixelSize: 18 * fleetPanel.contentScale; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
+                                                        Text { text: modelData.name; color: C.text; font.pixelSize: 22 * fleetPanel.contentScale; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                                                         Text {
                                                             text: modelData.fleet + "  ·  " + modelData.level
                                                                   + (root.robotsOnline[modelData.name] ? "" : "  ·  VDA5050 offline")
                                                             color: root.robotsOnline[modelData.name] ? C.textDim : C.err
                                                             font.family: root.monoFontFamily
-                                                            font.pixelSize: 13 * fleetPanel.contentScale
+                                                            font.pixelSize: 16 * fleetPanel.contentScale
+                                                            elide: Text.ElideRight; Layout.fillWidth: true
+                                                        }
+                                                        // Live VDA5050 telemetry: speed, a not-localized warning
+                                                        // (blocks path planning until SET POSITION is used), and a
+                                                        // safety/error flag when eStop, a field violation or a
+                                                        // FATAL error is active.
+                                                        Text {
+                                                            visible: !!robotRow.tele
+                                                            text: robotRow.tele
+                                                                  ? Number(robotRow.tele.speed).toFixed(2) + " m/s"
+                                                                    + (robotRow.notLocalized ? "  ⚠ NOT LOCALIZED" : "")
+                                                                    + (robotRow.teleUnsafe
+                                                                       ? "  ⚠ " + (robotRow.tele.fatal_error || robotRow.tele.safety.e_stop)
+                                                                       : "")
+                                                                  : ""
+                                                            color: robotRow.teleUnsafe ? C.err
+                                                                   : (robotRow.notLocalized ? C.warn : C.textDim)
+                                                            font.family: root.monoFontFamily
+                                                            font.pixelSize: 14 * fleetPanel.contentScale
                                                             elide: Text.ElideRight; Layout.fillWidth: true
                                                         }
                                                     }
                                                     Text {
                                                         text: Number(modelData.battery).toFixed(0) + "%"
+                                                              + (robotRow.tele && robotRow.tele.charging ? " ⚡" : "")
                                                         color: Number(modelData.battery) < 20 ? C.err : C.success
                                                         font.family: root.monoFontFamily
-                                                        font.pixelSize: 16 * fleetPanel.contentScale
+                                                        font.pixelSize: 20 * fleetPanel.contentScale
                                                         font.bold: true
                                                     }
-                                                    Rectangle {
-                                                        Layout.preferredWidth: 102 * fleetPanel.contentScale
-                                                        Layout.preferredHeight: 34 * fleetPanel.contentScale
-                                                        radius: 10 * fleetPanel.contentScale
-                                                        color: "transparent"
-                                                        border.color: root.statusColor(modelData.status)
-                                                        border.width: 1
+                                                    ColumnLayout {
+                                                        Layout.preferredWidth: 122 * fleetPanel.contentScale
+                                                        spacing: 3
+                                                        Rectangle {
+                                                            Layout.preferredWidth: 122 * fleetPanel.contentScale
+                                                            Layout.preferredHeight: 40 * fleetPanel.contentScale
+                                                            radius: 12 * fleetPanel.contentScale
+                                                            color: "transparent"
+                                                            border.color: root.statusColor(modelData.status)
+                                                            border.width: 1
+                                                            Text {
+                                                                anchors.centerIn: parent
+                                                                text: modelData.status
+                                                                color: root.statusColor(modelData.status)
+                                                                font.family: root.monoFontFamily
+                                                                font.pixelSize: 15 * fleetPanel.contentScale
+                                                                font.bold: true
+                                                                elide: Text.ElideRight
+                                                                width: parent.width - 8
+                                                                horizontalAlignment: Text.AlignHCenter
+                                                            }
+                                                        }
                                                         Text {
-                                                            anchors.centerIn: parent
-                                                            text: modelData.status
-                                                            color: root.statusColor(modelData.status)
+                                                            Layout.fillWidth: true
+                                                            visible: robotRow.roundsRemaining > 0
+                                                            text: robotRow.roundsRemaining + (robotRow.roundsRemaining === 1 ? " round left" : " rounds left")
+                                                            color: C.textDim
                                                             font.family: root.monoFontFamily
                                                             font.pixelSize: 12 * fleetPanel.contentScale
-                                                            font.bold: true
-                                                            elide: Text.ElideRight
-                                                            width: parent.width - 8
                                                             horizontalAlignment: Text.AlignHCenter
+                                                        }
+                                                    }
+                                                    Button {
+                                                        Layout.preferredWidth: 36 * fleetPanel.contentScale
+                                                        Layout.preferredHeight: 36 * fleetPanel.contentScale
+                                                        text: "⚙"
+                                                        contentItem: Text {
+                                                            text: parent.text; color: C.textDim
+                                                            font.pixelSize: 18 * fleetPanel.contentScale
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                            verticalAlignment: Text.AlignVCenter
+                                                        }
+                                                        background: Rectangle {
+                                                            radius: 8; color: parent.down ? C.border : "transparent"
+                                                            border.color: C.border; border.width: 1
+                                                        }
+                                                        onClicked: {
+                                                            controlDialog.robotName = modelData.name
+                                                            controlDialog.currentSpeedLimit = root.speedLimits[modelData.name] || 0
+                                                            controlDialog.open()
                                                         }
                                                     }
                                                 }
