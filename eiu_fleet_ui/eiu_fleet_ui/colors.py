@@ -2,13 +2,9 @@ from PySide6.QtCore import QObject, Property
 
 
 class Colors(QObject):
-    """Read-only color palette, exposed to QML as context property `C`.
+    """Expose the shared read-only color palette to QML."""
 
-    ~70% dark navy neutrals / 20% cyan+blue accent / 10% status colors, so
-    status changes (green/amber/red) stand out against a calm background.
-    """
-
-    # ── Modern control-room palette ──────────────────────────────────────────
+    # Shared color palette for the UI.
     @Property(str, constant=True)
     def bg(self):         return "#071727"
 
@@ -30,18 +26,18 @@ class Colors(QObject):
     @Property(str, constant=True)
     def textDim(self):    return "#7FA4C0"
 
-    # Between textDim and text: legible as a hint, but clearly not a real value.
+    # Hint text color between primary and muted text.
     @Property(str, constant=True)
     def placeholderText(self): return "#A9C4DA"
 
-    # Secondary accent (buttons, dispatch actions), distinct from `cyan`.
+    # Accent for buttons and dispatch actions.
     @Property(str, constant=True)
     def accent(self):     return "#2F80ED"
 
     @Property(str, constant=True)
     def accentDark(self): return "#1F5FBD"
 
-    # True green, not a cyan variant, so "online"/"success" reads distinctly.
+    # Color for online and successful states.
     @Property(str, constant=True)
     def success(self):    return "#2DDC8C"
 
@@ -54,10 +50,10 @@ class Colors(QObject):
     @Property(str, constant=True)
     def blue(self):       return "#2F80ED"
 
-    # Primary accent for live/telemetry data (borders, route, values).
+    # Accent for live data and routes.
     @Property(str, constant=True)
     def cyan(self):       return "#18C8E3"
 
-    # Reserved for the one or two things that should actually pop (live pulse, active selection).
+    # Bright accent for pulses and active selections.
     @Property(str, constant=True)
     def cyanBright(self): return "#20E3F0"

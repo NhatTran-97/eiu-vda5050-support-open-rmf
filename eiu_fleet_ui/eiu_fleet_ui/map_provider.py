@@ -1,9 +1,4 @@
-"""Occupancy grid and navigation graph, exposed to QML.
-
-The nav graph is read from wherever the adapter reads it, so the UI cannot show
-waypoints RMF does not have. The package's own copy under maps/ is only the
-fallback for running the UI without the adapter present.
-"""
+"""Expose the occupancy map and adapter navigation graph to QML."""
 
 import json
 import os
@@ -31,18 +26,9 @@ def _maps_dir() -> Path:
 
 
 class MapProvider(QObject):
-    """
-    Loads the occupancy-grid map (PGM/PNG) and nav_graph, and exposes them to QML.
+    """Load the map image and navigation graph for QML."""
 
-    QML usage:
-        mapProv.imagePath   -> "file:///path/to/map.png"
-        mapProv.originX/Y   -> map origin coordinates (metres)
-        mapProv.resolution  -> metres per pixel
-        mapProv.pixelW/H    -> image size (pixels)
-        mapProv.wpJson      -> JSON array of waypoints
-    """
-
-    mapReady = Signal()   # emitted once loading finishes
+    mapReady = Signal()   # Emitted when the map is ready
 
     def __init__(self, config: FleetConfig | None = None, parent=None):
         super().__init__(parent)
@@ -53,23 +39,22 @@ class MapProvider(QObject):
         self._resolution = 0.05
         self._px_w = 0
         self._px_h = 0
-        self._waypoints = []   # list of dict
-        self._lanes = []       # list of {from, to} -- de-duplicated for rendering
-        # raw nav_graph.yaml lane index -> index into self._lanes (deduped).
-        # Needed since LaneStates.closed_lanes uses the raw, one-per-direction index.
+        self._waypoints = []   # Waypoint records
+        self._lanes = []       # Deduplicated lane endpoints
+        # Map raw lane indices to deduplicated lanes for drawing.
         self._raw_lane_to_edge = []
 
         maps = _maps_dir()
         self._map_yaml = maps / "map.yaml"
         self._map_png = maps / "map.png"
 
-        # The adapter's graph wins; ours is the standalone fallback.
+        # Prefer the adapter's navigation graph.
         adapter_graph = config.nav_graph if config else None
         self._nav_graph = adapter_graph or (maps / "nav_graph.yaml")
 
         self._load()
 
-    # ── Load ─────────────────────────────────────────────────────────────────
+    # Load the map image and navigation graph.
 
     def _load(self):
         """Read map.yaml, measure the map image, then read the nav graph."""
@@ -83,15 +68,13 @@ class MapProvider(QObject):
     def _read_map_yaml(self):
         with open(self._map_yaml) as f:
             data = yaml.safe_load(f)
-        origin = data["origin"]          # [x, y, yaw]
+        origin = data["origin"]          # Map origin pose
         self._origin_x = float(origin[0])
         self._origin_y = float(origin[1])
         self._resolution = float(data["resolution"])
 
     def _load_png(self):
-        """Read the map image dimensions; QML loads the PNG itself, untouched
-        (no re-encoding, no shared temp file that could collide between users).
-        """
+        """Read image dimensions for map coordinate conversion."""
         img = QImage(str(self._map_png))
         self._px_w = img.width()
         self._px_h = img.height()
@@ -102,7 +85,7 @@ class MapProvider(QObject):
         with open(self._nav_graph) as f:
             data = yaml.safe_load(f)
         levels = data["levels"]
-        level = next(iter(levels.values()))   # use the first level
+        level = next(iter(levels.values()))   # Display the first level
         vertices = level["vertices"]
 
         self._waypoints = []
@@ -116,17 +99,22 @@ class MapProvider(QObject):
                 "parking": bool(props.get("is_parking_spot", False)),
             })
 
+        # RMF's graph (and close_lanes/lane_states) index each direction of a
+        # lane separately, but the UI draws one line per corridor -- "raw"
+        # keeps the 1-2 real graph indices behind each deduplicated lane so
+        # closing/highlighting an edge can act on all of them.
         lanes_raw = level.get("lanes", [])
         all_pairs = {(int(ln[0]), int(ln[1])) for ln in lanes_raw}
         seen: dict[tuple[int, int], int] = {}
         lanes, raw_to_edge = [], []
-        for ln in lanes_raw:
+        for raw_idx, ln in enumerate(lanes_raw):
             a, b = int(ln[0]), int(ln[1])
             key = (min(a, b), max(a, b))
             if key not in seen:
                 seen[key] = len(lanes)
                 lanes.append({"from": a, "to": b,
-                              "bidir": (b, a) in all_pairs})
+                              "bidir": (b, a) in all_pairs, "raw": []})
+            lanes[seen[key]]["raw"].append(raw_idx)
             raw_to_edge.append(seen[key])
         self._lanes = lanes
         self._raw_lane_to_edge = raw_to_edge
@@ -135,7 +123,7 @@ class MapProvider(QObject):
         """Waypoints read from the nav graph, as {name, x, y, charger, parking}."""
         return self._waypoints
 
-    # ── QML Properties ────────────────────────────────────────────────────────
+    # Map properties exposed to QML.
 
     @Property(str, notify=mapReady)
     def imagePath(self):

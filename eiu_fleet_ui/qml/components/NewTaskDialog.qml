@@ -3,11 +3,11 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtCore
 
-// "Create Task" dialog: pick a task category + destination waypoint + loop count -> ros.dispatch()
+// Create a patrol or delivery task.
 Dialog {
     id: dlg
 
-    property var places: []      // list of waypoint names (from nav_graph)
+    property var places: []      // Waypoint names from nav_graph
     property string errorMessage: ""
 
     Connections {
@@ -18,8 +18,7 @@ Dialog {
         }
     }
 
-    // Remembers the last loop count across UI restarts -- everything else in
-    // this dialog (category/place) is meant to be picked fresh each time.
+    // Remember the selected patrol loop count across app restarts.
     Settings {
         category: "newTaskDialog"
         property alias lastLoops: loopsSpin.value
@@ -50,12 +49,12 @@ Dialog {
         Text {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
-            text: "Dispatch a patrol task to the Open-RMF fleet"
+            text: "Dispatch a task to the Open-RMF fleet"
             font.pixelSize: 10; color: C.textDim
             horizontalAlignment: Text.AlignHCenter
         }
 
-        // ── Task Category ──
+        // Choose the task category.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -78,11 +77,12 @@ Dialog {
             }
         }
 
-        // ── Place Name ──
+        // Choose a patrol waypoint.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
+            visible: catCombo.currentText !== "delivery"
             Text { text: "DESTINATION WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
             ComboBox {
                 id: placeCombo
@@ -101,11 +101,12 @@ Dialog {
             }
         }
 
-        // ── Loops ──
+        // Choose the patrol loop count.
         RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 12
+            visible: catCombo.currentText !== "delivery"
             Text { text: "PATROL LOOPS"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim
                    Layout.alignment: Qt.AlignVCenter }
             SpinBox {
@@ -130,6 +131,83 @@ Dialog {
             Item { Layout.fillWidth: true }
         }
 
+        // Choose delivery places and handlers.
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            spacing: 10
+            visible: catCombo.currentText === "delivery"
+
+            ColumnLayout {
+                Layout.fillWidth: true; spacing: 4
+                Text { text: "PICKUP WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                ComboBox {
+                    id: pickupCombo
+                    Layout.fillWidth: true
+                    model: dlg.places
+                    font.pixelSize: 13
+                    contentItem: Text {
+                        text: pickupCombo.displayText; color: C.text; font: pickupCombo.font
+                        leftPadding: 10; elide: Text.ElideRight
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        implicitHeight: 42; radius: 10
+                        color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    }
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true; spacing: 4
+                Text { text: "DISPENSER (PICKUP HANDLER)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                TextField {
+                    id: pickupHandlerField
+                    Layout.fillWidth: true
+                    text: "mock_dispenser_1"
+                    font.pixelSize: 13
+                    color: C.text
+                    background: Rectangle {
+                        implicitHeight: 42; radius: 10
+                        color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    }
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true; spacing: 4
+                Text { text: "DROPOFF WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                ComboBox {
+                    id: dropoffCombo
+                    Layout.fillWidth: true
+                    model: dlg.places
+                    font.pixelSize: 13
+                    contentItem: Text {
+                        text: dropoffCombo.displayText; color: C.text; font: dropoffCombo.font
+                        leftPadding: 10; elide: Text.ElideRight
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        implicitHeight: 42; radius: 10
+                        color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    }
+                }
+            }
+            ColumnLayout {
+                Layout.fillWidth: true; spacing: 4
+                Text { text: "INGESTOR (DROPOFF HANDLER)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                TextField {
+                    id: dropoffHandlerField
+                    Layout.fillWidth: true
+                    text: "mock_ingestor_1"
+                    font.pixelSize: 13
+                    color: C.text
+                    background: Rectangle {
+                        implicitHeight: 42; radius: 10
+                        color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    }
+                }
+            }
+        }
+
         Text {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -140,7 +218,7 @@ Dialog {
             wrapMode: Text.WordWrap
         }
 
-        // ── Buttons ──
+        // Submit or close the dialog.
         RowLayout {
             Layout.fillWidth: true
             Layout.margins: 18
@@ -166,7 +244,10 @@ Dialog {
             Button {
                 id: submitBtn
                 text: "DISPATCH TASK"
-                enabled: placeCombo.currentText !== ""
+                enabled: catCombo.currentText === "delivery"
+                        ? (pickupCombo.currentText !== "" && dropoffCombo.currentText !== ""
+                           && pickupHandlerField.text !== "" && dropoffHandlerField.text !== "")
+                        : placeCombo.currentText !== ""
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 contentItem: Text {
                     text: submitBtn.text; color: "#ffffff"; font.pixelSize: 13; font.bold: true
@@ -180,7 +261,12 @@ Dialog {
                 }
                 onClicked: {
                     dlg.errorMessage = ""
-                    ros.dispatch(catCombo.currentText, placeCombo.currentText, loopsSpin.value)
+                    if (catCombo.currentText === "delivery") {
+                        ros.dispatchDelivery(pickupCombo.currentText, pickupHandlerField.text,
+                                             dropoffCombo.currentText, dropoffHandlerField.text)
+                    } else {
+                        ros.dispatch(catCombo.currentText, placeCombo.currentText, loopsSpin.value)
+                    }
                 }
             }
         }

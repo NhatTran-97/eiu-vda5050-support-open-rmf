@@ -16,10 +16,9 @@ ApplicationWindow {
     property var waypoints: []
     property var wpNames: []
     property var lanes: []
-    // raw nav_graph.yaml lane index -> index into `lanes` (RMF's LaneStates
-    // uses the former; `lanes` is de-duplicated per pair for rendering).
+    // Map nav_graph lane indices to deduplicated lanes for drawing.
     property var laneIndexMap: []
-    // De-duplicated `lanes` indices RMF currently reports as closed.
+    // Deduplicated lanes currently closed by RMF.
     readonly property var blockedEdgeIndices: {
         var raw = []
         try { raw = JSON.parse(ros.closedLaneIndicesJson) } catch (e) { raw = [] }
@@ -33,13 +32,11 @@ ApplicationWindow {
     }
     property var robots: []
     property var tasks: []
-    // {robot_name: bool} — direct VDA5050 connectivity, distinct from rmfOnline
-    // (which only says the /fleet_states pipe is alive, not any one robot).
+    // VDA5050 connection state by robot name.
     property var robotsOnline: ({})
-    // {robot_name: RobotState dict} — raw VDA5050 telemetry (speed, safety,
-    // errors, ...), keyed by whichever robots are actually reporting.
+    // VDA5050 telemetry by robot name.
     property var telemetry: ({})
-    // {robot_name: float} — operator speed cap currently applied, 0 = none.
+    // Applied speed limit by robot name; zero means no limit.
     property var speedLimits: ({})
     readonly property string monoFontFamily: fontMono
 
@@ -52,8 +49,7 @@ ApplicationWindow {
         return count
     }
 
-    // displayRobots, not robots -- /fleet_states' battery is forced to 100% when
-    // account_for_battery_drain is off, which would skew a raw average.
+    // Calculate average battery from robot measurements.
     readonly property real averageBattery: {
         if (displayRobots.length === 0)
             return 0
@@ -70,9 +66,7 @@ ApplicationWindow {
     function telemetryFor(name) { return root.telemetry[name] || null }
     function reloadSpeedLimits() { root.speedLimits = JSON.parse(control.speedLimitsJson) }
 
-    // root.robots (/fleet_states) omits any robot RMF hasn't merged onto the
-    // nav graph yet, but Robot Control works before that merge -- so every
-    // configured robot gets a row here, with a placeholder if not yet merged.
+    // Include configured robots not yet present in /fleet_states.
     readonly property var displayRobots: {
         var known = JSON.parse(cfg.robotNamesJson)
         var byName = {}
@@ -85,8 +79,7 @@ ApplicationWindow {
             var tele = root.telemetryFor(name)
             if (byName[name]) {
                 var merged = byName[name]
-                // /fleet_states' battery is RMF's planning input (forced to 100% when
-                // account_for_battery_drain is off) -- prefer the real VDA5050 value.
+                // Prefer VDA5050 battery readings over RMF planning values.
                 if (tele && tele.battery_soc != null) {
                     merged = Object.assign({}, merged, { battery: tele.battery_soc * 100 })
                 }
@@ -124,8 +117,7 @@ ApplicationWindow {
         return C.textDim
     }
 
-    // MQTT broker being reachable and a given robot's own VDA5050 connection
-    // are different things -- this counts the latter, from robotsOnline.
+    // Count robots with a direct VDA5050 connection.
     function countRobotsOnline() {
         var n = 0
         for (var name in root.robotsOnline) {
@@ -221,8 +213,9 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
-        // ── Navigation rail ──────────────────────────────────────────────────
+        // Navigation sidebar.
         Rectangle {
+            objectName: "navRail"
             Layout.preferredWidth: 218
             Layout.fillHeight: true
             color: "#081726"
@@ -316,8 +309,7 @@ ApplicationWindow {
                             anchors.topMargin: 3
                             anchors.bottomMargin: 3
                             radius: 10
-                            // A touch less saturated than C.accent -- the full-strength
-                            // button blue reads as too bright for a resting nav highlight.
+                            // Accent for the selected navigation item.
                             color: modelData.active ? "#3573C4" : "transparent"
 
                             Rectangle {
@@ -346,8 +338,7 @@ ApplicationWindow {
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: modelData.label
-                                    // Brighter than global textDim -- read constantly at
-                                    // sidebar-label size, so it needs more contrast.
+                                    // Text color for navigation labels.
                                     color: modelData.active ? "white" : "#8BA6BD"
                                     font.pixelSize: 14
                                     font.bold: modelData.active
@@ -409,7 +400,7 @@ ApplicationWindow {
             }
         }
 
-        // ── Dashboard ────────────────────────────────────────────────────────
+        // Dashboard content.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
@@ -552,8 +543,7 @@ ApplicationWindow {
                         }
                     }
 
-                    // Only shown when vda5050.ui_websocket_uri is configured, so it's
-                    // not noise for a feature nobody enabled.
+                    // Show WebSocket status when a connection URL is configured.
                     Rectangle {
                         visible: cfg.websocketEnabled
                         Layout.preferredWidth: 128
@@ -618,6 +608,7 @@ ApplicationWindow {
                     spacing: 16
 
                     RowLayout {
+                        objectName: "kpiRow"
                         Layout.fillWidth: true
                         Layout.preferredHeight: root.kpiHeight
                         Layout.minimumHeight: root.kpiHeight
@@ -643,8 +634,7 @@ ApplicationWindow {
                             title: "Fleet"
                             value: root.robots.length + (root.robots.length === 1 ? " robot" : " robots")
                             valueFontFamily: root.monoFontFamily
-                            // MQTT broker up != a given AGV's own VDA5050 connection --
-                            // this is the latter, per-robot, not just the transport.
+                            // Per-robot VDA5050 connection state.
                             detail: root.displayRobots.length > 0
                                     ? root.countRobotsOnline() + "/" + root.displayRobots.length + " VDA5050 connected"
                                     : "No robots discovered"
@@ -710,7 +700,7 @@ ApplicationWindow {
                             }
                         }
 
-                        // ── Main map card ────────────────────────────────────
+                        // Main map card.
                         Rectangle {
                             id: mapPanel
                             objectName: "mapPanel"
@@ -779,16 +769,21 @@ ApplicationWindow {
                                     Layout.fillHeight: true
                                     orientation: Qt.Vertical
 
-                                    // Fit the map region to the occupancy image's real aspect
-                                    // ratio; the rest goes to analytics, no fixed 50/50 split.
+                                    // Size the map region to the source image aspect ratio.
                                     readonly property real naturalMapHeight: {
                                         if (mapProv.pixelW <= 0 || mapProv.pixelH <= 0)
                                             return 0
-                                        var frameInsets = 36  // Loader + MapPage image margins
+                                        var frameInsets = 36  // Map image margins
                                         var contentWidth = Math.max(1, width - frameInsets)
                                         return frameInsets + contentWidth
                                                * mapProv.pixelH / mapProv.pixelW
                                     }
+
+                                    // Cap map height to leave room for analytics.
+                                    readonly property real handleHeight: 12
+                                    readonly property real mapReserve: Math.min(
+                                        naturalMapHeight, Math.max(160, height * 0.45))
+                                    readonly property real analyticsNeed: fleetAnalytics.implicitHeight + 10
 
                                     handle: Rectangle {
                                         implicitHeight: 12
@@ -816,7 +811,11 @@ ApplicationWindow {
                                     }
 
                                     Item {
-                                        SplitView.preferredHeight: mapAnalyticsSplit.naturalMapHeight
+                                        objectName: "mapArea"
+                                        SplitView.preferredHeight: Math.min(
+                                            mapAnalyticsSplit.naturalMapHeight,
+                                            mapAnalyticsSplit.height - mapAnalyticsSplit.analyticsNeed
+                                                - mapAnalyticsSplit.handleHeight)
                                         SplitView.minimumHeight: 160
 
                                         Loader {
@@ -828,10 +827,14 @@ ApplicationWindow {
                                     }
 
                                     Item {
+                                        objectName: "analyticsArea"
                                         SplitView.fillHeight: true
-                                        SplitView.minimumHeight: 205
+                                        SplitView.minimumHeight: mapAnalyticsSplit.analyticsNeed
 
                                         FleetAnalytics {
+                                            id: fleetAnalytics
+                                            availableHeight: mapAnalyticsSplit.height - mapAnalyticsSplit.mapReserve
+                                                             - mapAnalyticsSplit.handleHeight - 10
                                             anchors.fill: parent
                                             anchors.leftMargin: 10
                                             anchors.rightMargin: 10
@@ -872,6 +875,12 @@ ApplicationWindow {
                             }
                             Binding {
                                 target: mapLoader.item
+                                property: "telemetry"
+                                value: root.telemetry
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
                                 property: "plannedDest"
                                 value: ros.plannedDest
                                 when: mapLoader.status === Loader.Ready
@@ -884,20 +893,18 @@ ApplicationWindow {
                             }
                         }
 
-                        // ── Live fleet panels ────────────────────────────────
+                        // Live robot list.
                         ColumnLayout {
                             id: fleetPanel
                             objectName: "fleetPanel"
-                            // A 3-robot fleet doesn't need the same width as a 30-robot one,
-                            // which would leave it looking empty.
+                            // Size the robot list for the fleet count.
                             readonly property bool smallFleet: root.displayRobots.length <= 3
                             SplitView.preferredWidth: smallFleet ? 480 : 720
                             SplitView.minimumWidth: smallFleet ? 420 : 640
                             SplitView.maximumWidth: smallFleet ? 620 : 900
                             spacing: 16
 
-                            // Typography follows the width of this panel so it remains
-                            // comfortably readable on large control-room displays.
+                            // Scale typography with the robot panel width.
                             readonly property real contentScale: Math.max(
                                 0.7, Math.min(1.25, width / 720))
 
@@ -911,6 +918,7 @@ ApplicationWindow {
                             }
 
                             Rectangle {
+                                objectName: "activeRobotsPanel"
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 Layout.preferredHeight: 260
@@ -992,11 +1000,10 @@ ApplicationWindow {
                                                 radius: 10
                                                 color: index % 2 === 0 ? C.surfaceAlt : "transparent"
 
-                                                // VDA5050 state.* telemetry for this robot, if any has arrived yet.
+                                                // Latest VDA5050 telemetry for this robot.
                                                 readonly property var tele: root.telemetryFor(modelData.name)
                                                 readonly property bool teleUnsafe: tele && (tele.safety.triggered || tele.fatal_error !== "")
-                                                // fatal_error, then e_stop, then a plain field-violation flag with no
-                                                // e_stop reason of its own -- otherwise that last case shows "⚠ NONE".
+                                                // Prioritize critical errors and emergency stop indicators.
                                                 readonly property string safetyLabel: {
                                                     if (!tele) return ""
                                                     if (tele.fatal_error) return tele.fatal_error
@@ -1004,15 +1011,13 @@ ApplicationWindow {
                                                     if (tele.safety.field_violation) return "FIELD VIOLATION"
                                                     return ""
                                                 }
-                                                // No usable pose on the fleet adapter side: it can't path-plan a new
-                                                // dispatch or a finishing_request return until re-localized.
+                                                // Warn when the adapter has no pose usable for route planning.
                                                 readonly property bool notLocalized: tele && tele.position_initialized === false
                                                 readonly property bool stale: tele && tele.stale === true
-                                                // Joystick/manual override via twist_mux -- fleet adapter decommissions
-                                                // the robot from RMF while this is true.
+                                                // Robot is under manual control through twist_mux.
                                                 readonly property bool manualMode: tele && tele.operating_mode === "MANUAL"
 
-                                                // Multi-round loop task currently assigned to this robot, if any.
+                                                // The robot's active multi-round patrol task.
                                                 readonly property var currentTask: {
                                                     if (!modelData.task) return null
                                                     for (var i = 0; i < root.tasks.length; i++) {
@@ -1026,8 +1031,7 @@ ApplicationWindow {
                                                 readonly property int roundsRemaining:
                                                     (currentTask && currentTask.rounds > 1)
                                                     ? (currentTask.rounds_remaining || 0) : 0
-                                                // Round in progress, 1-based -- rounds_remaining counts down
-                                                // from roundsTotal to 0 as each leg completes.
+                                                // Current patrol round, counted from one.
                                                 readonly property int roundsCurrent:
                                                     roundsTotal > 0
                                                     ? Math.min(roundsTotal, Math.max(1, roundsTotal - roundsRemaining + 1))
@@ -1052,8 +1056,7 @@ ApplicationWindow {
                                                             font.pixelSize: 21 * fleetPanel.contentScale
                                                             font.bold: true
                                                         }
-                                                        // VDA5050 connectivity dot, straight from the robot's own
-                                                        // `connection` topic — not inferred from /fleet_states age.
+                                                        // Connection indicator from the VDA5050 connection topic.
                                                         Rectangle {
                                                             width: 12 * fleetPanel.contentScale
                                                             height: width
@@ -1078,8 +1081,7 @@ ApplicationWindow {
                                                             font.pixelSize: 16 * fleetPanel.contentScale
                                                             elide: Text.ElideRight; Layout.fillWidth: true
                                                         }
-                                                        // Live VDA5050 telemetry: speed, a not-localized warning,
-                                                        // a stale-data warning, and a safety/error flag.
+                                                        // Show speed, localization, and safety indicators.
                                                         Text {
                                                             visible: !!robotRow.tele
                                                             text: robotRow.tele
@@ -1151,8 +1153,7 @@ ApplicationWindow {
                                                         }
                                                     }
                                                     Button {
-                                                        // Matches the combined height of the WORKING badge + rounds
-                                                        // text so it visually brackets that whole block, centered.
+                                                        // Align the accent bar with the status and round count.
                                                         Layout.preferredWidth: statusBlock.height
                                                         Layout.preferredHeight: statusBlock.height
                                                         Layout.alignment: Qt.AlignVCenter
@@ -1201,6 +1202,7 @@ ApplicationWindow {
 
                             Rectangle {
                                 id: recentTasksPanel
+                                objectName: "recentTasksPanel"
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
                                 Layout.preferredHeight: 300
@@ -1210,8 +1212,7 @@ ApplicationWindow {
                                 border.width: 1
                                 clip: true
 
-                                // Scale from the table's own width, not the whole window,
-                                // so columns stay readable after the SplitView is dragged.
+                                // Size columns to the task table width.
                                 readonly property real tableScale: Math.max(
                                     1.0, Math.min(1.40, width / 680))
                                 readonly property real dateColumnWidth: 78 * tableScale
@@ -1241,8 +1242,7 @@ ApplicationWindow {
                                                 || String(t.requester || "").toLowerCase().indexOf(q) >= 0
                                         })
                                     }
-                                    // Underway first (an operator cares about now more than most-recently
-                                    // dispatched); stable, each group keeps its newest-first order.
+                                    // Show active tasks first, newest first within each group.
                                     var underway = []
                                     var rest = []
                                     for (var k = 0; k < list.length; k++) {
@@ -1337,7 +1337,7 @@ ApplicationWindow {
 
                                     Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: C.border; opacity: 0.65 }
 
-                                    // Column headers share the exact same widths as the rows.
+                                    // Use the same column widths for headers and rows.
                                     Rectangle {
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: 34 * recentTasksPanel.tableScale

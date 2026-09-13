@@ -1,16 +1,4 @@
-"""Fleet identity, broker settings and task categories for the UI.
-
-Reads the adapter's own config.yaml (MQTT broker, VDA5050 interface, robot
-manufacturer/serial) instead of restating it, so the two can't drift apart.
-
-Resolution order:
-  1. $EIU_FLEET_CONFIG                       explicit path, wins over everything
-  2. <workspace>/src/vda5050_fleet_adapter_full_control/config/config.yaml
-  3. the installed share/ directory of vda5050_fleet_adapter_full_control
-  4. nothing found -> built-in defaults, with a warning
-
-EIU_MQTT_HOST / EIU_MQTT_PORT override individual fields for a one-off run.
-"""
+"""Load fleet identity, MQTT settings, and task categories from the adapter configuration."""
 
 import json
 import os
@@ -24,13 +12,12 @@ from PySide6.QtCore import QObject, Property
 
 ADAPTER_PACKAGE = "vda5050_fleet_adapter_full_control"
 
-# Used only when no config file can be found at all. They match the adapter's
-# own fallbacks so the two ends still agree in that degraded case.
+# Fallback values used when no config file is available.
 _DEFAULT_INTERFACE = "uagv"
 _DEFAULT_HOST = "localhost"
 _DEFAULT_PORT = 1883
 
-# RMF task_capabilities key -> the task category the dispatcher expects.
+# Map RMF task capabilities to dispatch categories.
 _CAPABILITY_TO_CATEGORY = {
     "loop": "patrol",
     "patrol": "patrol",
@@ -38,9 +25,8 @@ _CAPABILITY_TO_CATEGORY = {
     "clean": "clean",
 }
 
-# Categories RosBridge.dispatch() can build a request for -- an advertised
-# category the UI can't describe is logged and hidden, not offered then rejected.
-_UI_SUPPORTED_CATEGORIES = ("patrol",)
+# Show only task categories the UI can create.
+_UI_SUPPORTED_CATEGORIES = ("patrol", "delivery")
 
 
 @dataclass(frozen=True)
@@ -72,8 +58,8 @@ class FleetConfig:
     robots: tuple[RobotIdentity, ...]
     task_categories: tuple[str, ...]
     nav_graph: Path | None
-    websocket_uri: str | None  # e.g. "ws://localhost:9000"; None disables task events
-    source: str  # where this came from, for the startup log
+    websocket_uri: str | None  # None disables task events
+    source: str  # Config source for startup logs
 
     def robot_for_topic(self, topic: str) -> RobotIdentity | None:
         for r in self.robots:
@@ -90,8 +76,7 @@ def _candidate_paths() -> list[tuple[Path, str]]:
     if explicit:
         out.append((Path(explicit), "$EIU_FLEET_CONFIG"))
 
-    # Sibling package in the workspace source tree -- the path that matters
-    # when the UI runs from source on the host while the adapter runs in its container.
+    # Find the adapter config in the workspace source tree.
     src_root = Path(__file__).resolve().parents[2]
     out.append((src_root / ADAPTER_PACKAGE / "config" / "config.yaml",
                 f"{ADAPTER_PACKAGE} source tree"))
@@ -168,8 +153,7 @@ def load_fleet_config() -> FleetConfig:
     except (TypeError, ValueError):
         port = _DEFAULT_PORT
 
-    # The nav graph the adapter actually loads sits next to its config, so
-    # prefer that over the UI's own copy and the two cannot disagree.
+    # Prefer the navigation graph loaded by the adapter.
     nav_graph = None
     if path is not None:
         candidate = path.parent.parent / "maps" / "nav_graph.yaml"
@@ -199,12 +183,7 @@ def load_fleet_config() -> FleetConfig:
 
 
 def client_id(prefix: str = "eiu_fleet_ui") -> str:
-    """A client id unique to every caller.
-
-    Shared ids make the broker evict and reconnect them in a loop; random
-    per call (a pid isn't enough since two clients can share a process),
-    kept under MQTT 3.1's 23-byte id limit.
-    """
+    """Generate a unique MQTT client ID for a caller."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 

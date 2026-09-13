@@ -1,11 +1,4 @@
-"""Websocket server receiving RMF's task/fleet event broadcast.
-
-The fleet adapter is the client (rmf_websocket::BroadcastClient): it connects
-out to vda5050.ui_websocket_uri and pushes {"type", "data"} frames matching
-rmf_api_msgs' task/fleet state/log schemas. Disabled when that URI isn't set.
-
-Runs on Qt's own event loop via QtWebSockets -- no separate thread needed.
-"""
+"""Receive RMF task and fleet events through a Qt WebSocket server."""
 
 import json
 from urllib.parse import urlparse
@@ -17,13 +10,7 @@ from PySide6.QtWebSockets import QWebSocketServer
 
 
 class TaskEventServer(QObject):
-    """
-    QML receives:
-        wsTasks.connected      -> bool (whether the adapter is attached)
-    Python receives:
-        taskStateUpdate(dict)  -- task_state.json payload
-        taskLogUpdate(dict)    -- task_log.json payload
-    """
+    """Expose RMF task events and connection state to QML."""
 
     taskStateUpdate = Signal(dict)
     taskLogUpdate = Signal(dict)
@@ -65,8 +52,7 @@ class TaskEventServer(QObject):
         self.connectedChanged.emit()
 
     def _on_disconnected(self, client):
-        # A queued disconnect can still fire after this object's own C++
-        # side (or the client's) is torn down during interpreter shutdown.
+        # Ignore disconnect errors while Qt objects are being destroyed.
         if not shiboken6.isValid(self):
             return
         if client in self._clients:

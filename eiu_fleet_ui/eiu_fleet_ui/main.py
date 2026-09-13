@@ -1,8 +1,17 @@
 import io
 import os
+import signal
+import subprocess
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
+
+# No GPU device in the dev container (no /dev/dri) -- go straight to software
+# rendering instead of letting Qt probe GLX/DRI and fail first. Must be set
+# before any Qt module loads. Override with QT_QUICK_BACKEND=rhi on real GPU.
+os.environ.setdefault("QT_QUICK_BACKEND", "software")
+
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
 from PySide6.QtQml import QQmlApplicationEngine
@@ -52,6 +61,47 @@ def _load_fonts(app: QApplication) -> tuple[str, str]:
     return sans, mono
 
 
+# Reference layout size for UI scaling.
+REFERENCE_SIZE = (1920, 1080)
+_SCREEN_PROBE = ("from PySide6.QtGui import QGuiApplication; a = QGuiApplication([]); "
+                 "s = a.primaryScreen().availableSize(); print(s.width(), s.height())")
+
+
+def ui_scale_for(width: int, height: int) -> float:
+    """Uniform scale that fits REFERENCE_SIZE into a screen, never below 1."""
+    return max(1.0, min(width / REFERENCE_SIZE[0], height / REFERENCE_SIZE[1]))
+
+
+def apply_ui_scale() -> None:
+    """Set QT_SCALE_FACTOR from EIU_UI_SCALE ("auto" or a number). Off by default --
+    "auto" spawns a throwaway process to read the screen before QApplication exists,
+    which is slow enough under load to show as a black screen on startup.
+    """
+    if "QT_SCALE_FACTOR" in os.environ:
+        return
+    requested = os.environ.get("EIU_UI_SCALE", "").strip().lower()
+    if not requested:
+        return
+    if requested != "auto":
+        try:
+            factor = float(requested)
+        except ValueError:
+            print(f"[UI] EIU_UI_SCALE={requested!r} is not a number -- ignoring", file=sys.stderr)
+            return
+    else:
+        try:
+            # Read screen dimensions before creating QApplication.
+            out = subprocess.run([sys.executable, "-c", _SCREEN_PROBE], capture_output=True,
+                                 text=True, timeout=15, check=True).stdout.split()
+            factor = ui_scale_for(int(out[-2]), int(out[-1]))
+        except Exception as exc:
+            print(f"[UI] screen probe failed ({exc}) -- no UI scaling", file=sys.stderr)
+            return
+    if factor > 0 and abs(factor - 1.0) > 0.01:
+        os.environ["QT_SCALE_FACTOR"] = f"{factor:.3f}"
+        print(f"[UI] scale factor {factor:.3f}")
+
+
 def _qt_msg_handler(msg_type, _ctx, message):
     if "of null" in message:
         return
@@ -61,12 +111,7 @@ def _qt_msg_handler(msg_type, _ctx, message):
 
 
 def _suppress_rcutils_spam():
-    """Filter rcutils DDS deserialization error blocks from fd-2 (C-level stderr).
-
-    Jazzy RMF nodes on this DDS domain publish messages Humble rclpy can't
-    deserialize, causing cascading rcutils error blocks; sys.stderr redirects
-    don't reach C's fwrite(stderr), so this intercepts at the fd level instead.
-    """
+    """Filter repeated rcutils deserialization errors from stderr."""
     real_fd = os.dup(2)
     r_fd, w_fd = os.pipe()
     os.dup2(w_fd, 2)
@@ -103,25 +148,13 @@ from .ros_control import RosControl
 from .task_websocket import TaskEventServer
 
 
-def main():
-    # Opt-in: takes over fd 2 for the whole process (hides real errors too), so
-    # leave it off during bring-up; set EIU_FILTER_RCUTILS=1 once the log is understood.
-    if os.environ.get("EIU_FILTER_RCUTILS") == "1":
-        _suppress_rcutils_spam()
-    qInstallMessageHandler(_qt_msg_handler)
-    app = QApplication(sys.argv)
-    app.setOrganizationName("EIU")
-    app.setApplicationName("EIU Fleet UI")
+def build_engine(app: QApplication):
+    """Create the backends and load main.qml without starting any I/O."""
     logo_dir = _resource_dir("logo")
     eiu_logo_path = logo_dir / "eiu_logo.png"
-    # Window/taskbar icon only -- the in-app logo (eiuLogoUrl below) keeps
-    # using eiu_logo.png untouched.
-    app.setWindowIcon(QIcon(str(_resource_dir("icons") / "logo_desktop.png")))
     font_sans, font_mono = _load_fonts(app)
 
-    # ── Backend objects ───────────────────────────────────────────────────────
-    # Broker/VDA5050/task-category config comes from the adapter's config.yaml,
-    # not restated here (see config.py for the resolution order).
+    # Create backend services from the adapter configuration.
     fleet_cfg  = load_fleet_config()
     print(f"[CFG] fleet '{fleet_cfg.fleet_name}' from {fleet_cfg.source}")
 
@@ -135,16 +168,16 @@ def main():
     ws_tasks   = TaskEventServer(fleet_cfg.websocket_uri)
     ws_tasks.taskStateUpdate.connect(ros.apply_task_state_update)
 
-    # ── QML engine + context properties ──────────────────────────────────────
+    # Expose backend objects to QML.
     engine = QQmlApplicationEngine()
     ctx    = engine.rootContext()
     ctx.setContextProperty("C",       colors)
-    ctx.setContextProperty("cfg",     settings)   # fleet identity + task categories
-    ctx.setContextProperty("mapProv", map_prov)  # map image + waypoints
-    ctx.setContextProperty("mqtt",    mqtt)      # robot position (MQTT)
-    ctx.setContextProperty("ros",     ros)       # fleet_states + dispatch (RMF)
-    ctx.setContextProperty("control", control)   # pause/resume, speed limit, init_position
-    ctx.setContextProperty("wsTasks", ws_tasks)  # authoritative task state (websocket)
+    ctx.setContextProperty("cfg",     settings)   # Fleet and task settings
+    ctx.setContextProperty("mapProv", map_prov)  # Map and waypoints
+    ctx.setContextProperty("mqtt",    mqtt)      # Robot telemetry
+    ctx.setContextProperty("ros",     ros)       # Fleet state and dispatch
+    ctx.setContextProperty("control", control)   # Direct robot control
+    ctx.setContextProperty("wsTasks", ws_tasks)  # Task state events
     ctx.setContextProperty("fontSans", font_sans)
     ctx.setContextProperty("fontMono", font_mono)
     ctx.setContextProperty(
@@ -153,7 +186,7 @@ def main():
     )
     ctx.setContextProperty("eiuLogoUrl", QUrl.fromLocalFile(str(eiu_logo_path)))
 
-    # KPI tile logos -- distinct from robotIconUrl above (the on-map marker).
+    # Logos used by the metric cards.
     icons_dir = _resource_dir("icons")
     ctx.setContextProperty(
         "statusActiveIconUrl",
@@ -164,23 +197,52 @@ def main():
         QUrl.fromLocalFile(str(icons_dir / "robot.png")),
     )
 
-    # ── Load QML ─────────────────────────────────────────────────────────────
+    # Load the QML interface.
 
     qml_file = _resource_dir("qml") / "main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))
 
+    # Keep backend objects alive for the lifetime of the QML engine.
+    backends = SimpleNamespace(colors=colors, settings=settings, map_prov=map_prov,
+                               mqtt=mqtt, ros=ros, control=control, ws_tasks=ws_tasks)
+    return engine, backends
+
+
+def main():
+    # Filter stderr only when EIU_FILTER_RCUTILS is enabled.
+    if os.environ.get("EIU_FILTER_RCUTILS") == "1":
+        _suppress_rcutils_spam()
+    qInstallMessageHandler(_qt_msg_handler)
+    apply_ui_scale()
+    app = QApplication(sys.argv)
+    app.setOrganizationName("EIU")
+    app.setApplicationName("EIU Fleet UI")
+    # Icon for the application window.
+    app.setWindowIcon(QIcon(str(_resource_dir("icons") / "logo_desktop.png")))
+
+    engine, backends = build_engine(app)
     if not engine.rootObjects():
         sys.exit(-1)
+    map_prov, mqtt, ros = backends.map_prov, backends.mqtt, backends.ros
+    control, ws_tasks = backends.control, backends.ws_tasks
 
-    # ── Start backend services once QML has finished loading ─────────────────
+    # Start backend services after QML has loaded.
     ros.set_waypoints(map_prov.waypoints())
     mqtt.connect_broker()
     ros.start(on_node_ready=control.attach)
     ws_tasks.listen()
     app.aboutToQuit.connect(mqtt.disconnect_broker)
-    app.aboutToQuit.connect(ros.shutdown)   # cleanly shut down rclpy on exit
+    app.aboutToQuit.connect(ros.shutdown)   # Shut down ROS on exit
 
-    # ── Auto screenshot (debug): EIU_SHOT=/path.png → grab then quit ─────────
+    # Qt's event loop only checks for signals between events, so a lone Ctrl+C
+    # can sit unnoticed until the next one arrives. This wakeup timer gives
+    # Python a chance to see it and quit on the first press.
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+    _sigint_wakeup = QTimer()
+    _sigint_wakeup.start(200)
+    _sigint_wakeup.timeout.connect(lambda: None)
+
+    # Capture a screenshot when EIU_SHOT is set.
     shot = os.environ.get("EIU_SHOT")
     if shot:
         delay = int(os.environ.get("EIU_SHOT_DELAY", "4000"))

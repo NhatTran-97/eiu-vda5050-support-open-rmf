@@ -1,6 +1,6 @@
 import QtQuick
 
-// Map panel: map image + waypoints + lanes + robot marker, with zoom + pan.
+// Show the map, waypoints, lanes, robots, and zoom controls.
 Rectangle {
     id: root
     radius: 12
@@ -13,21 +13,70 @@ Rectangle {
     property var  edges:       []
     property var  blockedEdgeIndices: []
     property var  mapRobots:   []
+    property var  telemetry:   ({})
     property string plannedDest: ""
     property url robotIconSource: ""
     property real robotMarkerSize: 46
 
-    // Labels scale with the panel (not map zoom, which markers already
-    // counter-scale against -- see below).
+    // Scale labels with the map panel size.
     readonly property real labelScale: Math.max(0.75, Math.min(1.35, width / 900))
 
-    // ── Click-to-pick: RobotControlDialog arms this to read a pose/waypoint
-    // straight off the map instead of typing coordinates. "" = picking off.
+    FontMetrics {
+        id: labelMetrics
+        font.family: fontSans
+        font.bold: true
+        font.pixelSize: 15 * root.labelScale
+    }
+
+    // Place each waypoint label where it overlaps least.
+    readonly property var labelOffsets: {
+        var placed = []
+        var offsets = new Array(waypoints.length)
+        var order = waypoints.map(function(w, i) { return i })
+                             .sort(function(a, b) { return waypoints[a].x - waypoints[b].x })
+        for (var k = 0; k < order.length; k++) {
+            var i = order[k]
+            var w = waypoints[i]
+            var grow = (plannedDest !== "" && w.name === plannedDest) ? 17 / 15 : 1
+            var lw = labelMetrics.advanceWidth(w.name || "") * grow
+            var lh = labelMetrics.height * grow
+            var p = worldToScreen(w.x, w.y)
+            var px = p.x * overlay.displayScale
+            var py = p.y * overlay.displayScale
+            var gap = 16 * labelScale
+            var candidates = [
+                { x: -lw / 2,    y: -30 * labelScale },
+                { x: -lw / 2,    y: 14 * labelScale },
+                { x: gap,        y: -lh / 2 },
+                { x: -lw - gap,  y: -lh / 2 }
+            ]
+            var best = candidates[0], bestCost = Infinity
+            for (var c = 0; c < candidates.length && bestCost > 0; c++) {
+                var r = { l: px + candidates[c].x - 4, t: py + candidates[c].y,
+                          r: px + candidates[c].x + lw + 4, b: py + candidates[c].y + lh }
+                var cost = placed.reduce(function(sum, o) { return sum + overlapArea(o, r) }, 0)
+                if (cost < bestCost) {
+                    best = candidates[c]
+                    bestCost = cost
+                    best.rect = r
+                }
+            }
+            offsets[i] = best
+            placed.push(best.rect)
+        }
+        return offsets
+    }
+
+    function overlapArea(a, b) {
+        return Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l))
+             * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t))
+    }
+
+    // Pick a pose or waypoint directly on the map.
     property string pickMode: ""
-    property var    pickPoint: null   // {x, y, yaw} in world coords, while dragging
-    // Persist after release so the operator can see, on the map, exactly what
-    // they picked -- the dialog only shows the numbers otherwise.
-    property var    pickedPose: null       // {x, y, yaw}
+    property var    pickPoint: null   // Drag pose in world coordinates
+    // Keep the selected pose visible after the drag ends.
+    property var    pickedPose: null       // Confirmed pose
     property string pickedWaypoint: ""
     signal posePicked(real x, real y, real yaw)
     signal waypointPicked(string name)
@@ -36,7 +85,7 @@ Rectangle {
     function clearPickedPose() { pickedPose = null }
     function clearPickedWaypoint() { pickedWaypoint = "" }
 
-    // Nearest waypoint within a fixed pick radius, or "" if none close enough.
+    // Find the nearest waypoint within the pick radius.
     function nearestWaypoint(wx, wy) {
         var best = ""
         var bestDist = 0.6
@@ -48,14 +97,128 @@ Rectangle {
         return best
     }
 
-    // Robot pose comes from /fleet_states (RMF frame, same as the nav graph and
-    // map image) -- never the MQTT visualization pose, which is in the robot's
-    // own frame and only coincides with RMF's while the adapter's transform is
-    // identity. mapRobots can hold more than one robot; everything below is
-    // drawn per-entry, not just index 0.
+    // Find an RMF waypoint by nodeId.
+    function waypointByName(name) {
+        for (var i = 0; i < waypoints.length; i++) {
+            if (waypoints[i].name === name) return waypoints[i]
+        }
+        return null
+    }
+
+    // Use /fleet_states poses in the map's RMF coordinate frame.
 
     property real minScale: 0.4
     property real maxScale: 8.0
+
+    // No-go zones: each closes the lanes it overlaps via RMF's lane_closure_requests.
+    property var zoneRect: null   // {x1,y1,x2,y2} in world coordinates, while dragging
+    property var closedZones: []  // [{id, x1,y1,x2,y2, laneIndices}]
+    property int selectedZoneId: -1
+    property int _nextZoneId: 1
+
+    // closedZones is local UI state and doesn't survive a restart, but RMF's
+    // own closed-lane list does -- resync so a lane closed by any past
+    // session still gets a marker (and a delete button) here.
+    readonly property var liveClosedRaw: {
+        try { return JSON.parse(ros.closedLaneIndicesJson) } catch (e) { return [] }
+    }
+
+    function syncZonesFromLive() {
+        var covered = {}
+        for (var i = 0; i < root.closedZones.length; i++) {
+            var li = root.closedZones[i].laneIndices
+            for (var j = 0; j < li.length; j++) covered[li[j]] = true
+        }
+        var kept = root.closedZones.filter(function(z) {
+            return z.laneIndices.some(function(r) { return root.liveClosedRaw.indexOf(r) >= 0 })
+        })
+        var added = []
+        for (var k = 0; k < root.edges.length; k++) {
+            var e = root.edges[k]
+            var closedHere = e.raw.filter(function(r) { return root.liveClosedRaw.indexOf(r) >= 0 })
+            if (closedHere.length === 0 || e.raw.some(function(r) { return covered[r] })) continue
+            var w1 = root.waypoints[e.from], w2 = root.waypoints[e.to]
+            if (!w1 || !w2) continue
+            var mx = (w1.x + w2.x) / 2, my = (w1.y + w2.y) / 2
+            var hw = Math.max(Math.abs(w2.x - w1.x) / 2, 0.25)
+            var hh = Math.max(Math.abs(w2.y - w1.y) / 2, 0.25)
+            added.push({ id: root._nextZoneId++, x1: mx - hw, y1: my - hh, x2: mx + hw, y2: my + hh,
+                        laneIndices: closedHere })
+        }
+        if (kept.length !== root.closedZones.length || added.length > 0)
+            root.closedZones = kept.concat(added)
+    }
+    onLiveClosedRawChanged: syncZonesFromLive()
+
+    function segmentsIntersect(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) {
+        function cross(ox, oy, ax, ay, bx, by) {
+            return (ax - ox) * (by - oy) - (ay - oy) * (bx - ox)
+        }
+        var d1 = cross(bx1, by1, bx2, by2, ax1, ay1)
+        var d2 = cross(bx1, by1, bx2, by2, ax2, ay2)
+        var d3 = cross(ax1, ay1, ax2, ay2, bx1, by1)
+        var d4 = cross(ax1, ay1, ax2, ay2, bx2, by2)
+        return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+            && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+    }
+
+    function segmentIntersectsRect(x1, y1, x2, y2, rx1, ry1, rx2, ry2) {
+        var minX = Math.min(rx1, rx2), maxX = Math.max(rx1, rx2)
+        var minY = Math.min(ry1, ry2), maxY = Math.max(ry1, ry2)
+        if ((x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY)
+                || (x2 >= minX && x2 <= maxX && y2 >= minY && y2 <= maxY))
+            return true
+        return segmentsIntersect(x1, y1, x2, y2, minX, minY, maxX, minY)
+            || segmentsIntersect(x1, y1, x2, y2, maxX, minY, maxX, maxY)
+            || segmentsIntersect(x1, y1, x2, y2, maxX, maxY, minX, maxY)
+            || segmentsIntersect(x1, y1, x2, y2, minX, maxY, minX, minY)
+    }
+
+    // Close the lanes the just-drawn rectangle overlaps, as one zone.
+    // laneIndices holds real graph lane indices (root.edges[i].raw), not the
+    // deduplicated edge index -- RMF's close_lanes() indexes each direction
+    // of a lane separately.
+    function finishZoneDraw() {
+        if (!root.zoneRect) return
+        var r = root.zoneRect
+        var laneIndices = []
+        for (var i = 0; i < root.edges.length; i++) {
+            var e = root.edges[i]
+            var w1 = root.waypoints[e.from], w2 = root.waypoints[e.to]
+            if (w1 && w2 && root.segmentIntersectsRect(w1.x, w1.y, w2.x, w2.y, r.x1, r.y1, r.x2, r.y2))
+                laneIndices = laneIndices.concat(e.raw)
+        }
+        if (laneIndices.length === 0) return
+        root.closedZones = root.closedZones.concat([{
+            id: root._nextZoneId++, x1: r.x1, y1: r.y1, x2: r.x2, y2: r.y2,
+            laneIndices: laneIndices
+        }])
+        ros.closeLanes(JSON.stringify(laneIndices))
+    }
+
+    // Reopen a zone's lanes and remove it.
+    function deleteZone(id) {
+        var kept = [], removed = null
+        for (var i = 0; i < root.closedZones.length; i++) {
+            if (root.closedZones[i].id === id) removed = root.closedZones[i]
+            else kept.push(root.closedZones[i])
+        }
+        if (!removed) return
+        ros.openLanes(JSON.stringify(removed.laneIndices))
+        root.closedZones = kept
+        if (root.selectedZoneId === id) root.selectedZoneId = -1
+    }
+
+    // Topmost zone containing this world point, or null.
+    function zoneAt(wx, wy) {
+        for (var i = root.closedZones.length - 1; i >= 0; i--) {
+            var z = root.closedZones[i]
+            var minX = Math.min(z.x1, z.x2), maxX = Math.max(z.x1, z.x2)
+            var minY = Math.min(z.y1, z.y2), maxY = Math.max(z.y1, z.y2)
+            if (wx >= minX && wx <= maxX && wy >= minY && wy <= maxY) return z
+        }
+        return null
+    }
 
     function requestAllPaint() {
         laneCanvas.requestPaint()
@@ -65,14 +228,34 @@ Rectangle {
         geometryPaintTimer.restart()
     }
 
+    // Only node_states.released affects the drawn route; telemetry itself also
+    // carries speed/battery/distance which change far more often and would
+    // otherwise repaint the whole canvas on every tick for no visual change.
+    readonly property string releasedSignature: {
+        var names = Object.keys(telemetry).sort()
+        var sig = ""
+        for (var i = 0; i < names.length; i++) {
+            var nodeStates = (telemetry[names[i]] && telemetry[names[i]].node_states) || []
+            sig += names[i] + ":"
+            for (var j = 0; j < nodeStates.length; j++)
+                sig += nodeStates[j].nodeId + (nodeStates[j].released ? "1" : "0")
+            sig += "|"
+        }
+        return sig
+    }
+
     onWaypointsChanged: requestAllPaint()
     onEdgesChanged: laneCanvas.requestPaint()
     onBlockedEdgeIndicesChanged: laneCanvas.requestPaint()
     onMapRobotsChanged: laneCanvas.requestPaint()
+    onReleasedSignatureChanged: laneCanvas.requestPaint()
     onPlannedDestChanged: laneCanvas.requestPaint()
     onPickPointChanged: laneCanvas.requestPaint()
     onPickedPoseChanged: laneCanvas.requestPaint()
     onPickedWaypointChanged: laneCanvas.requestPaint()
+    onZoneRectChanged: laneCanvas.requestPaint()
+    onClosedZonesChanged: laneCanvas.requestPaint()
+    onSelectedZoneIdChanged: laneCanvas.requestPaint()
 
     Timer {
         id: geometryPaintTimer
@@ -81,8 +264,7 @@ Rectangle {
         onTriggered: root.requestAllPaint()
     }
 
-    // World coordinates (m) -> source-map pixels. The overlay transform handles
-    // fitting these stable coordinates to the currently rendered map image.
+    // Convert world coordinates to source-map pixels.
     function worldToScreen(wx, wy) {
         if (mapProv.pixelW <= 0 || mapProv.pixelH <= 0)
             return { x: -100, y: -100 }
@@ -92,8 +274,7 @@ Rectangle {
         }
     }
 
-    // Inverse of worldToScreen, for a point already in overlay's local space
-    // (use overlay.mapFromItem(...) to convert from any other item).
+    // Convert overlay coordinates back to world coordinates.
     function screenToWorld(ox, oy) {
         return {
             x: ox * mapProv.resolution + mapProv.originX,
@@ -114,7 +295,7 @@ Rectangle {
         mapContent.y = 0
     }
 
-    // ── Zoomable/pannable content ────────────────────────────────────────────
+    // Map content with zoom and pan.
     Item {
         id: mapContent
         width:  root.width
@@ -131,8 +312,7 @@ Rectangle {
             asynchronous: false
             cache: true
             smooth: false
-            // The occupancy grid's free space renders near-white and outshines the
-            // KPI cards; dimming it here (not the bitmap) keeps the route/robot the focus.
+            // Dim the map image so routes and robots stay clear.
             opacity: 0.5
             onStatusChanged: if (status === Image.Ready) root.requestAllPaint()
             onPaintedWidthChanged: root.scheduleGeometryPaint()
@@ -150,7 +330,7 @@ Rectangle {
             property real displayScale: mapImg.paintedWidth > 0 && width > 0
                                         ? mapImg.paintedWidth / width : 1
 
-            // ── z:1  Lanes + current RMF route ──────────────────────────────
+            // Draw lanes and the current RMF routes.
             Canvas {
                 id: laneCanvas
                 anchors.fill: parent
@@ -177,7 +357,30 @@ Rectangle {
                         ctx2d.restore()
                     }
 
-                    // Static nav_graph lanes + direction arrows
+                    function drawZoneRect(x1, y1, x2, y2, selected) {
+                        var p1 = root.worldToScreen(x1, y1)
+                        var p2 = root.worldToScreen(x2, y2)
+                        var rx = Math.min(p1.x, p2.x), ry = Math.min(p1.y, p2.y)
+                        var rw = Math.abs(p2.x - p1.x), rh = Math.abs(p2.y - p1.y)
+                        ctx2d.setLineDash(selected ? [] : [8 / uiScale, 5 / uiScale])
+                        ctx2d.fillStyle = "#F05265"; ctx2d.globalAlpha = selected ? 0.28 : 0.16
+                        ctx2d.fillRect(rx, ry, rw, rh)
+                        ctx2d.strokeStyle = "#F05265"; ctx2d.globalAlpha = selected ? 1.0 : 0.7
+                        ctx2d.lineWidth = (selected ? 3 : 2) / uiScale
+                        ctx2d.strokeRect(rx, ry, rw, rh)
+                    }
+
+                    // No-go zones: confirmed ones first, then the one still being dragged.
+                    for (var zi = 0; zi < root.closedZones.length; zi++) {
+                        var z = root.closedZones[zi]
+                        drawZoneRect(z.x1, z.y1, z.x2, z.y2, z.id === root.selectedZoneId)
+                    }
+                    if (root.zoneRect)
+                        drawZoneRect(root.zoneRect.x1, root.zoneRect.y1,
+                                    root.zoneRect.x2, root.zoneRect.y2, false)
+                    ctx2d.setLineDash([]); ctx2d.globalAlpha = 1.0
+
+                    // Draw navigation lanes with direction arrows.
                     for (var i = 0; i < root.edges.length; i++) {
                         var e  = root.edges[i]
                         var w1 = root.waypoints[e.from]
@@ -185,6 +388,8 @@ Rectangle {
                         if (!w1 || !w2) continue
                         var p1 = root.worldToScreen(w1.x, w1.y)
                         var p2 = root.worldToScreen(w2.x, w2.y)
+                        // main.qml already translates raw closed-lane indices to
+                        // deduplicated edge indices via laneIndexMap -- compare i directly.
                         var blocked = root.blockedEdgeIndices.indexOf(i) >= 0
 
                         ctx2d.strokeStyle = blocked ? "#F05265" : "#f5c400"
@@ -211,13 +416,12 @@ Rectangle {
                         }
                     }
 
-                    // Planned path, from RMF (robot.path = Location[]), drawn per robot
-                    // so a multi-AGV fleet shows every route, not just the first one.
+                    // Draw a planned path for each robot.
                     for (var ri = 0; ri < root.mapRobots.length; ri++) {
                         var rob = root.mapRobots[ri]
                         var rmfPath = rob.path || []
 
-                        // Glow at the destination (plannedDest from dispatch, or the path's last point)
+                        // Mark the destination of an active path.
                         var destPt = null
                         if (root.plannedDest !== "") {
                             for (var j = 0; j < root.waypoints.length; j++) {
@@ -241,18 +445,43 @@ Rectangle {
                             ctx2d.beginPath(); ctx2d.arc(destPt.x, destPt.y, 6 / uiScale, 0, Math.PI*2); ctx2d.fill()
                         }
 
-                        // Draw the line along RMF's path (robot position -> each point in the path)
+                        // Draw released path segments more strongly than planned segments.
                         if (rmfPath.length > 0 && (rob.x !== 0 || rob.y !== 0)) {
                             var rp = root.worldToScreen(rob.x, rob.y)
-                            ctx2d.strokeStyle = "#00e676"; ctx2d.lineWidth = 3 / uiScale
-                            ctx2d.globalAlpha = 0.9; ctx2d.setLineDash([10 / uiScale, 5 / uiScale])
-                            ctx2d.beginPath(); ctx2d.moveTo(rp.x, rp.y)
-                            for (var m = 0; m < rmfPath.length; m++) {
-                                var pp = root.worldToScreen(rmfPath[m].x, rmfPath[m].y)
-                                ctx2d.lineTo(pp.x, pp.y)
+                            var tele = root.telemetry[rob.name]
+                            var nodeStates = (tele && tele.node_states) || []
+                            ctx2d.strokeStyle = "#00e676"
+
+                            if (nodeStates.length > 0) {
+                                var prevScreen = rp
+                                for (var ns = 0; ns < nodeStates.length; ns++) {
+                                    var wp = root.waypointByName(nodeStates[ns].nodeId)
+                                    if (!wp) continue
+                                    var segPt = root.worldToScreen(wp.x, wp.y)
+                                    if (nodeStates[ns].released) {
+                                        ctx2d.lineWidth = 3 / uiScale; ctx2d.globalAlpha = 0.9
+                                        ctx2d.setLineDash([10 / uiScale, 5 / uiScale])
+                                    } else {
+                                        ctx2d.lineWidth = 2 / uiScale; ctx2d.globalAlpha = 0.4
+                                        ctx2d.setLineDash([3 / uiScale, 6 / uiScale])
+                                    }
+                                    ctx2d.beginPath()
+                                    ctx2d.moveTo(prevScreen.x, prevScreen.y)
+                                    ctx2d.lineTo(segPt.x, segPt.y)
+                                    ctx2d.stroke()
+                                    prevScreen = segPt
+                                }
+                            } else {
+                                ctx2d.lineWidth = 3 / uiScale
+                                ctx2d.globalAlpha = 0.9; ctx2d.setLineDash([10 / uiScale, 5 / uiScale])
+                                ctx2d.beginPath(); ctx2d.moveTo(rp.x, rp.y)
+                                for (var m = 0; m < rmfPath.length; m++) {
+                                    var pp = root.worldToScreen(rmfPath[m].x, rmfPath[m].y)
+                                    ctx2d.lineTo(pp.x, pp.y)
+                                }
+                                ctx2d.stroke()
                             }
-                            ctx2d.stroke()
-                            // Arrowhead at the final point
+                            // Arrowhead at the end of the path.
                             if (destPt) {
                                 ctx2d.setLineDash([]); ctx2d.globalAlpha = 0.9
                                 var prevPt = rmfPath.length >= 2
@@ -270,9 +499,7 @@ Rectangle {
                         }
                     }
 
-                    // Live preview of the dragged pose. worldToScreen flips y, so a
-                    // world-frame yaw maps to -yaw here (lane arrows sidestep this by
-                    // measuring their angle directly between screen points).
+                    // Preview the pose and heading while dragging.
                     if (root.pickPoint) {
                         var pk = root.worldToScreen(root.pickPoint.x, root.pickPoint.y)
                         var screenYaw = -root.pickPoint.yaw
@@ -290,9 +517,7 @@ Rectangle {
                         fillTriangle(tipX, tipY, screenYaw, 7 / uiScale)
                     }
 
-                    // Confirmed pick, kept on screen so the operator can see exactly
-                    // where SET POSITION will send RMF -- magenta, distinct from the
-                    // white drag preview and the green route.
+                    // Mark the confirmed pose for robot repositioning.
                     if (root.pickedPose) {
                         var cp = root.worldToScreen(root.pickedPose.x, root.pickedPose.y)
                         var cpYaw = -root.pickedPose.yaw
@@ -314,7 +539,7 @@ Rectangle {
                 }
             }
 
-            // ── z:2  Waypoint pins ───────────────────────────────────────────
+            // Draw waypoint pins.
             Repeater {
                 model: root.waypoints
                 delegate: Item {
@@ -324,8 +549,7 @@ Rectangle {
                     property bool  picked: modelData.name === root.pickedWaypoint
                     property bool  hasTarget: root.plannedDest !== ""
                     property bool  isTaskTarget: hasTarget && modelData.name === root.plannedDest
-                    // Dimming only makes sense against an actual target -- with no
-                    // active order, every waypoint is equally relevant.
+                    // Dim unrelated waypoints when a destination is active.
                     property bool  emphasized: !hasTarget || isTaskTarget
                     x: sp.x; y: sp.y
                     z: 2
@@ -333,7 +557,7 @@ Rectangle {
                     transformOrigin: Item.TopLeft
                     scale: 1 / Math.max(0.001, overlay.displayScale)
 
-                    // Highlight ring for a waypoint chosen via "PICK ON MAP".
+                    // Highlight the waypoint selected on the map.
                     Rectangle {
                         visible: parent.picked
                         x: -18; y: -18
@@ -354,10 +578,9 @@ Rectangle {
                         color: "#ffffff"
                     }
                     Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        // Above the pin, clear of the lane line running through it,
-                        // instead of beside it at pin height.
-                        y: -30 * root.labelScale
+                        // Move labels that overlap their default position.
+                        x: root.labelOffsets[index] ? root.labelOffsets[index].x : -width / 2
+                        y: root.labelOffsets[index] ? root.labelOffsets[index].y : -30 * root.labelScale
                         horizontalAlignment: Text.AlignHCenter
                         text: modelData.name
                         font.pixelSize: (parent.isTaskTarget ? 17 : 15) * root.labelScale
@@ -369,8 +592,7 @@ Rectangle {
                 }
             }
 
-            // ── z:3  Robot markers — pose from /fleet_states (RMF frame) ───────
-            // One delegate per entry in mapRobots, so every robot gets its own marker.
+            // Draw one marker per robot in /fleet_states.
             Repeater {
                 model: root.mapRobots
                 delegate: Item {
@@ -382,7 +604,7 @@ Rectangle {
                     transformOrigin: Item.TopLeft
                     scale: 1 / Math.max(0.001, overlay.displayScale)
 
-                    // Distinguishes the robot from static waypoint pins at a glance.
+                    // Distinguish robots from waypoint pins.
                     Rectangle {
                         id: pulseRing
                         x: -width / 2; y: -height / 2
@@ -418,7 +640,7 @@ Rectangle {
                         smooth: true
                         mipmap: true
                         asynchronous: true
-                        // Keep the replacement icon aligned with the old arrow.
+                        // Center the robot icon on its marker.
                         rotation: -(modelData.yaw * 180 / Math.PI) + 90
                     }
                     Rectangle {
@@ -453,9 +675,7 @@ Rectangle {
         }
     }
 
-    // ── Interaction: scroll = zoom, drag = pan, double-click = reset ────────
-    // While pickMode is set, panning is suspended and the drag instead reads
-    // a pose (press = position, drag direction = heading) or a waypoint tap.
+    // Scroll to zoom and drag to pan; in pick mode, dragging sets the heading.
     MouseArea {
         id: interactionArea
         anchors.fill: parent
@@ -468,18 +688,32 @@ Rectangle {
             root.zoomAt(wheel.x, wheel.y, factor)
         }
         onDoubleClicked: if (root.pickMode === "") root.resetView()
+        onClicked: (mouse) => {
+            if (root.pickMode !== "") return
+            var op = overlay.mapFromItem(interactionArea, mouse.x, mouse.y)
+            var wp = root.screenToWorld(op.x, op.y)
+            var hit = root.zoneAt(wp.x, wp.y)
+            root.selectedZoneId = hit ? hit.id : -1
+        }
 
         property var pickStart: null
         onPressed: (mouse) => {
             if (root.pickMode === "") return
             var op = overlay.mapFromItem(interactionArea, mouse.x, mouse.y)
             pickStart = root.screenToWorld(op.x, op.y)
-            root.pickPoint = { x: pickStart.x, y: pickStart.y, yaw: 0 }
+            if (root.pickMode === "zone")
+                root.zoneRect = { x1: pickStart.x, y1: pickStart.y, x2: pickStart.x, y2: pickStart.y }
+            else
+                root.pickPoint = { x: pickStart.x, y: pickStart.y, yaw: 0 }
         }
         onPositionChanged: (mouse) => {
             if (root.pickMode === "" || !pickStart) return
             var op = overlay.mapFromItem(interactionArea, mouse.x, mouse.y)
             var cur = root.screenToWorld(op.x, op.y)
+            if (root.pickMode === "zone") {
+                root.zoneRect = { x1: pickStart.x, y1: pickStart.y, x2: cur.x, y2: cur.y }
+                return
+            }
             var yaw = Math.hypot(cur.x - pickStart.x, cur.y - pickStart.y) > 0.05
                       ? Math.atan2(cur.y - pickStart.y, cur.x - pickStart.x)
                       : root.pickPoint.yaw
@@ -487,7 +721,9 @@ Rectangle {
         }
         onReleased: (mouse) => {
             if (root.pickMode === "" || !pickStart) return
-            if (root.pickMode === "waypoint") {
+            if (root.pickMode === "zone") {
+                root.finishZoneDraw()
+            } else if (root.pickMode === "waypoint") {
                 var name = root.nearestWaypoint(pickStart.x, pickStart.y)
                 if (name !== "") {
                     root.pickedWaypoint = name
@@ -499,11 +735,12 @@ Rectangle {
             }
             pickStart = null
             root.pickPoint = null
+            root.zoneRect = null
             root.pickMode = ""
         }
     }
 
-    // ── Pick-mode hint banner + cancel ──────────────────────────────────────
+    // Pick-mode hint and cancel button.
     Rectangle {
         visible: root.pickMode !== ""
         anchors.top: parent.top
@@ -525,6 +762,8 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.pickMode === "waypoint"
                       ? "Click a waypoint pin to select it"
+                      : root.pickMode === "zone"
+                      ? "Click and drag to close the lanes inside a zone"
                       : "Click and drag to set position + heading"
                 color: C.text
                 font.pixelSize: 12
@@ -542,6 +781,7 @@ Rectangle {
                     onClicked: {
                         root.pickMode = ""
                         root.pickPoint = null
+                        root.zoneRect = null
                         root.pickCancelled()
                     }
                 }
@@ -549,7 +789,71 @@ Rectangle {
         }
     }
 
-    // ── Zoom +/-/reset buttons ────────────────────────────────────────────────
+    // No-go zone controls: draw one, or delete the selected one.
+    Row {
+        anchors.left: parent.left
+        anchors.top:  parent.top
+        anchors.margins: 10
+        spacing: 6
+        z: 10
+
+        Rectangle {
+            width: zoneBtnRow.implicitWidth + 16; height: 30; radius: 6
+            color: root.pickMode === "zone" ? C.accent
+                   : (zoneBtnMa.containsMouse ? C.surfaceRaised : C.surface)
+            border.color: C.border; border.width: 1
+            opacity: 0.95
+            Row {
+                id: zoneBtnRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text {
+                    text: "🚫"; font.pixelSize: 13
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                    text: "NO-GO ZONE"
+                    color: root.pickMode === "zone" ? "#ffffff" : C.text
+                    font.pixelSize: 11; font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            MouseArea {
+                id: zoneBtnMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.pickMode = (root.pickMode === "zone") ? "" : "zone"
+            }
+        }
+
+        Rectangle {
+            visible: root.selectedZoneId >= 0
+            width: deleteZoneRow.implicitWidth + 16; height: 30; radius: 6
+            color: deleteZoneMa.containsMouse ? Qt.darker(C.err, 1.15) : C.err
+            opacity: 0.95
+            Row {
+                id: deleteZoneRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "🗑"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    text: "DELETE ZONE"
+                    color: "#ffffff"; font.pixelSize: 11; font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            MouseArea {
+                id: deleteZoneMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.deleteZone(root.selectedZoneId)
+            }
+        }
+    }
+
+    // Zoom and reset controls.
     Column {
         anchors.right: parent.right
         anchors.top:   parent.top

@@ -1,9 +1,4 @@
-"""Pure VDA5050 'state' topic parsing -- no Qt, no I/O.
-
-Mirrors vda5050_fleet_adapter_full_control's ParsedState (see
-src/vda5050/state_handler.cpp in that package) so the UI reads the same
-fields the fleet adapter itself acts on, without re-deriving field names.
-"""
+"""Parse VDA5050 state messages without Qt or network dependencies."""
 
 from dataclasses import dataclass, field, asdict
 from math import hypot
@@ -31,9 +26,9 @@ class RobotState:
     distance_since_last_node: float | None = None
     operating_mode: str = "AUTOMATIC"
 
-    battery_soc: float | None = None   # fraction 0..1
+    battery_soc: float | None = None   # Battery fraction from 0 to 1
     charging: bool = False
-    speed: float = 0.0                 # m/s, translational
+    speed: float = 0.0                 # Linear speed in m/s
 
     safety: SafetyState = field(default_factory=SafetyState)
     fatal_error: str = ""
@@ -48,9 +43,7 @@ class RobotState:
 
     localization_score: float | None = None
     map_id: str = ""
-    # False means the fleet adapter has no usable pose for this robot: any
-    # goal -- a new dispatch or the finishing_request return-to-charger --
-    # fails path planning until the operator re-localizes it.
+    # Whether the adapter can use this robot pose for route planning.
     position_initialized: bool = False
 
     @property
@@ -99,8 +92,7 @@ def parse_state(raw: dict) -> RobotState:
     if isinstance(pos, dict):
         s.localization_score = pos.get("localizationScore")
         s.map_id = pos.get("mapId", "")
-        # Mirrors the adapter's own has_position(): a pose isn't usable unless
-        # x/y/theta are all reported too, not just the positionInitialized flag.
+        # Require x, y, theta, and the initialization flag for a usable pose.
         has_xytheta = all(pos.get(k) is not None for k in ("x", "y", "theta"))
         s.position_initialized = bool(pos.get("positionInitialized", False)) and has_xytheta
 

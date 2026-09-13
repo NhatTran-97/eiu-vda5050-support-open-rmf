@@ -2,14 +2,12 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Direct robot control: pause/resume, speed limit, re-localize.
-// Talks to `control` (RosControl) -- see ros_control.py.
+// Control a robot's pause state, speed limit, and position.
 Dialog {
     id: dlg
 
     property string robotName: ""
-    // Live-bound, not a snapshot -- re-evaluates on root.telemetry changes so
-    // paused/resumed state updates instead of freezing at dialog-open time.
+    // Keep the status bound to live robot telemetry.
     readonly property var tele: root.telemetryFor(robotName)
     property real currentSpeedLimit: 0
 
@@ -17,8 +15,7 @@ Dialog {
     property bool lastOk: true
     property string lastMessage: ""
 
-    // "" | "pose" | "waypoint" -- which field a map click should fill. The
-    // dialog hides while picking so clicks reach the map, which emits the pick back.
+    // Select which field receives a point picked on the map.
     property string pickTarget: ""
 
     function beginPick(target) {
@@ -59,16 +56,13 @@ Dialog {
         }
     }
 
-    // User-draggable position + size (0 height = "fit content"), as plain
-    // properties so they persist across close()/open() (e.g. pick-on-map) --
-    // the dialog reopens wherever the operator last left it.
+    // Preserve dialog size and position between openings.
     property real userWidth: 380
     property real userHeight: 0
     readonly property real minWidth: 320
     readonly property real minHeight: 360
 
-    // Scales fonts/heights as the dialog is resized, clamped so text never
-    // gets unreadably small or comically large.
+    // Scale dialog content with its size.
     readonly property real uiScale: Math.max(0.82, Math.min(1.3, width / 380))
     function scaled(px) { return Math.round(px * uiScale) }
 
@@ -83,7 +77,7 @@ Dialog {
         color: C.surface; radius: 16
         border.color: C.border; border.width: 1
 
-        // Resize grip — bottom-right corner, drag to grow/shrink the dialog.
+        // Drag the bottom-right corner to resize.
         Item {
             id: resizeGrip
             width: 22; height: 22
@@ -164,7 +158,7 @@ Dialog {
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
 
-            // Drag the title bar to move the whole dialog around the window.
+            // Drag the title bar to move the dialog.
             MouseArea {
                 anchors.fill: parent
                 anchors.margins: -10
@@ -191,7 +185,7 @@ Dialog {
             horizontalAlignment: Text.AlignHCenter
         }
 
-        // ── Pause / Resume ──
+        // Pause or resume the robot.
         RowLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -224,7 +218,7 @@ Dialog {
             }
         }
 
-        // ── Speed limit ──
+        // Set a speed limit.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -259,7 +253,7 @@ Dialog {
             }
         }
 
-        // ── Re-localize ──
+        // Set the robot position.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -335,7 +329,7 @@ Dialog {
             }
         }
 
-        // ── Go to waypoint — drives the robot, unlike re-localize above ──
+        // Send the robot to a waypoint.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -391,7 +385,7 @@ Dialog {
             }
         }
 
-        // ── Last result ──
+        // Show the most recent command result.
         Text {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18

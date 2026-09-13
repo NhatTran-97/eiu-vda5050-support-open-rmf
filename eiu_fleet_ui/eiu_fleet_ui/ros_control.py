@@ -1,12 +1,4 @@
-"""Direct per-robot control: pause/resume, speed limit, re-localize.
-
-Talks to the services/parameter/topic OperatorInterface exposes (see
-core/operator_interface.hpp in vda5050_fleet_adapter_full_control). Shares
-RosBridge's rclpy node/executor, so attach() must run before it starts spinning.
-
-QML slots only enqueue; the ROS executor thread drains and makes the actual
-calls -- same thread-safety pattern as RosBridge's dispatch()/cancel_task().
-"""
+"""Provide per-robot pause, speed, and localization controls through ROS."""
 
 import json
 import math
@@ -23,11 +15,7 @@ NO_SPEED_LIMIT = 0.0
 
 
 class RosControl(QObject):
-    """
-    QML receives:
-        control.speedLimitsJson -> JSON {robot_name: float}
-        control.commandResult(robot, action, ok, message) -> Signal
-    """
+    """Expose robot control actions and results to QML."""
 
     speedLimitsChanged = Signal()
     commandResult = Signal(str, str, bool, str)
@@ -49,7 +37,7 @@ class RosControl(QObject):
 
         self._command_queue = queue.SimpleQueue()
 
-    # ── Setup: called from RosBridge.start(), before the executor spins ──────
+    # Set up robot control before the ROS executor starts.
 
     def attach(self, node):
         from std_srvs.srv import Trigger
@@ -64,7 +52,7 @@ class RosControl(QObject):
             self._resume_clients[robot.name] = node.create_client(Trigger, f"{prefix}/resume")
             self._init_pos_pubs[robot.name] = node.create_publisher(
                 PoseWithCovarianceStamped, f"{prefix}/init_position", 1)
-            # The publish above is one-way; this carries the actual outcome.
+            # Receive the adapter's position initialization result.
             self._init_pos_result_subs[robot.name] = node.create_subscription(
                 String, f"{prefix}/init_position_result",
                 lambda msg, name=robot.name: self._on_init_position_result(name, msg), 1)
@@ -97,7 +85,7 @@ class RosControl(QObject):
             self._speed_limits_json = json.dumps(self._speed_limits)
         self.speedLimitsChanged.emit()
 
-    # ── QML-facing slots ──────────────────────────────────────────────────────
+    # Robot control actions exposed to QML.
 
     @Slot(str)
     def pauseRobot(self, name: str):
@@ -115,7 +103,7 @@ class RosControl(QObject):
     def initPosition(self, name: str, x: float, y: float, yaw: float):
         self._command_queue.put(("init_position", name, (x, y, yaw)))
 
-    # ── ROS thread: drains the queue and issues the calls ─────────────────────
+    # Execute queued control actions on the ROS thread.
 
     def _drain_commands(self):
         while True:
@@ -194,13 +182,13 @@ class RosControl(QObject):
         msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
         msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
         pub.publish(msg)
-        # Result comes back asynchronously via _on_init_position_result.
+        # Position initialization reports its result through a callback.
 
     def _on_init_position_result(self, name: str, msg) -> None:
         ok = msg.data == "ok"
         self.commandResult.emit(name, "init_position", ok, msg.data)
 
-    # ── QML Properties ────────────────────────────────────────────────────────
+    # Control properties exposed to QML.
 
     @Property(str, notify=speedLimitsChanged)
     def speedLimitsJson(self):

@@ -1,11 +1,4 @@
-"""
-ROS 2 <-> QML bridge for EIU Fleet UI.
-
-  1. Subscribe  /fleet_states        (rmf_fleet_msgs/FleetState)  -> robot table
-  2. Subscribe  /task_api_responses  (rmf_task_msgs/ApiResponse)  -> task state
-  3. Subscribe  /dispatch_states    (rmf_task_msgs/DispatchStates) -> assignment state
-  4. Publish    /task_api_requests   (rmf_task_msgs/ApiRequest)   -> dispatch task
-"""
+"""Bridge RMF fleet and task state between ROS 2 and QML."""
 
 import os
 import json
@@ -22,12 +15,12 @@ TASK_API_TOPIC      = "/task_api_requests"
 TASK_RESP_TOPIC     = "/task_api_responses"
 DISPATCH_STATES_TOPIC = "/dispatch_states"
 LANE_STATES_TOPIC   = "/lane_states"
+LANE_CLOSURE_REQUEST_TOPIC = "/lane_closure_requests"
 NEGOTIATION_STATUSES_TOPIC = "/rmf_traffic/negotiation_statuses"
 OFFLINE_AFTER_SEC   = 5.0
-DISPATCH_TIMEOUT_SEC = 15.0   # no dispatch_task_response by then -> mark failed
+DISPATCH_TIMEOUT_SEC = 15.0   # Time before an unanswered dispatch fails
 
-# Persisted here so a UI restart doesn't lose track of a task the robot is
-# still running (see _on_task_response's "not in local list" handling).
+
 _TASKS_CACHE_PATH = Path.home() / ".config" / "eiu_fleet_ui" / "tasks_cache.json"
 
 _MODE_NAMES = {
@@ -36,9 +29,7 @@ _MODE_NAMES = {
     7: "DOCKING", 8: "ERROR", 9: "CLEANING",
 }
 
-# RMF task status -> display label. Covers both the dispatcher's own status
-# strings and rmf_api_msgs' task_state.json `status` enum (which spells it
-# "canceled", one L).
+
 _STATE_LABEL = {
     "queued":        "queued",
     "selected":      "queued",
@@ -62,7 +53,7 @@ def _fmt_time(ts) -> str:
     if not ts:
         return ""
     ts = float(ts)
-    if ts > 1e12:       # milliseconds → seconds
+    if ts > 1e12:       # Convert milliseconds to seconds
         ts /= 1000.0
     if ts <= 0:
         return ""
@@ -70,10 +61,7 @@ def _fmt_time(ts) -> str:
 
 
 def _finish_from_path(path) -> str:
-    """Estimated finish time from Location.t of the last waypoint in the RMF path.
-    RMF's internal clock starts at the Unix epoch (0), so t.sec=29375 -> 08:09:35 UTC.
-    UTC is used so the displayed time of day is correct.
-    """
+    """Return the UTC finish time from the last RMF path waypoint."""
     if not path:
         return ""
     t_sec = path[-1].t.sec
@@ -90,7 +78,8 @@ class RosBridge(QObject):
     tasksChanged     = Signal()
     pathChanged      = Signal()
     trafficChanged   = Signal()
-    dispatchResult   = Signal(bool, str)   # dispatch/cancel outcome, for dialogs to show
+    dispatchResult   = Signal(bool, str)   # Dispatch or cancel result for dialogs
+    _rosReady        = Signal()            # Hop back to the GUI thread once ROS entities exist
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -98,19 +87,19 @@ class RosBridge(QObject):
         self._robots_json  = "[]"
         self._rmf_online   = False
         self._last_rx      = 0.0
-        self._tasks        = self._load_tasks()   # list[dict], most recent first
+        self._tasks        = self._load_tasks()   # Task records, newest first
         self._tasks_json   = json.dumps(self._tasks)
         self._planned_dest = ""
-        self._waypoints    = []       # list[dict] {name,x,y} from nav_graph
+        self._waypoints    = []       # Navigation graph waypoints
         self._fleet_name   = ""
-        self._blocked_lanes    = 0    # rmf_fleet_msgs/LaneStates.closed_lanes count, this fleet
-        self._closed_lane_indices_json = "[]"  # same, as raw indices for the map
-        self._active_conflicts = 0    # rmf_traffic_msgs/NegotiationStatuses.negotiations
+        self._blocked_lanes    = 0    # Closed lane count for this fleet
+        self._closed_lane_indices_json = "[]"  # Raw closed lane indices for the map
+        self._active_conflicts = 0    # Active RMF negotiations
 
 
         self._task_lock = threading.RLock()
 
-        # request_id ("eiu-xxx") → rmf internal task_id
+        # Map UI request IDs to RMF task IDs.
         self._req_to_rmf: dict[str, str] = {}
 
   
@@ -119,8 +108,11 @@ class RosBridge(QObject):
         self._node        = None
         self._task_pub    = None
         self._api_request_type = None
+        self._lane_request_pub = None
+        self._lane_request_type = None
         self._command_timer = None
         self._command_queue = queue.SimpleQueue()
+        self._lane_command_queue = queue.SimpleQueue()
         self._executor    = None
         self._spin_thread = None
         self._ok          = False
@@ -129,6 +121,7 @@ class RosBridge(QObject):
         self._watchdog.setInterval(2000)
         self._watchdog.timeout.connect(self._check_online)
         self._watchdog.timeout.connect(self._check_dispatch_timeouts)
+        self._rosReady.connect(self._watchdog.start)
 
     def set_waypoints(self, wp_list: list):
         """Receive the waypoint list from MapProvider, for use by _nearest_wp_name."""
@@ -159,12 +152,7 @@ class RosBridge(QObject):
         self.tasksChanged.emit()
 
     def _nearest_wp_name(self, robots: list, robot_name: str = "") -> str:
-        """Find the waypoint nearest to a robot's position.
-
-        Defaults to the first robot when robot_name isn't given or isn't
-        found -- only correct for a single-robot fleet, but there's no better
-        guess for a fleet-wide dispatch that isn't yet assigned to anyone.
-        """
+        """Find the nearest waypoint to the named robot, falling back to the first robot."""
         if not robots or not self._waypoints:
             return ""
         r = next((x for x in robots if x.get("name") == robot_name), robots[0])
@@ -177,16 +165,20 @@ class RosBridge(QObject):
                 best = wp["name"]
         return best
 
-    # ── Start / shutdown ──────────────────────────────────────────────────────
+    # Start and stop the ROS connection.
 
     def start(self, on_node_ready=None):
-        """`on_node_ready(node)`, if given, runs after the node and this
-        bridge's own entities exist but before the executor starts spinning
-        -- for callers (e.g. RosControl) that need their own clients/
-        publishers on the same node from the first spin iteration.
+        """Create ROS entities on a background thread.
+
+        Node/publisher/subscription creation does DDS discovery against
+        whatever's already on the graph -- against a busy graph (Nav2, RMF
+        core, adapter, ...) that's easily 1-3s. Running it inline would block
+        the Qt event loop before the first frame is even painted.
         """
-        # An explicit EIU_ROS_DOMAIN_ID wins; otherwise keep whatever the shell
-        # already exported, and only fall back to 42 when nothing is set.
+        threading.Thread(target=self._start_impl, args=(on_node_ready,), daemon=True).start()
+
+    def _start_impl(self, on_node_ready=None):
+        # Choose the ROS domain from the UI override, environment, or fallback.
         domain = (os.environ.get("EIU_ROS_DOMAIN_ID")
                   or os.environ.get("ROS_DOMAIN_ID")
                   or "42")
@@ -197,7 +189,7 @@ class RosBridge(QObject):
             from rclpy.qos import (QoSProfile, QoSDurabilityPolicy,
                                    QoSReliabilityPolicy, QoSHistoryPolicy)
             from rclpy.executors import SingleThreadedExecutor
-            from rmf_fleet_msgs.msg import FleetState, LaneStates
+            from rmf_fleet_msgs.msg import FleetState, LaneStates, LaneRequest
             from rmf_task_msgs.msg import ApiRequest, ApiResponse, DispatchStates
             from rmf_traffic_msgs.msg import NegotiationStatuses
         except Exception as e:
@@ -224,15 +216,18 @@ class RosBridge(QObject):
                 ApiRequest, TASK_API_TOPIC, reliable_tl)
             self._api_request_type = ApiRequest
 
+            self._lane_request_pub = self._node.create_publisher(
+                LaneRequest, LANE_CLOSURE_REQUEST_TOPIC, reliable_tl)
+            self._lane_request_type = LaneRequest
+
             self._node.create_subscription(
                 FleetState, FLEET_STATES_TOPIC, self._on_fleet_state, 10)
 
-            # Task state updates: the dispatcher uses TRANSIENT_LOCAL
+            # Receive task updates with TRANSIENT_LOCAL durability.
             self._node.create_subscription(
                 ApiResponse, TASK_RESP_TOPIC, self._on_task_response, reliable_tl)
 
-            # Auction/assignment result, including failures such as an unknown
-            # waypoint or no fleet bid. Jazzy publishes this as VOLATILE.
+            # Receive auction and assignment results with VOLATILE durability.
             self._node.create_subscription(
                 DispatchStates, DISPATCH_STATES_TOPIC,
                 self._on_dispatch_states, reliable_volatile)
@@ -243,8 +238,7 @@ class RosBridge(QObject):
                 NegotiationStatuses, NEGOTIATION_STATUSES_TOPIC,
                 self._on_negotiation_statuses, reliable_tl)
 
-            # QML queues command payloads; the ROS executor owns publishing so a
-            # slow DDS writer can never block Qt's UI thread.
+            # Publish queued commands on the ROS thread to keep the UI responsive.
             self._command_timer = self._node.create_timer(
                 0.05, self._drain_commands)
 
@@ -256,7 +250,7 @@ class RosBridge(QObject):
             self._ok = True
             self._spin_thread = threading.Thread(target=self._spin, daemon=True)
             self._spin_thread.start()
-            self._watchdog.start()
+            self._rosReady.emit()   # QTimer.start() must run on the GUI thread
             print(f"[ROS] bridge online — domain {domain}")
         except Exception as e:
             print(f"[ROS] start error: {e}")
@@ -269,60 +263,83 @@ class RosBridge(QObject):
                 print(f"[ROS] executor stopped unexpectedly: {e}")
 
     def _drain_commands(self):
-        """Publish queued API requests from the ROS executor thread."""
-        if self._task_pub is None or self._api_request_type is None:
-            return
+        """Publish queued API and lane requests from the ROS executor thread."""
+        if self._task_pub is not None and self._api_request_type is not None:
+            while True:
+                try:
+                    request_id, json_msg = self._command_queue.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    msg = self._api_request_type()
+                    msg.request_id = request_id
+                    msg.json_msg = json_msg
+                    self._task_pub.publish(msg)
+                except Exception as e:
+                    print(f"[ROS] publish failed request_id={request_id}: {e}")
 
-        while True:
-            try:
-                request_id, json_msg = self._command_queue.get_nowait()
-            except queue.Empty:
-                return
-
-            try:
-                msg = self._api_request_type()
-                msg.request_id = request_id
-                msg.json_msg = json_msg
-                self._task_pub.publish(msg)
-            except Exception as e:
-                print(f"[ROS] publish failed request_id={request_id}: {e}")
+        if self._lane_request_pub is not None and self._lane_request_type is not None:
+            while True:
+                try:
+                    close_lanes, open_lanes = self._lane_command_queue.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    msg = self._lane_request_type()
+                    msg.fleet_name = self._fleet_name
+                    msg.close_lanes = close_lanes
+                    msg.open_lanes = open_lanes
+                    self._lane_request_pub.publish(msg)
+                except Exception as e:
+                    print(f"[ROS] lane request publish failed: {e}")
 
     @Slot()
     def shutdown(self):
+        """Detach ROS entities and tear them down off the GUI thread.
+
+        destroy_node() undoes the same DDS discovery start() paid for, so it
+        costs about as much (~1s against a busy graph). Doing that inline in
+        aboutToQuit would delay the window closing by that much.
+        """
         if not self._ok and self._node is None:
             return
         self._ok = False
         self._watchdog.stop()
 
+        node, executor, spin_thread = self._node, self._executor, self._spin_thread
+        self._executor = None
+        self._spin_thread = None
+        self._node = None
+        self._task_pub = None
+        self._api_request_type = None
+        threading.Thread(target=self._shutdown_impl, args=(node, executor, spin_thread),
+                          daemon=True).start()
+
+    @staticmethod
+    def _shutdown_impl(node, executor, spin_thread):
         try:
             import rclpy
-            if self._executor:
-                self._executor.shutdown(timeout_sec=2.0)
-            if self._spin_thread and self._spin_thread.is_alive():
-                self._spin_thread.join(timeout=2.0)
-            if self._executor and self._node:
-                self._executor.remove_node(self._node)
-            if self._node:
-                self._node.destroy_node()
+            if executor:
+                executor.shutdown(timeout_sec=2.0)
+            if spin_thread and spin_thread.is_alive():
+                spin_thread.join(timeout=2.0)
+            if executor and node:
+                executor.remove_node(node)
+            if node:
+                node.destroy_node()
             if rclpy.ok():
                 rclpy.shutdown()
         except Exception as e:
             print(f"[ROS] shutdown warning: {e}")
-        finally:
-            self._executor = None
-            self._spin_thread = None
-            self._node = None
-            self._task_pub = None
-            self._api_request_type = None
 
-    # ── Subscribe: /fleet_states ───────────────────────────────────────────────
+    # Update the fleet view from /fleet_states.
 
     def _on_fleet_state(self, msg):
         fleet = msg.name
         current = {r["key"]: r for r in json.loads(self._robots_json)}
         current = {k: v for k, v in current.items() if v["fleet"] != fleet}
 
-        robot_task_map: dict[str, str] = {}   # rmf_task_id → robot_name
+        robot_task_map: dict[str, str] = {}   # Task ID to robot name
 
         for r in msg.robots:
             loc = r.location
@@ -349,9 +366,7 @@ class RosBridge(QObject):
             if r.task_id:
                 robot_task_map[r.task_id] = (r.name, _finish_from_path(r.path))
 
-            # RMF's task dispatcher never publishes a "completed" event over ROS
-            # (further updates go out over a websocket this UI isn't connected to),
-            # so a robot's task_id disappearing while "underway" is the only signal we get.
+
             prev_task_id = self._robot_last_task_id.get(r.name, "")
             if prev_task_id and prev_task_id != r.task_id:
                 self._mark_task_completed(prev_task_id)
@@ -365,16 +380,11 @@ class RosBridge(QObject):
             self.rmfOnlineChanged.emit()
         self.robotsChanged.emit()
 
-        # Cross-reference: update the tasks table based on what each robot is doing
+        # Match task records to each robot's current task.
         self._sync_tasks_from_fleet(robot_task_map)
 
     def _mark_task_completed(self, rmf_id: str):
-        """A robot just dropped rmf_id from its /fleet_states task_id.
-
-        Only flips a task that is still "underway": one already marked
-        failed/cancelled by an actual signal (dispatch_states, a cancel) is
-        left alone, so this can't resurrect or misreport those.
-        """
+        """Complete an underway task when its robot drops the task ID."""
         with self._task_lock:
             for task in self._tasks:
                 if task.get("rmf_id") == rmf_id and task["state"] == "underway":
@@ -402,9 +412,7 @@ class RosBridge(QObject):
             self.rmfOnlineChanged.emit()
 
     def _check_dispatch_timeouts(self):
-        """A queued task with no rmf_id after DISPATCH_TIMEOUT_SEC never got
-        a dispatch_task_response -- the dispatcher is down, not just slow.
-        """
+        """Fail queued tasks that receive no RMF task ID before the timeout."""
         now = time.monotonic()
         updated = False
         with self._task_lock:
@@ -439,14 +447,7 @@ class RosBridge(QObject):
             self.trafficChanged.emit()
 
     def _sync_tasks_from_fleet(self, robot_task_map: dict):
-        """Attach the executing robot to tasks we already know the RMF id of.
-
-        FleetState only reports which task_id each robot is running right now. It
-        never reports that a task ended, and a task_id missing from it means
-        nothing on its own — the robot may be between tasks, paused, or briefly
-        unreachable. Terminal states therefore come only from /task_api_responses
-        and /dispatch_states, which are authoritative. Nothing is inferred here.
-        """
+        """Attach live robot names and finish times to known RMF tasks."""
         updated = False
         with self._task_lock:
             for task in self._tasks:
@@ -465,7 +466,7 @@ class RosBridge(QObject):
             if updated:
                 self._publish_tasks()
 
-    # ── Subscribe: /task_api_responses ────────────────────────────────────────
+    # Handle RMF task API responses.
 
     def _on_task_response(self, msg):
         """Receive responses from the Jazzy dispatcher: pick up rmf_task_id and state updates."""
@@ -476,10 +477,7 @@ class RosBridge(QObject):
 
         msg_type = data.get("type", "")
 
-        # Current Jazzy uses an unwrapped response of this form:
-        # {"state":{"booking":{"id":"patrol.dispatch-N"}, ...},
-        #  "success":true}
-        # Keep support for the older wrapped dispatch_task_response schema too.
+        # Accept both direct Jazzy responses and the older wrapped format.
         if not msg_type and isinstance(data.get("state"), dict):
             state = data["state"]
             booking = state.get("booking", {})
@@ -491,7 +489,7 @@ class RosBridge(QObject):
             return
 
         if msg_type == "dispatch_task_response":
-            req_id  = msg.request_id          # "eiu-xxxxxxxx"
+            req_id  = msg.request_id          # UI request ID
             rmf_id  = data.get("task_id", "")
             success = data.get("success", False)
             if not rmf_id:
@@ -499,7 +497,7 @@ class RosBridge(QObject):
             self._attach_rmf_id(req_id, rmf_id, success)
 
         elif msg_type in ("task_state_update", "task_update"):
-            task_data = data.get("task", data)   # Jazzy puts state inside "task"
+            task_data = data.get("task", data)   # Wrapped task state
             rmf_id = (task_data.get("booking", {}).get("id")
                       or task_data.get("task_id", ""))
             if not rmf_id:
@@ -509,7 +507,7 @@ class RosBridge(QObject):
             status_raw = task_data.get("status", "")
             state_label = _STATE_LABEL.get(status_raw, status_raw)
 
-            # Estimated finish time (may be in seconds or milliseconds)
+            # Read the estimated finish time.
             finish_str = ""
             estimate = task_data.get("estimate", {})
             ft = estimate.get("finish_time") if estimate else None
@@ -537,7 +535,7 @@ class RosBridge(QObject):
                     self._publish_tasks()
 
         else:
-            # Log other types for debugging
+            # Log response types that have no handler.
             if msg_type:
                 print(f"[ROS] task_api_responses type={msg_type!r} (ignored)")
 
@@ -569,10 +567,8 @@ class RosBridge(QObject):
                 if task is None:
                     continue
 
-                # DispatchState constants: queued=1, selected=2, dispatched=3,
-                # failed_to_assign=4, canceled_in_flight=5.
-                # Status 3 is a stale snapshot the dispatcher keeps re-publishing
-                # long after the robot moves on, so it leaves task["state"] untouched.
+                # DispatchState codes: queued=1, selected=2, dispatched=3, failed=4, cancelled=5.
+                # Dispatched snapshots may be stale, so they do not overwrite the task state.
                 label = None
                 if state.status in (1, 2):
                     label = "queued"
@@ -606,14 +602,10 @@ class RosBridge(QObject):
             if updated:
                 self._publish_tasks()
 
-    # ── Websocket: authoritative task state (see task_websocket.py) ───────────
+    # Update task state from WebSocket events.
 
     def apply_task_state_update(self, data: dict):
-        """A task_state.json payload from RMF's websocket broadcast -- the
-        real completion/failure signal /fleet_states and /task_api_responses
-        cannot provide (see _mark_task_completed, still the fallback when the
-        adapter has no ui_websocket_uri configured).
-        """
+        """Apply authoritative task status from an RMF WebSocket event."""
         rmf_id = (data.get("booking") or {}).get("id", "")
         if not rmf_id:
             return
@@ -626,13 +618,16 @@ class RosBridge(QObject):
         error_text = "; ".join(
             e.get("detail") or e.get("category", "") for e in errors if isinstance(e, dict))
 
-        # Loop/patrol tasks decompose into one phase per leg; the total phase
-        # count is stable once known, so dividing it by the round count gives
-        # phases-per-round without knowing how the task structures its phases.
+        # Derive remaining rounds from completed phases.
         completed_phases = data.get("completed") or []
         total_phases = len(completed_phases) + len(data.get("pending") or [])
-        if data.get("active") is not None:
+        active_id = data.get("active")
+        if active_id is not None:
             total_phases += 1
+
+        phase_label = ""
+        if active_id is not None:
+            phase_label = ((data.get("phases") or {}).get(str(active_id)) or {}).get("category") or ""
 
         updated = False
         with self._task_lock:
@@ -647,6 +642,10 @@ class RosBridge(QObject):
                     task["end"] = finish_str; updated = True
                 if error_text and task.get("error") != error_text:
                     task["error"] = error_text; updated = True
+
+                new_phase = "" if label in ("completed", "failed", "cancelled") else phase_label
+                if task.get("phase", "") != new_phase:
+                    task["phase"] = new_phase; updated = True
 
                 rounds = task.get("rounds", 1)
                 if rounds > 1:
@@ -663,7 +662,7 @@ class RosBridge(QObject):
             if updated:
                 self._publish_tasks()
 
-    # ── Publish: dispatch task ─────────────────────────────────────────────────
+    # Build and submit task requests to RMF.
 
     @Slot(str, str, int)
     def dispatch(self, category: str, place: str, loops: int):
@@ -675,6 +674,75 @@ class RosBridge(QObject):
         """Pinned to one robot via RMF's robot_task_request, bypassing bidding."""
         self._dispatch(category, place, loops, robot)
 
+    @Slot(str, str, str, str)
+    def dispatchDelivery(self, pickup_place: str, pickup_handler: str,
+                         dropoff_place: str, dropoff_handler: str):
+        """Delivery task: pick up at a dispenser, drop off at an ingestor."""
+        if not self._ok or self._task_pub is None:
+            print("[ROS] dispatch skipped — ROS not ready yet")
+            self.dispatchResult.emit(False, "ROS not connected — dispatch not sent")
+            return
+
+        import uuid
+        req_id = "eiu-" + uuid.uuid4().hex[:8]
+        payload = {"sku": "box", "quantity": 1}
+        task_request = {
+            "category": "delivery",
+            "description": {
+                "pickup": {"place": pickup_place, "handler": pickup_handler, "payload": payload},
+                "dropoff": {"place": dropoff_place, "handler": dropoff_handler, "payload": payload},
+            },
+            "unix_millis_earliest_start_time": 0,
+            "requester": "eiu_fleet_ui",
+        }
+        request_json = json.dumps({"type": "dispatch_task_request", "request": task_request})
+        self._command_queue.put((req_id, request_json))
+        print(f"[ROS] delivery dispatch queued → {pickup_place} ({pickup_handler}) -> "
+              f"{dropoff_place} ({dropoff_handler}) req_id={req_id}")
+
+        rec = {
+            "id":          req_id,
+            "rmf_id":      "",
+            "date":        time.strftime("%d %b %Y"),
+            "requester":   "eiu_fleet_ui",
+            "pickup":      pickup_place,
+            "destination": dropoff_place,
+            "robot":       "—",
+            "start":       datetime.datetime.now().strftime("%I:%M:%S %p"),
+            "end":         "—",
+            "state":       "queued",
+            "rounds":           1,
+            "rounds_remaining": 0,
+            "phase":       "",
+            "_dispatched_at": time.monotonic(),
+        }
+        with self._task_lock:
+            self._tasks.insert(0, rec)
+            del self._tasks[50:]
+            self._publish_tasks()
+
+        self._planned_dest = dropoff_place
+
+    @Slot(str)
+    def closeLanes(self, indices_json: str):
+        """Close lane graph indices (a no-go zone) via RMF's own closure mechanism."""
+        try:
+            indices = json.loads(indices_json)
+        except Exception:
+            return
+        if indices:
+            self._lane_command_queue.put((indices, []))
+
+    @Slot(str)
+    def openLanes(self, indices_json: str):
+        """Reopen lane graph indices previously closed with closeLanes()."""
+        try:
+            indices = json.loads(indices_json)
+        except Exception:
+            return
+        if indices:
+            self._lane_command_queue.put(([], indices))
+
     def _dispatch(self, category: str, place: str, loops: int, robot: str):
         if not self._ok or self._task_pub is None:
             print("[ROS] dispatch skipped — ROS not ready yet")
@@ -685,8 +753,7 @@ class RosBridge(QObject):
 
         req_id  = "eiu-" + uuid.uuid4().hex[:8]
 
-        # Build patrol places: if loops > 1, prepend the robot's current waypoint
-        # so the route is a real A->B trip instead of a no-op B->B.
+        # Start multi-round patrols at the robot's current waypoint.
         places = [place]
         if loops > 1:
             robots = json.loads(self._robots_json)
@@ -700,8 +767,7 @@ class RosBridge(QObject):
             "unix_millis_earliest_start_time": 0,
             "requester": "eiu_fleet_ui",
         }
-        # robot_task_request bypasses bidding entirely -- RMF assigns it to
-        # this robot or rejects it outright, never to a different one.
+        # Send the task to the selected robot.
         envelope = ({"type": "robot_task_request", "robot": robot,
                      "fleet": self._fleet_name, "request": task_request}
                     if robot else
@@ -713,7 +779,7 @@ class RosBridge(QObject):
 
         rec = {
             "id":          req_id,
-            "rmf_id":      "",           # filled in once dispatch_task_response arrives
+            "rmf_id":      "",           # Set when RMF returns a task ID
             "date":        time.strftime("%d %b %Y"),
             "requester":   "eiu_fleet_ui",
             "pickup":      "n/a",
@@ -724,11 +790,12 @@ class RosBridge(QObject):
             "state":       "queued",
             "rounds":           int(loops),
             "rounds_remaining": int(loops),
-            "_dispatched_at": time.monotonic(),   # for _check_dispatch_timeouts
+            "phase":       "",
+            "_dispatched_at": time.monotonic(),   # Dispatch timeout start
         }
         with self._task_lock:
             self._tasks.insert(0, rec)
-            del self._tasks[50:]          # trim in place; never rebind the list
+            del self._tasks[50:]          # Keep the latest 50 tasks
             self._publish_tasks()
 
         self._planned_dest = place
@@ -754,8 +821,7 @@ class RosBridge(QObject):
         self._command_queue.put((req_id, request_json))
         print(f"[ROS] cancel_task queued → {rmf_id}")
 
-        # Marked immediately since the dispatcher rarely confirms a cancel on
-        # its own (same gap as task completion -- see _mark_task_completed).
+        # Mark cancellation immediately in the task list.
         with self._task_lock:
             for task in self._tasks:
                 if task.get("rmf_id") == rmf_id and task["state"] in ("queued", "underway"):
@@ -766,7 +832,7 @@ class RosBridge(QObject):
             self._publish_tasks()
         self.dispatchResult.emit(True, "Cancelled")
 
-    # ── QML Properties ─────────────────────────────────────────────────────────
+    # Properties and signals exposed to QML.
 
     @Property(bool, notify=rmfOnlineChanged)
     def rmfOnline(self):    return self._rmf_online

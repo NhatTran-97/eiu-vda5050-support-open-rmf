@@ -10,8 +10,7 @@ Rectangle {
     property url iconSource: ""
     property string valueFontFamily: "IBM Plex Mono"
     property color accentColor: C.accent
-    // Needs the operator's attention right now (e.g. RMF offline) -- pulses
-    // the border so it's noticed without animating text/value legibility.
+    // Highlight a metric that needs operator attention.
     property bool alert: false
     readonly property real contentScale: Math.max(1.0, Math.min(1.45, width / 300))
 
@@ -54,8 +53,7 @@ Rectangle {
             border.color: Qt.rgba(card.accentColor.r, card.accentColor.g,
                                   card.accentColor.b, 0.35)
 
-            // Same badge frame for both icon kinds, so a logo doesn't look
-            // "busier" than a plain glyph just because it's an image.
+            // Give image and text icons the same badge size.
             Text {
                 anchors.centerIn: parent
                 visible: card.iconSource.toString() === ""

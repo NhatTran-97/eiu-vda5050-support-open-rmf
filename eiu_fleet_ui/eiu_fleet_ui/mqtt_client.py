@@ -1,10 +1,4 @@
-"""VDA5050 connectivity + telemetry over MQTT, for every configured robot.
-
-Broker address and each robot's topic prefix come from the adapter's config, so
-adding a robot there is all it takes for the UI to follow it — see config.py.
-Message parsing itself lives in vda5050/state.py (no Qt dependency); this
-class only owns the paho connection, per-robot dispatch, and Qt-side throttling.
-"""
+"""Track VDA5050 connectivity and telemetry for configured robots over MQTT."""
 
 import json
 import threading
@@ -18,21 +12,12 @@ from .vda5050.state import parse_state
 
 LEAF_CONNECTION = "connection"
 LEAF_STATE = "state"
-# A robot can stay MQTT-connected while its own state-publishing loop hangs;
-# past this age since the last `state` message, telemetry is flagged stale.
+# Mark robot telemetry stale after this many seconds without a state message.
 STATE_STALE_AFTER_SEC = 5.0
 
 
 class MqttClient(QObject):
-    """
-    Connects to the broker and tracks, per configured robot, connectivity and
-    the latest parsed `state` message.
-
-    QML receives:
-        mqtt.connected        -> bool (broker connection status)
-        mqtt.robotsOnlineJson -> JSON object {robot_name: bool}
-        mqtt.telemetryJson    -> JSON object {robot_name: RobotState.to_dict() + "stale"}
-    """
+    """Publish per-robot connection and telemetry data to QML."""
 
     stateChanged = Signal()
     onlineChanged = Signal()
@@ -44,8 +29,7 @@ class MqttClient(QObject):
         self._config = config
         self._connected = False
 
-        # Paho callbacks run outside Qt's UI thread and only touch _online/_telemetry
-        # under this lock; the Qt timer below flushes to QML, so bursts can't flood it.
+        # Protect data shared by the MQTT and Qt threads.
         self._lock = threading.Lock()
         self._online = {r.name: False for r in config.robots}
         self._telemetry = {}
@@ -61,7 +45,7 @@ class MqttClient(QObject):
         self._flush_timer.timeout.connect(self._flush)
         self._flush_timer.start()
 
-        # Compatible with both paho-mqtt v1 and v2
+        # Support both paho-mqtt callback versions.
         cid = client_id()
         try:
             self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id=cid)
@@ -75,7 +59,7 @@ class MqttClient(QObject):
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message
 
-    # ── Connect / disconnect ─────────────────────────────────────────────────
+    # Connect to and disconnect from MQTT.
 
     @Slot()
     def connect_broker(self):
@@ -85,7 +69,7 @@ class MqttClient(QObject):
             if not self._flush_timer.isActive():
                 self._flush_timer.start()
             self._client.connect_async(host, port, keepalive=60)
-            self._client.loop_start()   # MQTT background thread
+            self._client.loop_start()   # Start the MQTT worker
             print(f"[MQTT] connecting → {host}:{port} "
                   f"({len(self._config.robots)} robot(s) from config)")
         except Exception as e:
@@ -100,7 +84,7 @@ class MqttClient(QObject):
         except Exception:
             pass
 
-    # ── Paho callbacks (worker thread; updates are coalesced for Qt) ──────────
+    # Handle MQTT messages on the worker thread.
 
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -132,10 +116,7 @@ class MqttClient(QObject):
         except Exception:
             return
 
-        # Paho re-raises an uncaught exception here (suppress_exceptions is off
-        # by default), which would kill its background thread and freeze all
-        # telemetry -- so a malformed payload (wrong type, wrong field type)
-        # is logged and dropped instead of ever reaching that point.
+        # Drop malformed messages so the MQTT worker keeps running.
         try:
             if msg.topic == robot.topic(LEAF_CONNECTION):
                 online = data.get("connectionState", "") == "ONLINE"
@@ -159,8 +140,7 @@ class MqttClient(QObject):
             online_payload = json.dumps(self._online) if self._online_dirty else None
             self._online_dirty = False
 
-            # Re-checked every tick, not just on a new message -- a robot that
-            # simply stops publishing should still flip to stale eventually.
+            # Check telemetry age on every refresh tick.
             stale_now = {name: (now - self._last_state_rx.get(name, 0.0)) > STATE_STALE_AFTER_SEC
                          for name in self._telemetry}
             if stale_now != self._stale_reported:
@@ -181,7 +161,7 @@ class MqttClient(QObject):
             self._telemetry_json = telemetry_payload
             self.telemetryChanged.emit()
 
-    # ── QML Properties ────────────────────────────────────────────────────────
+    # MQTT state exposed to QML.
 
     @Property(bool, notify=stateChanged)
     def connected(self):

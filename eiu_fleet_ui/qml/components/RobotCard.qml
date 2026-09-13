@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 
-// A card describing a single robot. Data is passed in via properties (from ros.robotsJson).
+// Show a robot's status and basic information.
 Rectangle {
     id: card
 
@@ -19,13 +19,13 @@ Rectangle {
     border.color:     C.border
     border.width:     1
 
-    // Color based on the robot's status
+    // Choose a color for the robot state.
     function statusColor(s) {
         if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME") return C.blue
         if (s === "CHARGING")                                        return C.success
         if (s === "EMERGENCY" || s === "ERROR")                      return C.err
         if (s === "PAUSED" || s === "WAITING")                       return C.warn
-        return C.textDim   // IDLE / unknown
+        return C.textDim   // Idle or unknown
     }
 
     Column {
@@ -33,7 +33,7 @@ Rectangle {
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
         spacing: 8
 
-        // Header: status dot + name + fleet
+        // Robot name, fleet, and status.
         RowLayout {
             width: parent.width
             spacing: 8
@@ -50,7 +50,7 @@ Rectangle {
             Text { text: card.fleet; font.pixelSize: 11; color: C.textDim }
         }
 
-        // Info grid: Status / Level / Task
+        // Robot activity details.
         Grid {
             columns: 2; columnSpacing: 12; rowSpacing: 4
             width: parent.width
@@ -70,7 +70,7 @@ Rectangle {
             }
         }
 
-        // Battery bar
+        // Current battery level.
         RowLayout {
             width: parent.width; spacing: 8
             Text { text: "Battery"; font.pixelSize: 11; color: C.textDim

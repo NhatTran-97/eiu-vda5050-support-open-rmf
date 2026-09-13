@@ -2,8 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Presentation-only analytics built from the robot/task arrays already exposed
-// to QML. No extra ROS topics or backend state are introduced here.
+// Summarize fleet metrics from data already available to QML.
 Rectangle {
     id: root
 
@@ -14,8 +13,7 @@ Rectangle {
     property string selectedRobotName: ""
     property var telemetry: ({})
 
-    // Approximate route completion for the task associated with the displayed
-    // robot. Progress is kept monotonic while RMF replans the remaining path.
+    // Estimate route progress without dropping the value when RMF replans.
     property string trackedTaskKey: ""
     property real initialDestinationDistance: 0
     property real taskDistanceRemaining: -1
@@ -23,7 +21,23 @@ Rectangle {
     property var taskProgressCache: ({})
 
 
-    readonly property real uiScale: Math.max(0.7, Math.min(1.35, width / 760))
+    // Available height for the analytics panel.
+    property real availableHeight: 1e9
+    readonly property real widthScale: Math.max(0.7, Math.min(1.35, width / 760))
+    property real uiScale: widthScale
+    implicitHeight: rootColumn.implicitHeight
+
+    // Scale the content to fit the panel height.
+    function fitScale() {
+        var need = rootColumn.implicitHeight
+        if (need <= 0)
+            return
+        var s = Math.max(0.7, Math.min(widthScale, uiScale * availableHeight / need))
+        if (Math.abs(s - uiScale) > 0.004)
+            uiScale = s
+    }
+    onWidthScaleChanged: Qt.callLater(fitScale)
+    onAvailableHeightChanged: Qt.callLater(fitScale)
     readonly property var robotNames: buildRobotNames()
     readonly property int selectedRobotIndex: robotNames.indexOf(selectedRobotName)
 
@@ -34,8 +48,7 @@ Rectangle {
     readonly property real yaw: primaryRobot ? Number(primaryRobot.yaw || 0) : 0
     readonly property real speed: primaryRobot
                                    ? Number((telemetry[primaryRobot.name] || {}).speed || 0) : 0
-    // Real odometry distance since the last reached waypoint -- resets each
-    // leg, so this is "into the current leg", not the trip total.
+    // Distance traveled in the current route leg.
     readonly property real distanceSinceLastNode: primaryRobot
                                    ? Number((telemetry[primaryRobot.name] || {}).distance_since_last_node || 0) : 0
     readonly property string operatingMode: primaryRobot
@@ -60,8 +73,7 @@ Rectangle {
                                                 || displayTaskState === "cancelled"
                                                 || displayTaskState === "failed"
     readonly property color displayTaskColor: taskStateColor(displayTaskState)
-    // Cancelled (operator choice) and Failed (real error) stay separate -- one
-    // red "Stopped" bucket would read as "errored" even for a normal cancel.
+    // Count cancelled and failed tasks separately.
     readonly property var taskStats: [
         { "label": "Completed", "value": completedCount, "barColor": C.success },
         { "label": "Underway",  "value": underwayCount,  "barColor": C.cyan },
@@ -145,8 +157,7 @@ Rectangle {
             }
         }
 
-        // The task table is newest-first. Prefer a task still assigned to this
-        // robot, then retain its latest terminal result after RMF clears task_id.
+        // Prefer the active task, then the robot's latest finished task.
         for (var j = 0; j < tasks.length; ++j) {
             if (tasks[j].robot === robot.name
                     && (tasks[j].state === "queued" || tasks[j].state === "underway"))
@@ -168,7 +179,7 @@ Rectangle {
             return C.textDim
         if (state === "queued")
             return C.warn
-        return C.cyan   // underway: just running, not a fault
+        return C.cyan   // Active task
     }
 
     function taskKey(task) {
@@ -181,8 +192,7 @@ Rectangle {
         if (!robot || !task)
             return null
 
-        // Prefer the named destination from nav_graph. It stays fixed even if
-        // RMF continuously replans or republishes robot.path.
+        // Prefer the named destination from the navigation graph.
         var destinationName = String(task.destination || "")
         for (var i = 0; i < waypoints.length; ++i) {
             if (String(waypoints[i].name || "") === destinationName) {
@@ -193,7 +203,7 @@ Rectangle {
             }
         }
 
-        // Standalone fallback when no nav_graph waypoint was provided.
+        // Use destination coordinates when no waypoint name is available.
         var route = robot.path || []
         if (route.length > 0) {
             var last = route[route.length - 1]
@@ -222,8 +232,7 @@ Rectangle {
             return
         }
 
-        // Keep one progress snapshot per robot/task. Switching the selector
-        // away and back must not restart an underway task at zero.
+        // Retain progress by robot and task when the selected robot changes.
         var key = String(robot.name || "") + "::" + taskKey(task)
         if (key !== trackedTaskKey) {
             trackedTaskKey = key
@@ -299,8 +308,10 @@ Rectangle {
     clip: true
 
     ColumnLayout {
+        id: rootColumn
         anchors.fill: parent
         spacing: 0
+        onImplicitHeightChanged: Qt.callLater(root.fitScale)
 
         Item {
             Layout.fillWidth: true
@@ -368,13 +379,14 @@ Rectangle {
             Layout.margins: 10
             spacing: 10
 
-            // ── Primary robot telemetry ──────────────────────────────────────
+            // Telemetry for the selected robot.
             Rectangle {
                 id: telemetryPanel
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredWidth: 310
                 Layout.minimumWidth: 150
+                implicitHeight: telemetryColumn.implicitHeight + 24
                 radius: 10
                 color: C.surface
                 border.color: C.border
@@ -382,6 +394,7 @@ Rectangle {
                 clip: true
 
                 ColumnLayout {
+                    id: telemetryColumn
                     anchors.fill: parent
                     anchors.margins: 12
                     spacing: 13
@@ -396,8 +409,7 @@ Rectangle {
                             font.bold: true
                             font.letterSpacing: 1.0
                         }
-                        // Selector and status badge share this row so the badge
-                        // sits level with the combo box, not the label above it.
+                        // Place the robot selector and status badge on one row.
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 8
@@ -534,8 +546,7 @@ Rectangle {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        // Bounded by the panel's own width, not just font scale --
-                        // otherwise a wide gap is what pushes the grid past the card edge.
+                        // Limit column spacing to the panel width.
                         spacing: Math.max(10, Math.min(32 * root.uiScale, telemetryPanel.width * 0.09))
 
                         Item { Layout.fillWidth: true }
@@ -646,7 +657,8 @@ Rectangle {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 84 * Math.min(1.15, root.uiScale)
+                        Layout.preferredHeight: Math.max(84 * Math.min(1.15, root.uiScale),
+                                                         taskCardColumn.implicitHeight + 14)
                         radius: 9
                         color: C.surfaceAlt
                         border.color: root.displayTask
@@ -657,6 +669,7 @@ Rectangle {
                         border.width: 1
 
                         ColumnLayout {
+                            id: taskCardColumn
                             anchors.fill: parent
                             anchors.leftMargin: 10
                             anchors.rightMargin: 10
@@ -781,22 +794,33 @@ Rectangle {
                                     elide: Text.ElideMiddle
                                 }
                             }
+
+                            Text {
+                                Layout.fillWidth: true
+                                visible: root.displayTask && !!root.displayTask.phase
+                                text: root.displayTask ? String(root.displayTask.phase || "").replace(/_/g, " ") : ""
+                                color: C.textDim
+                                font.pixelSize: 10 * root.uiScale
+                                elide: Text.ElideRight
+                            }
                         }
                     }
                 }
             }
 
-            // ── Task distribution chart ─────────────────────────────────────
+            // Task counts grouped by state.
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredWidth: 360
+                implicitHeight: distributionColumn.implicitHeight + 24
                 radius: 10
                 color: C.surface
                 border.color: C.border
                 border.width: 1
 
                 ColumnLayout {
+                    id: distributionColumn
                     anchors.fill: parent
                     anchors.margins: 12
                     spacing: 12
@@ -911,8 +935,7 @@ Rectangle {
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     spacing: 8
-                                    // A zero-count row (e.g. "Failed: 0") shouldn't compete
-                                    // for attention with rows that actually have something.
+                                    // Dim states with no tasks.
                                     opacity: modelData.value > 0 ? 1.0 : 0.45
 
                                     Text {
