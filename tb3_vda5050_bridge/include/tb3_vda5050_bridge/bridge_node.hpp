@@ -13,6 +13,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/battery_state.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
@@ -34,6 +35,7 @@
 #include <vda5050_msgs/msg/error_reference.hpp>
 
 #include "tb3_vda5050_bridge/bridge_state_machine.hpp"
+#include "tb3_vda5050_bridge/odom_distance_tracker.hpp"
 #include "tb3_vda5050_bridge/order_session.hpp"
 
 namespace tb3_vda5050_bridge {
@@ -102,6 +104,7 @@ private:
   rclcpp::Publisher<vda5050_msgs::msg::ActionState>::SharedPtr      action_state_feedback_pub_;
   rclcpp::Publisher<vda5050_msgs::msg::Error>::SharedPtr            error_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr               order_dropped_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr              distance_since_last_node_pub_;
 
   // ── Nav2 action client ──────────────────────────────────────────────────────
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
@@ -130,8 +133,8 @@ private:
   bool                  odom_at_last_amcl_pose_valid_{false};
   bool                  has_driven_since_last_amcl_pose_{false};  // whether the robot has driven since the odom snapshot above
   bool                  goal_sent_this_dispatch_{false};  // set when a goal is handed to Nav2 this dispatch cycle
-  double                distance_since_last_node_{0.0};  // distance driven since the last node_reached event
-  double                last_odom_x_{0.0}, last_odom_y_{0.0};
+  OdomDistanceTracker   odom_distance_tracker_;  // VDA5050 distanceSinceLastNode telemetry
+  double                last_odom_x_{0.0}, last_odom_y_{0.0};  // for robot_pose_valid()'s stale-but-stationary check
   bool                  last_odom_position_valid_{false};
   float                 last_battery_charge_{0.0f};  // last known-good battery reading
   bool                  last_battery_valid_{false};
@@ -169,8 +172,7 @@ private:
   void cancel_nav2_retry();
   // Fail active order with reason (reason), publish error, persist as complete.
   void fail_stuck_order(const std::string& reason);
-  // Tell the adapter order (order_id) was dropped outside the normal cancelOrder flow, so its
-  // own OrderManager clears remaining_base_nodes_/order_active_ instead of going stale.
+  // Tell the adapter order (order_id) was dropped outside the cancelOrder flow.
   void notify_order_dropped(const std::string& order_id);
   // Check if robot is already within target tolerances; if so, complete node locally without Nav2.
   bool try_complete_in_place(const NavigationTarget& target);

@@ -34,6 +34,7 @@ set(DEPS
 # ── Core modules ──────────────────────────────────────────────────────────────
 add_library(${PROJECT_NAME}_core
   src/bridge_state_machine.cpp
+  src/odom_distance_tracker.cpp
   src/order_session.cpp
 )
 
@@ -90,6 +91,12 @@ if(BUILD_TESTING)
   target_link_libraries(test_order_session ${PROJECT_NAME}_core)
   ament_target_dependencies(test_order_session vda5050_msgs)
   target_include_directories(test_order_session PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+
+  ament_add_gtest(test_odom_distance_tracker
+    test/test_odom_distance_tracker.cpp)
+  target_link_libraries(test_odom_distance_tracker ${PROJECT_NAME}_core)
+  target_include_directories(test_odom_distance_tracker PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 endif()
 

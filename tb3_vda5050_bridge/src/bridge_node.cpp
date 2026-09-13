@@ -98,6 +98,7 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options)
   action_state_feedback_pub_ = create_publisher<vda5050_msgs::msg::ActionState>(adapter_topic("action_state_feedback"), rclcpp::QoS(10));
   error_pub_ = create_publisher<vda5050_msgs::msg::Error>(adapter_topic("error"), rclcpp::QoS(10));
   order_dropped_pub_ = create_publisher<std_msgs::msg::String>(adapter_topic("order_dropped"), rclcpp::QoS(10));
+  distance_since_last_node_pub_ = create_publisher<std_msgs::msg::Float64>(adapter_topic("distance_since_last_node"), rclcpp::QoS(10));
 
   nav2_client_ = rclcpp_action::create_client<NavigateToPose>(this, nav2_action_name_);
 
@@ -122,13 +123,16 @@ void BridgeNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg)
 
   const double odom_x = msg->pose.pose.position.x;
   const double odom_y = msg->pose.pose.position.y;
-  if (last_odom_position_valid_) 
-  {
-    distance_since_last_node_ += std::hypot(odom_x - last_odom_x_, odom_y - last_odom_y_);
-  }
+  odom_distance_tracker_.update(odom_x, odom_y);
   last_odom_x_ = odom_x;
   last_odom_y_ = odom_y;
   last_odom_position_valid_ = true;
+
+  // Live progress on the current leg, so the adapter's periodic state publish
+  // reports real-time distance instead of a value frozen since the last node.
+  std_msgs::msg::Float64 dist_msg;
+  dist_msg.data = odom_distance_tracker_.current();
+  distance_since_last_node_pub_->publish(dist_msg);
 }
 
 // Receive AMCL pose (msg), update cached position and confidence, republish to adapter.
@@ -294,7 +298,7 @@ void BridgeNode::on_order(const vda5050_msgs::msg::Order::SharedPtr msg)
   goal_pending_preemption_ = previous_goal;
   order_session_.start(*msg, resume_cursor);
 
-  distance_since_last_node_ = 0.0;
+  odom_distance_tracker_.take();
   state_machine_.on_order_started();
   publish_bridge_status();
   goal_sent_this_dispatch_ = false;
@@ -341,9 +345,7 @@ void BridgeNode::on_action_cancel(const std_msgs::msg::String::SharedPtr msg)
     if (!cancelled_order_id.empty())
     {
       persist_order_state(cancelled_order_id, cancelled_cursor, true);
-      // Covers robot_local_ui, which publishes "cancel:" straight to this topic and never
-      // goes through vda5050_client_adapter's own OrderManager -- a no-op if the adapter
-      // already cleared it itself (its own cancelOrder flow does that before publishing here).
+      // robot_local_ui cancels straight through this topic, bypassing the adapter.
       notify_order_dropped(cancelled_order_id);
     }
     return;
@@ -380,11 +382,6 @@ void BridgeNode::on_action_execute(const vda5050_msgs::msg::Action::SharedPtr ms
 // Send operator's x/y/theta (from action) to AMCL for initial pose; fails while Nav2 is driving.
 void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
 {
-  // Only a live Nav2 goal blocks re-localizing -- that is the case the guard exists for, since
-  // moving the believed position mid-goal sends the robot down a path computed for elsewhere.
-  // Order-session state must NOT gate this: an order whose navigation was interrupted (process
-  // restart, Nav2 unavailable, a goal that never resolved) stays "in progress" forever with
-  // nothing driving it, and re-localizing is exactly how an operator recovers from that.
   if (current_goal_handle_) {
       RCLCPP_WARN(get_logger(),"initPosition (id=%s) rejected: robot is executing a navigation goal",
                                     action.action_id.c_str());
@@ -419,8 +416,7 @@ void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
   initial_pose_pub_->publish(pose);
   RCLCPP_INFO(get_logger(), "initPosition (id=%s): published initial pose (%.2f, %.2f, %.2f rad) to %s", action.action_id.c_str(), x, y, theta, initial_pose_topic_.c_str());
 
-  // Any order still tracked here was planned from the pose just invalidated, so it can never be
-  // resumed correctly -- drop it rather than leave it blocking the next dispatch.
+  // Any order still tracked was planned from the pose just invalidated -- drop it.
   if (order_session_.has_order()) {
     const auto dropped_order_id = order_session_.order_id();
     const auto dropped_cursor = order_session_.current_node_index();
@@ -686,8 +682,7 @@ void BridgeNode::publish_traversal_events(const std::vector<TraversalEvent>& eve
     }
     if (event.node_reached.has_value()) {
       auto node_state = *event.node_reached;
-      node_state.distance_driven = distance_since_last_node_;
-      distance_since_last_node_ = 0.0;
+      node_state.distance_driven = odom_distance_tracker_.take();
       node_reached_pub_->publish(node_state);
     }
   }
@@ -891,8 +886,7 @@ void BridgeNode::fail_stuck_order(const std::string& reason)
   notify_order_dropped(order_id);
 }
 
-// Tell the adapter order (order_id) was dropped outside the normal cancelOrder flow, so its
-// own OrderManager clears remaining_base_nodes_/order_active_ instead of going stale.
+// Tell the adapter order (order_id) was dropped outside the cancelOrder flow.
 void BridgeNode::notify_order_dropped(const std::string& order_id)
 {
   std_msgs::msg::String msg;

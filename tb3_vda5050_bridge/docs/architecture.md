@@ -57,6 +57,7 @@ Responsibilities:
 - Convert odometry/battery telemetry
 - Dispatch Nav2 goals
 - Ignore stale goal callbacks using a navigation token
+- Re-localize via `initPosition` and notify the adapter when an order is dropped outside `cancelOrder`
 
 ### `OrderSession`
 
@@ -156,6 +157,14 @@ through Nav2. This avoids a pointless rotate-in-place when a hold-in-place order
 and end coincide. If the position is in tolerance but the heading isn't, it falls through
 to Nav2 instead, which issues a pure in-place rotation (goal position == current position).
 
+### Real driven distance (`OdomDistanceTracker`)
+
+Accumulates the actual path length from consecutive `/odom` positions (not
+straight-line distance to the target), reset each time a node is reached.
+Stamped onto `node_reached`'s `distance_driven` field and also streamed
+live via `~/distance_since_last_node` between nodes, so a curved or
+obstacle-avoiding leg reports its real length instead of undercounting it.
+
 ---
 
 ## 5. Navigation Lifecycle
@@ -229,6 +238,19 @@ Instead, `on_order` for a new order:
 The explicit `cancel:` instant action (a true cancel with no replacement) still calls
 `cancel_navigation()` to stop the robot.
 
+### Re-localization (`initPosition`)
+
+`initPosition` (dispatched as an instant action) publishes the given
+x/y/theta to `initial_pose_topic` (AMCL) so an operator can recover a robot
+that was moved by hand or has drifted. Rejected outright while a Nav2 goal
+is active — the guard is the live goal, not order-session state, since an
+order stuck for unrelated reasons (process restart, Nav2 unavailable) has
+nothing driving it and re-localizing is exactly how an operator recovers
+from that too. Any order still tracked at the moment of a successful
+re-localization is dropped: it was planned from the pose that just got
+overwritten, so it's cleared and reported via `order_dropped` rather than
+left to run from a start point that's no longer real.
+
 ### Nav2 not ready yet (startup order independence)
 
 `send_navigation_goal` checks `action_server_is_ready()` (non-blocking). If Nav2 is not up
@@ -268,6 +290,8 @@ Default: `/vda5050_client_adapter`
 | `${adapter_ns}/edge_completed` | `vda5050_msgs/EdgeState` | Edge completion |
 | `${adapter_ns}/action_state_feedback` | `vda5050_msgs/ActionState` | Action ack / progress |
 | `${adapter_ns}/error` | `vda5050_msgs/Error` | Navigation or bridge errors |
+| `${adapter_ns}/order_dropped` | `std_msgs/String` | `orderId` this bridge gave up on outside `cancelOrder` (stuck timeout, rejected action, `initPosition` invalidating the route) — lets the adapter clear its own tracking instead of staying desynced |
+| `${adapter_ns}/distance_since_last_node` | `std_msgs/Float64` | Real driven distance since the last reached node, streamed live from odometry (not just at arrival) |
 
 ---
 
