@@ -298,14 +298,11 @@ Default: `/vda5050_client_adapter`
 
 ## 7b. Manual Override Detection (`operating_mode`)
 
-The robot's `twist_mux` arbitrates between joystick, keyboard, and Nav2
-(`navigation`) velocity sources by priority (joystick highest, navigation
-lowest — see `twist_mux_topics.yaml`). It already reports which one is
-currently winning via its own `/diagnostics` entry ("current priority").
-The bridge reads that directly instead of re-deriving it from raw `/joy`
-activity: if the priority currently winning is higher than `navigation`'s
-own declared priority, a human has taken over, and `operating_mode` is
-published as `MANUAL`; otherwise `AUTOMATIC`. Published only on change.
+`twist_mux` arbitrates joystick/keyboard/Nav2 by priority and reports each
+source's masked/unmasked state via `/diagnostics`. The bridge treats any
+non-`navigation` source reporting `unmasked` as a human takeover, publishing
+`operating_mode` as `MANUAL` (else `AUTOMATIC`), only on change. (Its "current
+priority" field tracks locks, not this arbitration -- unusable here.)
 
 `AgvPosition`/`Velocity` stay accurate during a manual override regardless
 (both come from real odometry/AMCL, not from what Nav2 commanded) — this

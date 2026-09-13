@@ -257,33 +257,33 @@ void BridgeNode::on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg)
   battery_state_pub_->publish(batt);
 }
 
-// twist_mux's own "current priority" tells us who actually won arbitration; joystick/keyboard
-// outrank navigation (see twist_mux_topics.yaml), so current > navigation's own priority means a human has taken over.
+// A non-navigation velocity topic reporting "unmasked" means twist_mux is currently
+// forwarding it instead of navigation -- i.e. a human has taken over. ("current priority"
+// in this same diagnostic tracks the lock subsystem, not velocity-topic arbitration --
+// it stays 0 regardless, so it can't be used for this.)
 void BridgeNode::on_diagnostics(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg)
 {
+  static const std::string prefix = "velocity topics.";
   for (const auto& status : msg->status) {
     if (status.name != "twist_mux: Twist mux status") continue;
 
-    std::optional<int> current_priority, nav_priority;
+    bool override_active = false;
     for (const auto& kv : status.values) {
-      if (kv.key == "current priority") {
-        current_priority = std::atoi(kv.value.c_str());
-      } else if (kv.key == "velocity topics.navigation") {
-        const auto hash_pos = kv.value.rfind('#');
-        if (hash_pos != std::string::npos) nav_priority = std::atoi(kv.value.c_str() + hash_pos + 1);
+      if (kv.key.rfind(prefix, 0) != 0 || kv.key == prefix + "navigation") continue;
+      if (kv.value.find("unmasked") != std::string::npos) {
+        override_active = true;
+        break;
       }
     }
-    if (!current_priority || !nav_priority) return;
 
-    const std::string mode = (*current_priority > *nav_priority) ? "MANUAL" : "AUTOMATIC";
+    const std::string mode = override_active ? "MANUAL" : "AUTOMATIC";
     if (mode == last_operating_mode_) return;
     last_operating_mode_ = mode;
 
     std_msgs::msg::String out;
     out.data = mode;
     operating_mode_pub_->publish(out);
-    RCLCPP_INFO(get_logger(), "Operating mode -> %s (twist_mux priority %d, navigation is %d)",
-                mode.c_str(), *current_priority, *nav_priority);
+    RCLCPP_INFO(get_logger(), "Operating mode -> %s", mode.c_str());
     return;
   }
 }
