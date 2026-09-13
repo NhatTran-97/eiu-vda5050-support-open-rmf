@@ -83,8 +83,11 @@ install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY config maps launch DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS
         scripts/dispatch_patrol.py
+        scripts/dispatch_delivery.py
         scripts/cancel_task.py
         scripts/mock_mqtt_robot.py
+        scripts/mock_dispenser.py
+        scripts/mock_ingestor.py
         scripts/test_dispatch_e2e.py
         scripts/test_pause_resume.py
         DESTINATION lib/${PROJECT_NAME})

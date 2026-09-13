@@ -5,7 +5,6 @@ FROM ros:jazzy-ros-base
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Open-RMF (fleet adapter + core nodes) and build/runtime deps. 
-# nav2-msgs isn't pulled in by the RMF packages above but is needed to build tb3_vda5050_bridge (also compiled/tested here) via nav2_msgs::SpeedLimit.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-jazzy-rmf-fleet-adapter \

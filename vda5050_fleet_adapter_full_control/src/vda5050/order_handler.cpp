@@ -22,8 +22,7 @@ nlohmann::json build_route_order(
             "must generate it before calling, so it can track the same id " "make_order() ends up sending.");
     }
 
-    // Clamped, not trusted: a caller-supplied count past route.size()
-    // would otherwise silently release nothing.
+    // Clamped, not trusted: a caller-supplied count past route.size() would otherwise silently release nothing.
     const std::size_t release_edges = std::min(released_count.value_or(route.size()), route.size());
 
     nlohmann::json nodes = nlohmann::json::array();

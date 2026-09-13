@@ -247,6 +247,9 @@ private:
     void warn_if_order_oversized(RobotContext &ctx, std::size_t node_count,
                                  std::size_t edge_count) const;
 
+    // Reports an order mapId that disagrees with the AGV's own last-reported mapId. Caller must hold _mutex.
+    void warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_map_id) const;
+
     // Reports changes in cached operational state. Caller must hold _mutex.
     void report_state_changes(RobotContext &ctx);
 

@@ -178,6 +178,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
 
         // The order contains one base node and one edge per route point.
         warn_if_order_oversized(ctx, route.size() + 1, route.size());
+        warn_if_map_mismatch(ctx, map_id);
         manufacturer = ctx.manufacturer;
         serial = ctx.serial;
         interface_name = ctx.interface_name;
@@ -678,6 +679,22 @@ void Connector::warn_if_order_oversized(RobotContext &ctx, std::size_t node_coun
         }
     }
     ctx.last_order_time = std::chrono::steady_clock::now();
+}
+
+void Connector::warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_map_id) const
+{
+    if (order_map_id.empty() || !ctx.last_state.has_value() || ctx.last_state->map_id.empty())
+    {
+        return;
+    }
+    if (ctx.last_state->map_id != order_map_id)
+    {
+        RCLCPP_WARN(_logger,
+                    "[VDA5050] %s: order mapId '%s' does not match the AGV's own "
+                    "reported mapId '%s' -- RMF's nav graph and the robot's map "
+                    "config may have drifted apart",
+                    ctx.name.c_str(), order_map_id.c_str(), ctx.last_state->map_id.c_str());
+    }
 }
 
 std::string Connector::blocking_type_for(const RobotContext &ctx,
