@@ -79,9 +79,7 @@ public:
     static std::string derive_node_id(const std::string &name, std::optional<std::size_t> graph_index, double x, double y);
 
 private:
-    // Progress state for the active RMF path. May be indexed from RMF
-    // waypoints[1], not [0] -- see follow_new_path(); waypoint_offset
-    // records which, so ArrivalEstimator's path_index can add it back.
+    // Progress state for the active RMF path. May be indexed from RMF waypoints[1], not [0] -- see follow_new_path(); waypoint_offset records which, so ArrivalEstimator's path_index can add it back.
     struct ActivePath
     {
         // VDA5050 orderId associated with this path.
@@ -91,16 +89,11 @@ private:
         // Planned arrival times used for schedule diagnostics. The current VDA5050 order does not encode waypoint hold times.
         std::vector<rmf_traffic::Time> times;
         std::size_t next_index = 0;
-        // 0 or 1: how many leading RMF waypoints were dropped as redundant
-        // with the AGV's current pose before this path was built.
+        // 0 or 1: how many leading RMF waypoints were dropped as redundant with the AGV's current pose before this path was built.
         std::size_t waypoint_offset = 0;
-        // How many leading route points are released, as last published --
-        // meaningful only when honor_waypoint_timing() is on. Mirrors
-        // Connector::RobotContext::current_released_count.
+        // How many leading route points are released, as last published -- meaningful only when honor_waypoint_timing() is on. Mirrors Connector::RobotContext::current_released_count.
         std::size_t released_count = 0;
-        // Set once a stuck-order timeout has already triggered a replan
-        // for this path, so a stuck order is reported and replanned once,
-        // not every update() tick until it resolves.
+        // Set once a stuck-order timeout has already triggered a replan for this path, so a stuck order is reported and replanned once, not every update() tick until it resolves.
         bool replan_requested = false;
         ArrivalEstimator arrival_estimator;
         RequestCompleted finished;

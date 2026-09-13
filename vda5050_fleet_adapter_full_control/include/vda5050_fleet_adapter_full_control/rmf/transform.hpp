@@ -6,8 +6,7 @@
 
 namespace vda5050_fleet_adapter_full_control::rmf {
 
-// 2D affine transform between the RMF nav-graph frame and a robot map
-// frame: robot = scale * R(rotation) * rmf + translation.
+// 2D affine transform between the RMF nav-graph frame and a robot map frame: robot = scale * R(rotation) * rmf + translation.
 // Configure per robot in config.yaml. Identity by default (frames equal).
 class Transform
 {

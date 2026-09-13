@@ -172,8 +172,7 @@ private:
         std::string manufacturer;
         std::string serial;
         std::string interface_name;
-        // "/manufacturer/serial/", precomputed once so match_robot() doesn't
-        // rebuild it per candidate on every incoming MQTT message.
+        // "/manufacturer/serial/", precomputed once so match_robot() doesn't rebuild it per candidate on every incoming MQTT message.
         std::string mqtt_needle;
         Transform transform;
         // VDA5050 header counters are maintained independently per topic.
@@ -187,17 +186,14 @@ private:
         std::string target_node_id;
         // Actions associated with the tracked order.
         std::vector<std::string> order_action_ids;
-        // VDA5050 orderUpdateId of current_order_id: 0 for a fresh order,
-        // incremented by each release_more() extending it.
+        // VDA5050 orderUpdateId of current_order_id: 0 for a fresh order, incremented by each release_more() extending it.
         int order_update_id = 0;
-        // Route/base/map last dispatched, kept so release_more() can rebuild
-        // with a larger released portion. Robot frame, not RMF's.
+        // Route/base/map last dispatched, kept so release_more() can rebuild with a larger released portion. Robot frame, not RMF's.
         std::vector<vda5050::RouteWaypoint> current_route;
         std::string current_base_id;
         vda5050::RobotPose current_base;
         std::string current_map_id;
-        // How many of current_route's points are released in the order as
-        // last published (by navigate_route() or release_more()).
+        // How many of current_route's points are released in the order as last published (by navigate_route() or release_more()).
         std::size_t current_released_count = 0;
         std::optional<vda5050::ParsedState> last_state;
         // Visualization data is used only to refine pose and velocity.
