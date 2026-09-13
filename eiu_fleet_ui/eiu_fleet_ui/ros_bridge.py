@@ -24,6 +24,7 @@ DISPATCH_STATES_TOPIC = "/dispatch_states"
 LANE_STATES_TOPIC   = "/lane_states"
 NEGOTIATION_STATUSES_TOPIC = "/rmf_traffic/negotiation_statuses"
 OFFLINE_AFTER_SEC   = 5.0
+DISPATCH_TIMEOUT_SEC = 15.0   # no dispatch_task_response by then -> mark failed
 
 # Persisted here so a UI restart doesn't lose track of a task the robot is
 # still running (see _on_task_response's "not in local list" handling).
@@ -89,6 +90,7 @@ class RosBridge(QObject):
     tasksChanged     = Signal()
     pathChanged      = Signal()
     trafficChanged   = Signal()
+    dispatchResult   = Signal(bool, str)   # dispatch/cancel outcome, for dialogs to show
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -126,6 +128,7 @@ class RosBridge(QObject):
         self._watchdog = QTimer(self)
         self._watchdog.setInterval(2000)
         self._watchdog.timeout.connect(self._check_online)
+        self._watchdog.timeout.connect(self._check_dispatch_timeouts)
 
     def set_waypoints(self, wp_list: list):
         """Receive the waypoint list from MapProvider, for use by _nearest_wp_name."""
@@ -398,6 +401,27 @@ class RosBridge(QObject):
             self._rmf_online = False
             self.rmfOnlineChanged.emit()
 
+    def _check_dispatch_timeouts(self):
+        """A queued task with no rmf_id after DISPATCH_TIMEOUT_SEC never got
+        a dispatch_task_response -- the dispatcher is down, not just slow.
+        """
+        now = time.monotonic()
+        updated = False
+        with self._task_lock:
+            for task in self._tasks:
+                if task.get("state") != "queued" or task.get("rmf_id"):
+                    continue
+                dispatched_at = task.get("_dispatched_at")
+                if dispatched_at is None or (now - dispatched_at) <= DISPATCH_TIMEOUT_SEC:
+                    continue
+                task["state"] = "failed"
+                task["error"] = "No response from dispatcher"
+                if task.get("end", "—") == "—":
+                    task["end"] = datetime.datetime.now().strftime("%I:%M:%S %p")
+                updated = True
+            if updated:
+                self._publish_tasks()
+
     def _on_lane_states(self, msg):
         if self._fleet_name and msg.fleet_name != self._fleet_name:
             return
@@ -654,6 +678,7 @@ class RosBridge(QObject):
     def _dispatch(self, category: str, place: str, loops: int, robot: str):
         if not self._ok or self._task_pub is None:
             print("[ROS] dispatch skipped — ROS not ready yet")
+            self.dispatchResult.emit(False, "ROS not connected — dispatch not sent")
             return
 
         import uuid
@@ -699,6 +724,7 @@ class RosBridge(QObject):
             "state":       "queued",
             "rounds":           int(loops),
             "rounds_remaining": int(loops),
+            "_dispatched_at": time.monotonic(),   # for _check_dispatch_timeouts
         }
         with self._task_lock:
             self._tasks.insert(0, rec)
@@ -707,24 +733,29 @@ class RosBridge(QObject):
 
         self._planned_dest = place
         self.pathChanged.emit()
+        self.dispatchResult.emit(True, "Dispatched")
 
     @Slot(str)
     def cancel_task(self, rmf_id: str):
         if not rmf_id:
             return
-        if self._ok and self._task_pub is not None:
-            import uuid
-            req_id = "eiu-cancel-" + uuid.uuid4().hex[:8]
-            request_json = json.dumps({
-                "type":      "cancel_task_request",
-                "task_id":   rmf_id,
-                "requester": "eiu_fleet_ui",
-                "labels":    [],
-            })
-            self._command_queue.put((req_id, request_json))
-            print(f"[ROS] cancel_task queued → {rmf_id}")
+        if not self._ok or self._task_pub is None:
+            self.dispatchResult.emit(False, "ROS not connected — cancel not sent")
+            return
 
-        # Update local state immediately, without waiting for dispatcher confirmation
+        import uuid
+        req_id = "eiu-cancel-" + uuid.uuid4().hex[:8]
+        request_json = json.dumps({
+            "type":      "cancel_task_request",
+            "task_id":   rmf_id,
+            "requester": "eiu_fleet_ui",
+            "labels":    [],
+        })
+        self._command_queue.put((req_id, request_json))
+        print(f"[ROS] cancel_task queued → {rmf_id}")
+
+        # Marked immediately since the dispatcher rarely confirms a cancel on
+        # its own (same gap as task completion -- see _mark_task_completed).
         with self._task_lock:
             for task in self._tasks:
                 if task.get("rmf_id") == rmf_id and task["state"] in ("queued", "underway"):
@@ -733,6 +764,7 @@ class RosBridge(QObject):
                         task["end"] = datetime.datetime.now().strftime("%I:%M:%S %p")
                     break
             self._publish_tasks()
+        self.dispatchResult.emit(True, "Cancelled")
 
     # ── QML Properties ─────────────────────────────────────────────────────────
 

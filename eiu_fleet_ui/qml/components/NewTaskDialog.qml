@@ -8,6 +8,15 @@ Dialog {
     id: dlg
 
     property var places: []      // list of waypoint names (from nav_graph)
+    property string errorMessage: ""
+
+    Connections {
+        target: ros
+        function onDispatchResult(ok, message) {
+            if (ok) { dlg.errorMessage = ""; dlg.close() }
+            else    { dlg.errorMessage = message }
+        }
+    }
 
     // Remembers the last loop count across UI restarts -- everything else in
     // this dialog (category/place) is meant to be picked fresh each time.
@@ -121,6 +130,16 @@ Dialog {
             Item { Layout.fillWidth: true }
         }
 
+        Text {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            visible: dlg.errorMessage !== ""
+            text: dlg.errorMessage
+            color: C.err
+            font.pixelSize: 11
+            wrapMode: Text.WordWrap
+        }
+
         // ── Buttons ──
         RowLayout {
             Layout.fillWidth: true
@@ -160,8 +179,8 @@ Dialog {
                           : (submitBtn.down ? C.accentDark : C.accent)
                 }
                 onClicked: {
+                    dlg.errorMessage = ""
                     ros.dispatch(catCombo.currentText, placeCombo.currentText, loopsSpin.value)
-                    dlg.close()
                 }
             }
         }

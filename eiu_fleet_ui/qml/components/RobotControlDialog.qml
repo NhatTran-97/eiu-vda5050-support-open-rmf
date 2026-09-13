@@ -138,6 +138,15 @@ Dialog {
         }
     }
 
+    Connections {
+        target: ros
+        function onDispatchResult(ok, message) {
+            dlg.lastAction = "go_to"
+            dlg.lastOk = ok
+            dlg.lastMessage = message
+        }
+    }
+
     onOpened: {
         lastAction = ""; lastMessage = ""
         speedField.text = currentSpeedLimit > 0 ? currentSpeedLimit.toFixed(2) : ""
