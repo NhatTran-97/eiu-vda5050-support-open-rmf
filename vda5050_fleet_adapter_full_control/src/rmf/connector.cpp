@@ -211,8 +211,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
             // Track completion against the final route node.
             ctx.target_node_id = route.back().node_id;
             ctx.order_action_ids.clear();
-            // This is a fresh orderId, so its own update sequence restarts;
-            // kept alongside the route so release_more() can extend it.
+            // A fresh orderId restarts its own update sequence.
             ctx.order_update_id = 0;
             ctx.current_route = waypoints;
             ctx.current_base_id = base_id;
@@ -252,9 +251,7 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
         if (ctx.current_order_id.empty() || ctx.current_route.empty() ||
             clamped <= ctx.current_released_count)
         {
-            // Nothing to extend, or release doesn't grow past what's
-            // already released -- re-publishing an identical order only
-            // risks minOrderInterval in warn_if_order_oversized().
+            // Nothing to extend, or no growth past what's already released.
             return CommandStatus::transport_failed;
         }
 
@@ -363,11 +360,8 @@ CommandStatus Connector::stop(const std::string &name)
         }
         RobotContext &ctx = *it->second;
 
-        msg = vda5050::build_cancel_order(ctx.next_instant_actions_header(),
-                                          ctx.manufacturer, ctx.serial,
-                                          blocking_type_for(ctx, "cancelOrder", "HARD"));
-        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
-                               vda5050::TOPIC_INSTANT_ACTIONS);
+        msg = vda5050::build_cancel_order(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, blocking_type_for(ctx, "cancelOrder", "HARD"));
+        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
     }
 
     const CommandStatus status = publish_raw(topic, msg.dump());
@@ -417,10 +411,7 @@ std::string Connector::init_position(const std::string &name, double x, double y
             {"mapId", map_id},
         };
 
-        request = vda5050::build_instant_action(ctx.next_instant_actions_header(),
-                                                ctx.manufacturer, ctx.serial,
-                                                "initPosition", params,
-                                                blocking_type_for(ctx, "initPosition", "NONE"));
+        request = vda5050::build_instant_action(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, "initPosition", params, blocking_type_for(ctx, "initPosition", "NONE"));
         topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
 
         if (!ctx.current_order_id.empty())
@@ -596,9 +587,7 @@ void Connector::warn_if_unroutable(const RobotContext &ctx, const std::string &d
     }
 }
 
-void Connector::warn_if_action_conflicts(const RobotContext &ctx,
-                                         const std::string &action_type,
-                                         const std::string &blocking_type) const
+void Connector::warn_if_action_conflicts(const RobotContext &ctx,  const std::string &action_type, const std::string &blocking_type) const
 {
     if (!ctx.last_state.has_value())
     {
@@ -777,8 +766,7 @@ void Connector::report_state_changes(RobotContext &ctx)
     }
 
     // Report changes in safety state.
-    const std::string safety_key =
-        s.safety_state.e_stop + (s.safety_state.field_violation ? "|field" : "");
+    const std::string safety_key = s.safety_state.e_stop + (s.safety_state.field_violation ? "|field" : "");
     if (safety_key != ctx.last_safety_key)
     {
         if (s.safety_state.triggered())
@@ -817,9 +805,7 @@ void Connector::report_state_changes(RobotContext &ctx)
     {
         if (s.new_base_request)
         {
-            // Purely diagnostic -- release is driven by Plan::Waypoint::
-            // time() (see honor_waypoint_timing()), never by this request,
-            // or the AGV could run ahead of other robots' itineraries.
+            // Purely diagnostic -- release is driven by Plan::Waypoint::time() (see honor_waypoint_timing()), never by this request.
             const std::size_t total = ctx.current_route.size();
             if (ctx.current_released_count >= total)
             {
@@ -863,13 +849,11 @@ void Connector::report_state_changes(RobotContext &ctx)
     std::string loads_key;
     for (const auto &l : s.loads)
     {
-        loads_key += l.value("loadId", std::string{"?"}) + "(" +
-                     l.value("loadType", std::string{"?"}) + ");";
+        loads_key += l.value("loadId", std::string{"?"}) + "(" + l.value("loadType", std::string{"?"}) + ");";
     }
     if (loads_key != ctx.last_loads_key)
     {
-        RCLCPP_INFO(_logger, "[VDA5050] %s loads: %s", ctx.name.c_str(),
-                    loads_key.empty() ? "(empty)" : loads_key.c_str());
+        RCLCPP_INFO(_logger, "[VDA5050] %s loads: %s", ctx.name.c_str(),loads_key.empty() ? "(empty)" : loads_key.c_str());
         ctx.last_loads_key = loads_key;
     }
 
@@ -877,8 +861,7 @@ void Connector::report_state_changes(RobotContext &ctx)
     std::string maps_key;
     for (const auto &m : s.maps)
     {
-        maps_key += m.value("mapId", std::string{"?"}) + ":" +
-                    m.value("mapStatus", std::string{"?"}) + ";";
+        maps_key += m.value("mapId", std::string{"?"}) + ":" + m.value("mapStatus", std::string{"?"}) + ";";
     }
     if (maps_key != ctx.last_maps_key)
     {
@@ -913,8 +896,7 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
     auto ends_with = [&](const char *leaf)
     {
         const std::string s = leaf;
-        return topic.size() >= s.size() &&
-               topic.compare(topic.size() - s.size(), s.size(), s) == 0;
+        return topic.size() >= s.size() && topic.compare(topic.size() - s.size(), s.size(), s) == 0;
     };
 
     if (ends_with(vda5050::TOPIC_STATE))
@@ -962,8 +944,7 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
             }
             else if (ctx->connected == true)
             {
-                RCLCPP_WARN(_logger, "[VDA5050] %s %s", ctx->name.c_str(),
-                            conn.empty() ? "OFFLINE" : conn.c_str());
+                RCLCPP_WARN(_logger, "[VDA5050] %s %s", ctx->name.c_str(), conn.empty() ? "OFFLINE" : conn.c_str());
             }
         }
         ctx->connected = online;
@@ -973,8 +954,7 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
         vda5050::ParsedFactsheet fs(raw);
         if (!fs.has_content())
         {
-            RCLCPP_WARN(_logger, "[VDA5050] %s: factsheet carried nothing usable, ignoring",
-                        ctx->name.c_str());
+            RCLCPP_WARN(_logger, "[VDA5050] %s: factsheet carried nothing usable, ignoring", ctx->name.c_str());
             return;
         }
 
@@ -995,10 +975,8 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
         }
 
         RCLCPP_INFO(_logger,
-                    "[VDA5050] %s factsheet: series '%s', %s/%s, speedMax %.2f, actions: %s",
-                    ctx->name.c_str(), fs.series_name.c_str(), fs.agv_kinematic.c_str(),
-                    fs.agv_class.c_str(), fs.speed_max.value_or(0.0),
-                    actions.empty() ? "(none declared)" : actions.c_str());
+                    "[VDA5050] %s factsheet: series '%s', %s/%s, speedMax %.2f, actions: %s", ctx->name.c_str(), fs.series_name.c_str(), fs.agv_kinematic.c_str(),
+                    fs.agv_class.c_str(), fs.speed_max.value_or(0.0), actions.empty() ? "(none declared)" : actions.c_str());
 
         ctx->factsheet = std::move(fs);
     }
@@ -1039,8 +1017,7 @@ std::optional<RobotData> Connector::get_data(const std::string &name)
     data.localization_score = s.localization_score;
 
     // Prefer fresher visualization pose and velocity over state telemetry.
-    if (ctx.last_visualization.has_value() &&
-        ctx.last_visualization_time > ctx.last_state_time)
+    if (ctx.last_visualization.has_value() && ctx.last_visualization_time > ctx.last_state_time)
     {
         const auto &v = *ctx.last_visualization;
         // Do not combine telemetry from different map frames.
@@ -1113,8 +1090,7 @@ bool Connector::is_command_completed(const std::string &name)
     }
 
     // Report a final-node mismatch after the order has drained.
-    if (s.node_states.empty() && s.edge_states.empty() &&
-        !ctx.target_node_id.empty() && s.last_node_id != ctx.target_node_id)
+    if (s.node_states.empty() && s.edge_states.empty() && !ctx.target_node_id.empty() && s.last_node_id != ctx.target_node_id)
     {
         const std::string key = ctx.current_order_id + "|" + s.last_node_id;
         if (ctx.last_incomplete_key != key)
@@ -1124,8 +1100,7 @@ bool Connector::is_command_completed(const std::string &name)
                                 "while the order targeted '%s'. Navigation cannot complete "
                                 "until the robot echoes the nodeId this adapter sends.",
                                 name.c_str(), ctx.current_order_id.c_str(),
-                                s.last_node_id.empty() ? "(empty)" : s.last_node_id.c_str(),
-                                ctx.target_node_id.c_str());
+                                s.last_node_id.empty() ? "(empty)" : s.last_node_id.c_str(), ctx.target_node_id.c_str());
         }
     }
 
@@ -1147,15 +1122,13 @@ bool Connector::is_order_stuck(const std::string &name, double timeout_s) const
         return false;
     }
 
-    const std::string reported_order_id =
-        ctx.last_state.has_value() ? ctx.last_state->order_id : std::string{};
+    const std::string reported_order_id = ctx.last_state.has_value() ? ctx.last_state->order_id : std::string{};
     if (reported_order_id == ctx.current_order_id)
     {
         return false;
     }
 
-    const double since_dispatch = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - ctx.last_order_time).count();
+    const double since_dispatch = std::chrono::duration<double>(std::chrono::steady_clock::now() - ctx.last_order_time).count();
     return since_dispatch > timeout_s;
 }
 
@@ -1191,8 +1164,7 @@ std::optional<std::pair<std::string, std::string>> Connector::get_action_result(
     {
         if (a.value("actionId", std::string{}) == action_id)
         {
-            return std::make_pair(a.value("actionStatus", std::string{}),
-                                  a.value("resultDescription", std::string{}));
+            return std::make_pair(a.value("actionStatus", std::string{}), a.value("resultDescription", std::string{}));
         }
     }
     return std::nullopt;
@@ -1231,8 +1203,7 @@ bool Connector::is_online(const std::string &name, double state_timeout_s)
     {
         return false;
     }
-    const auto age = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - ctx.last_state_time).count();
+    const auto age = std::chrono::duration<double>( std::chrono::steady_clock::now() - ctx.last_state_time).count();
     return age <= state_timeout_s;
 }
 

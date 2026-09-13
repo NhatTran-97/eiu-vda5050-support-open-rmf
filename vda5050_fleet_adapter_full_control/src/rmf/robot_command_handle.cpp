@@ -42,6 +42,20 @@ std::size_t releasable_count(const std::vector<rmf_traffic::Time> &times, rmf_tr
     }
     return released;
 }
+
+// Whether the graph has a lane directly from waypoint `from` to `to`.
+bool has_lane(const rmf_traffic::agv::Graph &graph, std::size_t from, std::size_t to)
+{
+    for (std::size_t i = 0; i < graph.num_lanes(); ++i)
+    {
+        const auto &lane = graph.get_lane(i);
+        if (lane.entry().waypoint_index() == from && lane.exit().waypoint_index() == to)
+        {
+            return true;
+        }
+    }
+    return false;
+}
 }  // namespace
 
 VdaRobotCommandHandle::VdaRobotCommandHandle(
@@ -219,6 +233,13 @@ void VdaRobotCommandHandle::follow_new_path(
                             wp_map.c_str());
             }
             map_name = wp_map;
+
+            if (i > start_index && waypoints[i - 1].graph_index().has_value() &&
+                !has_lane(*_graph, *waypoints[i - 1].graph_index(), *wp.graph_index()))
+            {
+                RCLCPP_WARN(_logger, "[%s] no graph lane from '%s' to '%s' in this order",
+                            _name.c_str(), active.node_ids.back().c_str(), node_id.c_str());
+            }
         }
 
         route.push_back(
