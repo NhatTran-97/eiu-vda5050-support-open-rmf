@@ -10,6 +10,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 
 // ROS2 standard messages
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/battery_state.hpp>
 #include <std_msgs/msg/bool.hpp>
@@ -89,6 +90,8 @@ private:
   rclcpp::Subscription<vda5050_msgs::msg::Order>::SharedPtr         order_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr            action_cancel_sub_;
   rclcpp::Subscription<vda5050_msgs::msg::Action>::SharedPtr        action_execute_sub_;
+  // Global topic (diagnostic_updater), not adapter_topic()-namespaced.
+  rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_sub_;
 
   // ── Publishers (Bridge → Adapter) ──────────────────────────────────────────
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initial_pose_pub_;
@@ -105,6 +108,8 @@ private:
   rclcpp::Publisher<vda5050_msgs::msg::Error>::SharedPtr            error_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr               order_dropped_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr              distance_since_last_node_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr               operating_mode_pub_;
+  std::string last_operating_mode_{"AUTOMATIC"};  // gates operating_mode_pub_ to changes only
 
   // ── Nav2 action client ──────────────────────────────────────────────────────
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
@@ -146,6 +151,8 @@ private:
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   // Handle battery state (msg): normalize reading (handle both TB3 0-100 and ROS 0-1 formats), publish to adapter.
   void on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg);
+  // Read twist_mux's own diagnostics (msg) to detect a joystick/keyboard override; publish operating_mode on change.
+  void on_diagnostics(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg);
   // Handle new/updated order (msg): start order or merge update, reject if stale, persist progress, dispatch work.
   void on_order(const vda5050_msgs::msg::Order::SharedPtr msg);
   // Parse action_cancel (msg) payload ("pause:", "resume:", "cancel:") and dispatch accordingly.

@@ -285,6 +285,7 @@ Default: `/vda5050_client_adapter`
 | `${adapter_ns}/battery_state` | `vda5050_msgs/BatteryState` | Battery feedback |
 | `${adapter_ns}/driving` | `std_msgs/Bool` | Derived from state machine |
 | `${adapter_ns}/paused` | `std_msgs/Bool` | Derived from state machine |
+| `${adapter_ns}/operating_mode` | `std_msgs/String` | `AUTOMATIC` or `MANUAL`, from `twist_mux`'s own arbitration (see below) |
 | `${adapter_ns}/node_reached` | `vda5050_msgs/NodeState` | Traversed node |
 | `${adapter_ns}/edge_entered` | `vda5050_msgs/EdgeState` | Edge activation |
 | `${adapter_ns}/edge_completed` | `vda5050_msgs/EdgeState` | Edge completion |
@@ -292,6 +293,25 @@ Default: `/vda5050_client_adapter`
 | `${adapter_ns}/error` | `vda5050_msgs/Error` | Navigation or bridge errors |
 | `${adapter_ns}/order_dropped` | `std_msgs/String` | `orderId` this bridge gave up on outside `cancelOrder` (stuck timeout, rejected action, `initPosition` invalidating the route) — lets the adapter clear its own tracking instead of staying desynced |
 | `${adapter_ns}/distance_since_last_node` | `std_msgs/Float64` | Real driven distance since the last reached node, streamed live from odometry (not just at arrival) |
+
+---
+
+## 7b. Manual Override Detection (`operating_mode`)
+
+The robot's `twist_mux` arbitrates between joystick, keyboard, and Nav2
+(`navigation`) velocity sources by priority (joystick highest, navigation
+lowest — see `twist_mux_topics.yaml`). It already reports which one is
+currently winning via its own `/diagnostics` entry ("current priority").
+The bridge reads that directly instead of re-deriving it from raw `/joy`
+activity: if the priority currently winning is higher than `navigation`'s
+own declared priority, a human has taken over, and `operating_mode` is
+published as `MANUAL`; otherwise `AUTOMATIC`. Published only on change.
+
+`AgvPosition`/`Velocity` stay accurate during a manual override regardless
+(both come from real odometry/AMCL, not from what Nav2 commanded) — this
+only adds the missing signal that Master Control needs to know a human,
+not the current order, is driving right now. `SEMIAUTOMATIC` / `SERVICE` /
+`TEACHIN` have no corresponding real state on this robot and are never used.
 
 ---
 

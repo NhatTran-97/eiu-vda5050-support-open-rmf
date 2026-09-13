@@ -9,6 +9,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -21,6 +22,7 @@ find_package(vda5050_msgs REQUIRED)
 set(DEPS
   rclcpp
   rclcpp_action
+  diagnostic_msgs
   nav2_msgs
   nav_msgs
   sensor_msgs

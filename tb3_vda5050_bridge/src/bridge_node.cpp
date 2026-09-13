@@ -83,6 +83,8 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options)
   action_execute_sub_ = create_subscription<vda5050_msgs::msg::Action>(adapter_topic("action_execute"), rclcpp::QoS(10),
                                                                       std::bind(&BridgeNode::on_action_execute, this, _1));
 
+  diagnostics_sub_ = create_subscription<diagnostic_msgs::msg::DiagnosticArray>("/diagnostics", rclcpp::QoS(10),std::bind(&BridgeNode::on_diagnostics, this, _1));
+
   initial_pose_pub_ = create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(initial_pose_topic_, rclcpp::QoS(10));
   speed_limit_pub_ = create_publisher<nav2_msgs::msg::SpeedLimit>(speed_limit_topic_, rclcpp::QoS(10));
 
@@ -99,6 +101,7 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options)
   error_pub_ = create_publisher<vda5050_msgs::msg::Error>(adapter_topic("error"), rclcpp::QoS(10));
   order_dropped_pub_ = create_publisher<std_msgs::msg::String>(adapter_topic("order_dropped"), rclcpp::QoS(10));
   distance_since_last_node_pub_ = create_publisher<std_msgs::msg::Float64>(adapter_topic("distance_since_last_node"), rclcpp::QoS(10));
+  operating_mode_pub_ = create_publisher<std_msgs::msg::String>(adapter_topic("operating_mode"), rclcpp::QoS(1).transient_local());
 
   nav2_client_ = rclcpp_action::create_client<NavigateToPose>(this, nav2_action_name_);
 
@@ -254,6 +257,37 @@ void BridgeNode::on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg)
   battery_state_pub_->publish(batt);
 }
 
+// twist_mux's own "current priority" tells us who actually won arbitration; joystick/keyboard
+// outrank navigation (see twist_mux_topics.yaml), so current > navigation's own priority means a human has taken over.
+void BridgeNode::on_diagnostics(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg)
+{
+  for (const auto& status : msg->status) {
+    if (status.name != "twist_mux: Twist mux status") continue;
+
+    std::optional<int> current_priority, nav_priority;
+    for (const auto& kv : status.values) {
+      if (kv.key == "current priority") {
+        current_priority = std::atoi(kv.value.c_str());
+      } else if (kv.key == "velocity topics.navigation") {
+        const auto hash_pos = kv.value.rfind('#');
+        if (hash_pos != std::string::npos) nav_priority = std::atoi(kv.value.c_str() + hash_pos + 1);
+      }
+    }
+    if (!current_priority || !nav_priority) return;
+
+    const std::string mode = (*current_priority > *nav_priority) ? "MANUAL" : "AUTOMATIC";
+    if (mode == last_operating_mode_) return;
+    last_operating_mode_ = mode;
+
+    std_msgs::msg::String out;
+    out.data = mode;
+    operating_mode_pub_->publish(out);
+    RCLCPP_INFO(get_logger(), "Operating mode -> %s (twist_mux priority %d, navigation is %d)",
+                mode.c_str(), *current_priority, *nav_priority);
+    return;
+  }
+}
+
 // Starts a new order, or merges an update into the active one, then (re)dispatches.
 void BridgeNode::on_order(const vda5050_msgs::msg::Order::SharedPtr msg)
 {
@@ -382,6 +416,11 @@ void BridgeNode::on_action_execute(const vda5050_msgs::msg::Action::SharedPtr ms
 // Send operator's x/y/theta (from action) to AMCL for initial pose; fails while Nav2 is driving.
 void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
 {
+  // Only a live Nav2 goal blocks re-localizing -- that is the case the guard exists for, since
+  // moving the believed position mid-goal sends the robot down a path computed for elsewhere.
+  // Order-session state must NOT gate this: an order whose navigation was interrupted (process
+  // restart, Nav2 unavailable, a goal that never resolved) stays "in progress" forever with
+  // nothing driving it, and re-localizing is exactly how an operator recovers from that.
   if (current_goal_handle_) {
       RCLCPP_WARN(get_logger(),"initPosition (id=%s) rejected: robot is executing a navigation goal",
                                     action.action_id.c_str());
