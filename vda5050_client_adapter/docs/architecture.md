@@ -152,6 +152,8 @@ flowchart LR
     Nav -->|~/node_reached| Node
     Nav -->|~/edge_entered| Node
     Nav -->|~/edge_completed| Node
+    Nav -->|~/order_dropped| Node
+    Nav -->|~/distance_since_last_node| Node
     Act -->|~/action_state_feedback| Node
 
     Nav -->|~/driving\n~/paused| Node
@@ -307,6 +309,43 @@ When an order update is received, the stitch node is validated in priority order
 
 ---
 
+## 11b. OrderManager — Order Replacement & Stale Echoes
+
+A **new** `orderId` (not an update to the active one) supersedes whatever is
+active regardless of remaining route — this fleet issues one fresh order
+per leg rather than one long stitched order, so that's the normal case, not
+a reason to reject it. The only continuity check kept is that the new
+order's first node matches the AGV's actual last-traversed node **by name**
+(`sequence_id` isn't comparable across orders — each order's base restarts
+at 0).
+
+`apply_order()` snapshots the node/edge ids the order being replaced still
+had queued (`stale_node_ids_` / `stale_edge_ids_`, overwritten each time —
+only the immediately-previous order is remembered). If `node_reached()` or
+`edge_entered()` then gets a report that doesn't match the current order's
+front but *does* match that snapshot, it's a late echo from the order the
+bridge just heard about being replaced — absorbed silently instead of
+logged as `navigationOrderError`. A report matching neither is still a real
+error.
+
+---
+
+## 11c. Bridge-Initiated Order Drop
+
+The bridge (`tb3_vda5050_bridge`) can give up on an order on its own —
+stuck-order timeout, a rejected action, an `initPosition` invalidating the
+in-flight route — without going through the normal `cancelOrder` instant
+action. `~/order_dropped` (`std_msgs/String`, the dropped `orderId`) tells
+the adapter this happened, so it clears its own order/action tracking to
+match instead of staying desynced from what the bridge actually did.
+
+`~/distance_since_last_node` (`std_msgs/Float64`) streams the AGV's real
+driven distance live as it moves, instead of only updating once per
+`node_reached` — so `state.distanceSinceLastNode` tracks progress within
+the current leg in real time.
+
+---
+
 ## 12. ActionManager — Blocking Semantics
 
 | Blocking Type | Behavior |
@@ -322,12 +361,12 @@ Dispatch rules:
 
 ---
 
-## 13. Test Coverage — 115 Tests (all pass)
+## 13. Test Coverage — 116 Tests (all pass)
 
 | Suite | Tests | Coverage |
 |---|---|---|
 | `test_adapter_state_machine` | 4 | Top-level mode transitions, control confirmations, fault/shutdown, pending-action supersede |
-| `test_order_manager` | 31 | Accept, stitch, newBaseRequest, cancel, reject cases, zone_set_id clear, edge_entered ordering |
+| `test_order_manager` | 36 | Accept, stitch, newBaseRequest, cancel, reject cases, zone_set_id clear, edge_entered ordering, order replacement, stale-echo absorption |
 | `test_action_manager` | 30 | NONE/SOFT/HARD blocking, pause/resume/cancel, sync, status transition guard, HARD-wait timeout |
 | `test_converters` | 46 | JSON round-trips, schema compliance, ROS↔internal |
 

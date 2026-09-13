@@ -303,6 +303,10 @@ void VDA5050Node::setup_ros_interfaces() {
     "~/order_dropped", rclcpp::QoS(10),
     std::bind(&VDA5050Node::on_order_dropped, this, _1));
 
+  distance_since_last_node_sub_ = create_subscription<std_msgs::msg::Float64>(
+    "~/distance_since_last_node", rclcpp::QoS(10),
+    std::bind(&VDA5050Node::on_distance_since_last_node, this, _1));
+
   // ── Timers ───────────────────────────────────────────────────────────────
   state_timer_ = create_wall_timer(
     std::chrono::duration<double>(state_publish_interval_), [this]() 
@@ -392,14 +396,12 @@ void VDA5050Node::on_order_message(const MqttMessage& msg) {
   }
 
   clear_errors_by_type("orderError");
-  // A freshly accepted order clears any lingering navigationError/noOrderToCancel from a
-  // prior order, since neither has another natural expiry point.
+  // A freshly accepted order clears any lingering navigationError/noOrderToCancel from a prior order, since neither has another natural expiry point.
   clear_errors_by_type("navigationError");
   clear_errors_by_type("noOrderToCancel");
 
   // A new accepted order resolves any cancelOrder still pending, since a cancel immediately
-  // followed by a replacement order would otherwise never see the !driving && !order_active
-  // state it's waiting for.
+  // followed by a replacement order would otherwise never see the !driving && !order_active state it's waiting for.
   const auto superseded_cancel = state_machine_->take_pending_cancel();
   if (!superseded_cancel.empty()) {
     action_manager_->set_action_finished(
@@ -433,8 +435,7 @@ void VDA5050Node::on_instant_actions_message(const MqttMessage& msg) {
   RCLCPP_INFO(get_logger(), "InstantActions received: count=%zu",
               ia.actions.size());
 
-  // snapshot_mutex_ must not be held here: execute callbacks (e.g. stateRequest) re-acquire
-  // it via publish_state()/build_state_snapshot(), which would deadlock.
+  // snapshot_mutex_ must not be held here: execute callbacks (e.g. stateRequest) re-acquire  it via publish_state()/build_state_snapshot(), which would deadlock.
   action_manager_->process_instant_actions(ia);
   sync_action_blocking();
 
@@ -478,8 +479,7 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
       action_manager_->set_action_finished(replaced_cancel, "Superseded by newer cancelOrder");
     }
     clear_errors_by_type("noOrderToCancel");
-    // Navigation control is unconditional: the driver must be told to stop
-    // regardless of whether any node/edge action happens to be active.
+    // Navigation control is unconditional: the driver must be told to stop regardless of whether any node/edge action happens to be active.
     on_action_cancel(action.action_id);
     action_manager_->cancel_all(action.action_id);
     order_manager_->cancel_order(order_id);
@@ -500,8 +500,7 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
     if (!replaced_pending.empty()) {
       action_manager_->set_action_finished(replaced_pending, "Superseded by newer startPause");
     }
-    // Navigation control is unconditional: the driver must be told to pause
-    // regardless of whether any node/edge action happens to be active.
+    // Navigation control is unconditional: the driver must be told to pause regardless of whether any node/edge action happens to be active.
     on_action_pause(action.action_id);
     action_manager_->pause_all(action.action_id);
     action_manager_->set_action_running(action.action_id);
@@ -520,8 +519,7 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
     if (!replaced_pending.empty()) {
       action_manager_->set_action_finished(replaced_pending, "Superseded by newer stopPause");
     }
-    // Navigation control is unconditional: the driver must be told to resume
-    // regardless of whether any node/edge action happens to be active.
+    // Navigation control is unconditional: the driver must be told to resume regardless of whether any node/edge action happens to be active.
     on_action_resume(action.action_id);
     action_manager_->resume_all(action.action_id);
     action_manager_->set_action_running(action.action_id);
@@ -543,8 +541,7 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
     return true;
   }
 
-  // Any other action type (e.g. "initPosition") is delegated to the robot driver:
-  // returning false makes the caller forward it via ~/action_execute.
+  // Any other action type (e.g. "initPosition") is delegated to the robot driver: returning false makes the caller forward it via ~/action_execute.
   return false;
 }
 
@@ -606,20 +603,15 @@ vda5050::Factsheet VDA5050Node::build_factsheet_from_params() const {
   vda5050::Factsheet fs;
 
   // ── typeSpecification ──────────────────────────────────────────────────────
-  fs.type_specification.series_name        =
-    get_parameter("factsheet.type_specification.series_name").as_string();
+  fs.type_specification.series_name        =  get_parameter("factsheet.type_specification.series_name").as_string();
 
-  fs.type_specification.series_description =
-    get_parameter("factsheet.type_specification.series_description").as_string();
+  fs.type_specification.series_description =  get_parameter("factsheet.type_specification.series_description").as_string();
 
-  fs.type_specification.agv_kinematic =
-    get_parameter("factsheet.type_specification.agv_kinematic").as_string();
+  fs.type_specification.agv_kinematic =       get_parameter("factsheet.type_specification.agv_kinematic").as_string();
 
-  fs.type_specification.agv_class     =
-    get_parameter("factsheet.type_specification.agv_class").as_string();
+  fs.type_specification.agv_class     =       get_parameter("factsheet.type_specification.agv_class").as_string();
 
-  fs.type_specification.max_load_mass =
-    get_parameter("factsheet.type_specification.max_load_mass").as_double();
+  fs.type_specification.max_load_mass =       get_parameter("factsheet.type_specification.max_load_mass").as_double();
   {
     auto loc_types = get_parameter("factsheet.type_specification.localization_types").as_string_array();
     fs.type_specification.localization_types =std::vector<std::string>(loc_types.begin(), loc_types.end());
@@ -665,9 +657,7 @@ vda5050::Factsheet VDA5050Node::build_factsheet_from_params() const {
 
   for (const auto& bt : builtins)
    {
-    const bool requested = std::find(action_types.begin(),
-                                     action_types.end(),
-                                     bt.type) != action_types.end();
+    const bool requested = std::find(action_types.begin(), action_types.end(), bt.type) != action_types.end();
     if (!requested) continue;
 
     vda5050::AgvAction a;
@@ -920,11 +910,7 @@ void VDA5050Node::on_edge_completed(
   publish_state();
 }
 
-// Receive notice (msg) that the bridge dropped order msg->data outside the cancelOrder flow
-// (initPosition invalidating its start pose, a stuck-order timeout, or a local-UI cancel that
-// never reaches this adapter) -- without this, remaining_base_nodes_/order_active_ stay stale
-// and every subsequent real node_reached/edge_entered is rejected as "out of order", and any
-// new order from Master Control is rejected as "cannot replace the active order".
+// Receive notice (msg) that the bridge dropped order msg->data: clear order/action tracking.
 void VDA5050Node::on_order_dropped(const std_msgs::msg::String::SharedPtr msg)
 {
   if (!order_manager_->has_active_order() ||
@@ -942,6 +928,13 @@ void VDA5050Node::on_order_dropped(const std_msgs::msg::String::SharedPtr msg)
   clear_errors_by_type("navigationOrderError");
   sync_action_blocking();
   publish_state();
+}
+
+// Live distance-since-last-node reading (msg) -- just stored; the periodic
+// state_timer_ publish reports it, so no publish_state() here.
+void VDA5050Node::on_distance_since_last_node(const std_msgs::msg::Float64::SharedPtr msg)
+{
+  order_manager_->set_distance_since_last_node(msg->data);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

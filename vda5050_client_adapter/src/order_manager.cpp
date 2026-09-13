@@ -60,16 +60,13 @@ OrderAcceptResult OrderManager::process_order(const vda5050::Order& order)
     auto accepted_cb = on_order_accepted_;
     auto remaining_nodes = remaining_base_nodes_;
     auto remaining_edges = remaining_base_edges_;
-    remaining_nodes.insert(remaining_nodes.end(),
-                           horizon_nodes_.begin(), horizon_nodes_.end());
-    remaining_edges.insert(remaining_edges.end(),
-                           horizon_edges_.begin(), horizon_edges_.end());
+    remaining_nodes.insert(remaining_nodes.end(), horizon_nodes_.begin(), horizon_nodes_.end());
+    remaining_edges.insert(remaining_edges.end(), horizon_edges_.begin(), horizon_edges_.end());
     lock.unlock();
 
     if (accepted_cb) 
     {
-      accepted_cb(order.order_id, order.order_update_id,
-                  remaining_nodes, remaining_edges);
+      accepted_cb(order.order_id, order.order_update_id, remaining_nodes, remaining_edges);
     }
     return result;
   }
@@ -78,9 +75,7 @@ OrderAcceptResult OrderManager::process_order(const vda5050::Order& order)
   if (order.order_update_id <= current_order_update_id_) 
   {
     result.accepted         = false;
-    result.rejection_reason =
-      "orderUpdateId must be greater than current (" +
-      std::to_string(current_order_update_id_) + ")";
+    result.rejection_reason = "orderUpdateId must be greater than current (" + std::to_string(current_order_update_id_) + ")";
     return result;
   }
 
@@ -93,15 +88,12 @@ OrderAcceptResult OrderManager::process_order(const vda5050::Order& order)
   auto accepted_cb = on_order_accepted_;
   auto remaining_nodes = remaining_base_nodes_;
   auto remaining_edges = remaining_base_edges_;
-  remaining_nodes.insert(remaining_nodes.end(),
-                         horizon_nodes_.begin(), horizon_nodes_.end());
-  remaining_edges.insert(remaining_edges.end(),
-                         horizon_edges_.begin(), horizon_edges_.end());
+  remaining_nodes.insert(remaining_nodes.end(), horizon_nodes_.begin(), horizon_nodes_.end());
+  remaining_edges.insert(remaining_edges.end(), horizon_edges_.begin(), horizon_edges_.end());
   lock.unlock();
 
   if (accepted_cb) {
-    accepted_cb(order.order_id, order.order_update_id,
-                remaining_nodes, remaining_edges);
+    accepted_cb(order.order_id, order.order_update_id, remaining_nodes, remaining_edges);
   }
   return result;
 }
@@ -145,6 +137,16 @@ void OrderManager::cancel_order(const std::string& order_id)
 // Navigation feedback
 // ─────────────────────────────────────────────────────────────────────────────
 
+// True if node_id was part of the order just replaced by the current one.
+bool OrderManager::is_stale_node(const std::string& node_id) const {
+  return std::find(stale_node_ids_.begin(), stale_node_ids_.end(), node_id) != stale_node_ids_.end();
+}
+
+// True if edge_id was part of the order just replaced by the current one.
+bool OrderManager::is_stale_edge(const std::string& edge_id) const {
+  return std::find(stale_edge_ids_.begin(), stale_edge_ids_.end(), edge_id) != stale_edge_ids_.end();
+}
+
 // Notify that node (evt) was physically reached: validate order, pop remaining base node, trigger newBaseRequest if needed.
 bool OrderManager::node_reached(const NodeReachedEvent& evt) {
   std::unique_lock<std::mutex> lock(mutex_);
@@ -157,6 +159,10 @@ bool OrderManager::node_reached(const NodeReachedEvent& evt) {
   const auto& expected_node = remaining_base_nodes_.front();
   if (expected_node.node_id != evt.node_id ||
       expected_node.sequence_id != evt.sequence_id) {
+    // A late report for a node this order has never known about is a stale echo of an order just replaced, not a real progress bug -- absorb it.
+    if (is_stale_node(evt.node_id)) {
+      return true;
+    }
     std::cerr << "[OrderManager] Out-of-order node_reached: expected '"
               << expected_node.node_id << "' (seq=" << expected_node.sequence_id
               << "), got '" << evt.node_id << "' (seq=" << evt.sequence_id << ")\n";
@@ -174,13 +180,11 @@ bool OrderManager::node_reached(const NodeReachedEvent& evt) {
     order_active_ = false;
   }
 
-  const bool should_request = (remaining_base_nodes_.size() < 2) &&
-                              !horizon_nodes_.empty();
+  const bool should_request = (remaining_base_nodes_.size() < 2) && !horizon_nodes_.empty();
   const bool notify_new_base_request = should_request && !new_base_request_;
   new_base_request_ = should_request;
 
-  auto new_base_cb =
-    notify_new_base_request ? on_new_base_request_ : NewBaseRequestCallback{};
+  auto new_base_cb = notify_new_base_request ? on_new_base_request_ : NewBaseRequestCallback{};
 
   lock.unlock();
   if (new_base_cb) new_base_cb();
@@ -188,8 +192,7 @@ bool OrderManager::node_reached(const NodeReachedEvent& evt) {
 }
 
 // Notify that edge (edge_id, sequence_id) was entered: validate order, move to active_edges from base.
-bool OrderManager::edge_entered(const std::string& edge_id,
-                                uint32_t           sequence_id)
+bool OrderManager::edge_entered(const std::string& edge_id,  uint32_t sequence_id)
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
@@ -200,6 +203,10 @@ bool OrderManager::edge_entered(const std::string& edge_id,
 
   const auto& expected_edge = remaining_base_edges_.front();
   if (expected_edge.edge_id != edge_id || expected_edge.sequence_id != sequence_id) {
+    // Same reasoning as node_reached above: a report for an edge this order never had is a stale echo of an order just replaced, not a real bug.
+    if (is_stale_edge(edge_id)) {
+      return true;
+    }
     std::cerr << "[OrderManager] Out-of-order edge_entered: expected '"
               << expected_edge.edge_id << "' (seq=" << expected_edge.sequence_id
               << "), got '" << edge_id << "' (seq=" << sequence_id << ")\n";
@@ -302,6 +309,13 @@ double OrderManager::distance_since_last_node() const
   return distance_since_last_node_;
 }
 
+// Update the live distance-since-last-node reading (see header).
+void OrderManager::set_distance_since_last_node(double meters)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  distance_since_last_node_ = meters;
+}
+
 // Return snapshot of all remaining node states (base + horizon) for State message.
 std::vector<vda5050::NodeState> OrderManager::node_states() const
 {
@@ -362,28 +376,15 @@ OrderManager::validate_new_order(const vda5050::Order& order) const
     return {false, "Order must contain at least one node"};
   }
 
-  if (order_active_) 
-  {
-    const bool route_remaining =
-      !remaining_base_nodes_.empty() || !remaining_base_edges_.empty() ||
-      !horizon_nodes_.empty() || !horizon_edges_.empty();
-    if (route_remaining) 
-    {
-      return {false,
-              "New order cannot replace the active order until the current ""route is fully consumed"};
-    }
-  }
-
-  if (order_active_ && !last_node_id_.empty()) 
+  // A new order_id supersedes the active one -- this fleet issues a fresh
+  // order per leg, so remaining route is normal, not a reason to block it.
+  // Only the node the robot is standing on must match (sequence_id resets per order).
+  if (order_active_ && !last_node_id_.empty())
   {
     const auto& first_node = order.nodes.front();
-    if (first_node.node_id != last_node_id_ ||
-        first_node.sequence_id != last_node_sequence_id_) 
-        {
-      return {false,
-              "New order's first node must match last traversed node "
-              "(id=" + last_node_id_ + " seq=" +
-              std::to_string(last_node_sequence_id_) + ")"};
+    if (first_node.node_id != last_node_id_)
+    {
+      return {false, "New order's first node must match last traversed node " "(id=" + last_node_id_ + ")"};
     }
   }
   return {true, ""};
@@ -405,28 +406,24 @@ OrderManager::validate_update(const vda5050::Order& update) const
   if (!horizon_nodes_.empty()) 
   {
     const auto& last_horizon = horizon_nodes_.back();
-    stitch_ok = (stitch_node.node_id    == last_horizon.node_id &&
-                 stitch_node.sequence_id == last_horizon.sequence_id);
+    stitch_ok = (stitch_node.node_id    == last_horizon.node_id && stitch_node.sequence_id == last_horizon.sequence_id);
   }
 
   if (!stitch_ok && !remaining_base_nodes_.empty()) 
   {
     const auto& last_base = remaining_base_nodes_.back();
-    stitch_ok = (stitch_node.node_id    == last_base.node_id &&
-                 stitch_node.sequence_id == last_base.sequence_id);
+    stitch_ok = (stitch_node.node_id    == last_base.node_id && stitch_node.sequence_id == last_base.sequence_id);
   }
 
   if (!stitch_ok && remaining_base_nodes_.empty() && horizon_nodes_.empty()) 
   {
-    stitch_ok = (stitch_node.node_id    == last_node_id_ &&
-                 stitch_node.sequence_id == last_node_sequence_id_);
+    stitch_ok = (stitch_node.node_id    == last_node_id_ && stitch_node.sequence_id == last_node_sequence_id_);
   }
 
   if (!stitch_ok) {
     const std::string expected_id =
       !horizon_nodes_.empty()        ? horizon_nodes_.back().node_id :
-      !remaining_base_nodes_.empty() ? remaining_base_nodes_.back().node_id :
-                                       last_node_id_;
+      !remaining_base_nodes_.empty() ? remaining_base_nodes_.back().node_id : last_node_id_;
     return {false, "Order update stitch node mismatch: expected node_id=" + expected_id};
   }
   return {true, ""};
@@ -435,12 +432,27 @@ OrderManager::validate_update(const vda5050::Order& update) const
 // Apply new order (order): set order_id/update_id/zone_set_id, partition nodes/edges into base/horizon, reset progress.
 void OrderManager::apply_order(const vda5050::Order& order)
 {
+  // Snapshot what the order being replaced still knew about -- a late
+  // node_reached/edge_entered for one of these is a stale echo, not a bug.
+  stale_node_ids_.clear();
+  stale_edge_ids_.clear();
+  for (const auto& n : remaining_base_nodes_) stale_node_ids_.push_back(n.node_id);
+  for (const auto& n : horizon_nodes_)        stale_node_ids_.push_back(n.node_id);
+  for (const auto& e : remaining_base_edges_) stale_edge_ids_.push_back(e.edge_id);
+  for (const auto& e : horizon_edges_)        stale_edge_ids_.push_back(e.edge_id);
+  for (const auto& e : active_edges_)         stale_edge_ids_.push_back(e.edge_id);
+
   current_order_id_        = order.order_id;
   current_order_update_id_ = order.order_update_id;
   current_zone_set_id_     = order.zone_set_id;
   order_active_            = true;
   new_base_request_        = false;
   distance_since_last_node_ = 0.0;
+
+  // Reset per-order: RMF derives route progress from this (see
+  // robot_command_handle.cpp), and a value left over from the previous
+  // order can overshoot the new route, causing a false "already done".
+  last_node_sequence_id_ = 0;
 
   remaining_base_nodes_.clear();
   remaining_base_edges_.clear();

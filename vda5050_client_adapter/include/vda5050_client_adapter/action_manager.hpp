@@ -183,8 +183,7 @@ private:
     bool                  pause_requested{false};
     bool                  resume_requested{false};
     bool                  paused_for_hard{false};
-    // Set while this HARD action is blocked waiting for another to confirm it paused;
-    // cleared once it dispatches or stops being blocked. Basis for check_timeouts().
+    // Set while this HARD action is blocked waiting for another to confirm it paused; cleared once it dispatches or stops being blocked. Basis for check_timeouts().
     std::optional<std::chrono::steady_clock::time_point> hard_wait_since;
   };
 
@@ -202,18 +201,13 @@ private:
                                  uint32_t            trigger_sequence_id);
 
   // Fail all edge (edge_id, sequence_id) actions with FAILED status; queue cancel callbacks (mutex held).
-  void fail_edge_actions_locked(const std::string& edge_id,
-                                uint32_t           sequence_id,
-                                PendingCallbacks&  pending);
+  void fail_edge_actions_locked(const std::string& edge_id,  uint32_t           sequence_id, PendingCallbacks&  pending);
 
   // Remove order actions not in desired_order_actions (desired_order_actions); preserve instant/active (mutex held).
-  void remove_stale_waiting_order_actions_locked(
-    const std::unordered_map<std::string, ActionRecord>& desired_order_actions);
+  void remove_stale_waiting_order_actions_locked(const std::unordered_map<std::string, ActionRecord>& desired_order_actions);
 
   // Update action (action_id) status to new_status with optional result_desc (mutex held).
-  void update_status(const std::string& action_id,
-                     vda5050::ActionStatus new_status,
-                     const std::string& result_desc = "");
+  void update_status(const std::string& action_id, vda5050::ActionStatus new_status, const std::string& result_desc = "");
 
   // Collect pending callbacks from active actions; clear queues (mutex held).
   PendingCallbacks dispatch_pending_locked();

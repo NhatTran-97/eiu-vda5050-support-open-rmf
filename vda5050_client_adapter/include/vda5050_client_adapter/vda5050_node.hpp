@@ -31,6 +31,9 @@
  *    ~/node_reached       vda5050_msgs/NodeState
  *    ~/edge_entered       vda5050_msgs/EdgeState
  *    ~/edge_completed     vda5050_msgs/EdgeState
+ *    ~/order_dropped      std_msgs/String    (orderId the bridge dropped on its own)
+ *    ~/distance_since_last_node
+ *                         std_msgs/Float64   (live progress on the current leg)
  */
 
 #include <atomic>
@@ -44,6 +47,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/string.hpp>
 
 #include <vda5050_msgs/msg/order.hpp>
@@ -135,9 +139,10 @@ private:
   void on_node_reached(const vda5050_msgs::msg::NodeState::SharedPtr msg);
   void on_edge_entered(const vda5050_msgs::msg::EdgeState::SharedPtr msg);
   void on_edge_completed(const vda5050_msgs::msg::EdgeState::SharedPtr msg);
-  // Robot dropped its order outside the cancelOrder flow (e.g. initPosition, a stuck-order
-  // timeout, or a local-UI cancel that bypasses this adapter) -- clear local order tracking to match.
+  // Clear local order tracking when the bridge drops an order outside the cancelOrder flow.
   void on_order_dropped(const std_msgs::msg::String::SharedPtr msg);
+  // Live distance-since-last-node reading, streamed continuously by the driver.
+  void on_distance_since_last_node(const std_msgs::msg::Float64::SharedPtr msg);
 
   // ── OrderManager callbacks ─────────────────────────────────────────────────
   void on_order_accepted(const std::string& order_id,
@@ -230,6 +235,7 @@ private:
   rclcpp::Subscription<vda5050_msgs::msg::EdgeState>::SharedPtr    edge_entered_sub_;
   rclcpp::Subscription<vda5050_msgs::msg::EdgeState>::SharedPtr    edge_completed_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr           order_dropped_sub_;
+  rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr          distance_since_last_node_sub_;
 
   // ── Timers ─────────────────────────────────────────────────────────────────
   rclcpp::TimerBase::SharedPtr state_timer_;

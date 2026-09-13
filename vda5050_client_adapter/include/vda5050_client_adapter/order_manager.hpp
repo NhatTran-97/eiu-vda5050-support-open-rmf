@@ -103,6 +103,10 @@ public:
   bool edge_entered(const std::string& edge_id, uint32_t sequence_id);
   bool edge_completed(const std::string& edge_id, uint32_t sequence_id);
 
+  // Live progress on the current leg, streamed from the driver between
+  // node_reached events (node_reached still sets the exact value on arrival).
+  void set_distance_since_last_node(double meters);
+
   // ─── State queries ────────────────────────────────────────────────────────
 
   std::string  current_order_id()        const;
@@ -142,6 +146,9 @@ private:
   void apply_order(const vda5050::Order& order);
   void apply_stitch(const vda5050::Order& update);
 
+  bool is_stale_node(const std::string& node_id) const;
+  bool is_stale_edge(const std::string& edge_id) const;
+
   static vda5050::NodeState node_to_state(const vda5050::Node& n);
   static vda5050::EdgeState edge_to_state(const vda5050::Edge& e);
 
@@ -162,6 +169,11 @@ private:
   std::vector<vda5050::Node>  horizon_nodes_;
   std::vector<vda5050::Edge>  horizon_edges_;
   std::vector<vda5050::Edge>  active_edges_;  ///< Edges currently being traversed (entered but not completed)
+
+  // Node/edge ids the previously active order still knew about, snapshotted
+  // right before apply_order() clears it -- see is_stale_node/is_stale_edge.
+  std::vector<std::string> stale_node_ids_;
+  std::vector<std::string> stale_edge_ids_;
 
   bool new_base_request_{false};
   bool order_active_{false};

@@ -10,7 +10,8 @@
  *  - new_base_request trigger logic
  *  - distance_since_last_node tracking
  *  - cancel_order (matching, empty, mismatched ID)
- *  - Replacement order (blocked while route remains, allowed after)
+ *  - Replacement order (allowed regardless of remaining route; blocked only
+ *    if it doesn't start from the robot's actual last-traversed node)
  *  - State-query consistency after mutations
  */
 
@@ -176,6 +177,22 @@ TEST(OrderManagerTest, NodeReachedAdvancesPointerAndTracksDistance) {
   EXPECT_EQ(mgr.last_node_sequence_id(), 0u);
   EXPECT_DOUBLE_EQ(mgr.distance_since_last_node(), 2.5);
   EXPECT_EQ(mgr.node_states().size(), 1u); // n1 consumed, n2 remains
+}
+
+TEST(OrderManagerTest, SetDistanceSinceLastNodeStreamsLiveProgress) {
+  vda5050_adapter::OrderManager mgr;
+
+  mgr.set_distance_since_last_node(1.2);
+  EXPECT_DOUBLE_EQ(mgr.distance_since_last_node(), 1.2);
+
+  // node_reached still wins as the exact value at arrival.
+  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+  mgr.set_distance_since_last_node(3.7);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0, 2.5)));
+  EXPECT_DOUBLE_EQ(mgr.distance_since_last_node(), 2.5);
 }
 
 TEST(OrderManagerTest, NodeReachedRejectsWrongIdWithoutMutatingState) {
@@ -457,7 +474,9 @@ TEST(OrderManagerTest, CancelWithMismatchedIdDoesNothing) {
 // Replacement order
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(OrderManagerTest, RejectsReplacementOrderWhileRouteStillRemains) {
+// RMF issues one fresh order_id per leg rather than stitching a single long
+// order, so a replacement while the old order still has route left is normal.
+TEST(OrderManagerTest, AcceptsReplacementOrderEvenWithRouteRemaining) {
   vda5050_adapter::OrderManager mgr;
   ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
     {make_node("n1", 0, true), make_node("n2", 2, true)},
@@ -466,8 +485,8 @@ TEST(OrderManagerTest, RejectsReplacementOrderWhileRouteStillRemains) {
 
   auto result = mgr.process_order(make_order("ord-2", 1,
     {make_node("n1", 0, true)}, {}));
-  EXPECT_FALSE(result.accepted);
-  EXPECT_EQ(mgr.current_order_id(), "ord-1");
+  EXPECT_TRUE(result.accepted);
+  EXPECT_EQ(mgr.current_order_id(), "ord-2");
 }
 
 TEST(OrderManagerTest, AcceptsReplacementOrderAfterFullConsumption) {
@@ -484,6 +503,85 @@ TEST(OrderManagerTest, AcceptsReplacementOrderAfterFullConsumption) {
 
   EXPECT_EQ(mgr.current_order_id(), "ord-2");
   EXPECT_EQ(mgr.node_states().size(), 2u);
+}
+
+// The one continuity rule that IS still enforced: a replacement order must
+// start from the node the robot is actually standing on.
+TEST(OrderManagerTest, RejectsReplacementOrderStartingFromWrongNode) {
+  vda5050_adapter::OrderManager mgr;
+  // Two nodes, only the first reached, so the order is still active (a
+  // single-node order would complete on node_reached and leave nothing to enforce continuity against).
+  ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+
+  auto result = mgr.process_order(make_order("ord-2", 1,
+    {make_node("wrong_node", 0, true)}, {}));
+  EXPECT_FALSE(result.accepted);
+  EXPECT_EQ(mgr.current_order_id(), "ord-1");
+}
+
+// sequence_id is per-order (a new order's base always restarts at 0), so it
+// must not be compared against the previous order's last_node_sequence_id --  only node_id identifies where the robot physically is.
+TEST(OrderManagerTest, AcceptsReplacementFromRightNodeDespiteDifferentSequenceId) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+  ASSERT_TRUE(mgr.node_reached(evt("n2", 2)));
+
+  // ord-2 starts from n2, but n2 is seq=0 here (a new order's own base),
+  // not seq=2 like it was in ord-1.
+  auto result = mgr.process_order(make_order("ord-2", 1,
+    {make_node("n2", 0, true)}, {}));
+  EXPECT_TRUE(result.accepted);
+  EXPECT_EQ(mgr.current_order_id(), "ord-2");
+}
+
+// A late edge_entered/node_reached for whatever ord-1 still had queued,
+// arriving after ord-2 already replaced it, is absorbed instead of rejected -- and must leave ord-2's own progress untouched.
+TEST(OrderManagerTest, AbsorbsStaleEchoFromJustReplacedOrder) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+
+  ASSERT_TRUE(mgr.process_order(make_order("ord-2", 1,
+    {make_node("n1", 0, true), make_node("n4", 2, true)},
+    {make_edge("e14", 1, true, "n1", "n4")}
+  )).accepted);
+
+  EXPECT_TRUE(mgr.edge_entered("e12", 1));
+  EXPECT_TRUE(mgr.node_reached(evt("n2", 2)));
+
+  EXPECT_EQ(mgr.current_order_id(), "ord-2");
+  EXPECT_EQ(mgr.last_node_id(), "n1");        // unaffected by the stale echo
+  EXPECT_EQ(mgr.node_states().size(), 2u);    // ord-2's own nodes, untouched
+  EXPECT_TRUE(mgr.active_edge_states().empty());
+}
+
+// A stale last_node_sequence_id from the previous order lets RMF's own `passed = lastNodeSequenceId / 2` progress check (robot_command_handle.cpp)
+// overshoot a new, shorter order's node count, reading it as already complete -- see memory "rmf-jazzy-unresponsive-handle-replan-bug".
+TEST(OrderManagerTest, NewOrderResetsLastNodeSequenceId) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
+    {make_node("n1", 8, true)}, {}
+  )).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 8)));
+  EXPECT_EQ(mgr.last_node_sequence_id(), 8u);
+
+  ASSERT_TRUE(mgr.process_order(make_order("ord-2", 1,
+    {make_node("n2", 0, true), make_node("n3", 2, true)},
+    {make_edge("e23", 1, true, "n2", "n3")}
+  )).accepted);
+
+  EXPECT_EQ(mgr.last_node_sequence_id(), 0u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
