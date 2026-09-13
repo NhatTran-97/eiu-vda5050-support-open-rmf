@@ -21,7 +21,7 @@
 
 namespace vda5050_fleet_adapter_full_control::rmf {
 
-// Result of handing a downlink message to the MQTT client. A queued message is not an acknowledgement from the broker or AGV.
+// Whether MQTT accepted a downlink message for queuing; this does not confirm delivery.
 enum class CommandStatus
 {
     queued,
@@ -54,8 +54,7 @@ struct RobotData
     vda5050::SafetyState safety_state;
     // First FATAL error type reported by the AGV.
     std::string fatal_error;
-    // state.paused: the AGV itself reports being on hold, regardless of who
-    // requested it (this fleet's own pause(), a local control panel, or another master).
+    // Whether the AGV reports a pause, regardless of who requested it.
     bool paused = false;
     // The AGV is asking for more of the order horizon to be released.
     bool new_base_request = false;
@@ -69,8 +68,7 @@ struct RobotData
     }
 };
 
-// Bridges RMF commands and VDA5050 MQTT messages while maintaining per-robot
-// protocol state.
+// Connect RMF commands with VDA5050 MQTT messages and track each robot's protocol state.
 class Connector
 {
 public:
@@ -86,7 +84,6 @@ public:
     void add_robot(const std::string &name, const std::string &manufacturer,
                    const std::string &serial, const Transform &transform);
 
-    // RMF -> AGV
     // Route waypoint in RMF coordinates.
     struct RoutePoint
     {
@@ -97,29 +94,23 @@ public:
         std::optional<double> speed_limit;
     };
 
-    // Publishes one multi-node order and tracks completion at the final route
-    // point. The order identifier is committed only after MQTT accepts the publish request.
+    // Publish a multi-node order and track completion at its final waypoint.
     struct NavigateResult
     {
         CommandStatus status = CommandStatus::queued;
         std::string order_id;
     };
 
-    // `released_count`: how many of `route`'s points are released;
-    // nullopt releases the whole route. A smaller value leaves the rest as VDA5050 horizon, grown later by release_more().
+    // Release this many route points; nullopt releases the full route and the remainder stays in the horizon.
     NavigateResult navigate_route(const std::string &name,
                                   const std::vector<RoutePoint> &route,
                                   const std::string &map_id,
                                   std::optional<std::size_t> released_count = std::nullopt);
 
-    // Extends the route from navigate_route(): same orderId, orderUpdateId
-    // incremented, a stitch not a new order. transport_failed (no state
-    // change) if there's nothing to extend past what's already released.
+    // Extend an active order with a larger released horizon and a new orderUpdateId.
     CommandStatus release_more(const std::string &name, std::size_t released_count);
 
-    // Sets an operator speed cap for subsequent orders. The effective edge
-    // limit is the minimum of this value and the navigation-graph limit.
-    // Passing nullopt clears the cap.
+    // Set or clear the operator speed cap applied to subsequent route edges.
     bool set_speed_limit(const std::string &name, std::optional<double> limit);
 
     // Returns the configured operator speed cap, when available.
@@ -134,8 +125,7 @@ public:
     // Publishes stopPause to continue a paused order.
     CommandStatus resume(const std::string &name);
 
-    // Publishes a custom instant action and returns its actionId. An empty
-    // result indicates that the action was not dispatched.
+    // Publish an instant action and return its ID, or an empty string if dispatch fails.
     std::string execute_instant_action(
         const std::string &name, const std::string &action_type,
         const nlohmann::json &parameters = nlohmann::json::object());
@@ -143,18 +133,15 @@ public:
     // Requests an immediate state update.
     void request_state(const std::string &name);
 
-    // Publishes initPosition after converting the RMF pose to the robot frame.
-    // Returns the actionId, or an empty string when dispatch fails.
+    // Send initPosition in the robot frame and return its action ID, or an empty string on failure.
     std::string init_position(const std::string &name, double x, double y,
                               double theta, const std::string &map_id);
 
-    // AGV -> RMF
+    // State received from the AGV.
     std::optional<RobotData> get_data(const std::string &name);
     bool is_command_completed(const std::string &name);
 
-    // True when the AGV has reported a different orderId (or none) for
-    // longer than `timeout_s` -- covers a rejected or silently dropped
-    // order.
+    // Detect an order the AGV has not acknowledged within the timeout.
     bool is_order_stuck(const std::string &name, double timeout_s = 15.0) const;
     std::optional<std::string> get_action_state(const std::string &name,
                                                 const std::string &action_id);
@@ -172,7 +159,7 @@ private:
         std::string manufacturer;
         std::string serial;
         std::string interface_name;
-        // "/manufacturer/serial/", precomputed once so match_robot() doesn't rebuild it per candidate on every incoming MQTT message.
+        // MQTT topic suffix used to identify this robot.
         std::string mqtt_needle;
         Transform transform;
         // VDA5050 header counters are maintained independently per topic.
@@ -186,14 +173,14 @@ private:
         std::string target_node_id;
         // Actions associated with the tracked order.
         std::vector<std::string> order_action_ids;
-        // VDA5050 orderUpdateId of current_order_id: 0 for a fresh order, incremented by each release_more() extending it.
+        // Update ID of the tracked order, incremented for each horizon extension.
         int order_update_id = 0;
-        // Route/base/map last dispatched, kept so release_more() can rebuild with a larger released portion. Robot frame, not RMF's.
+        // Robot-frame route data retained to build later horizon updates.
         std::vector<vda5050::RouteWaypoint> current_route;
         std::string current_base_id;
         vda5050::RobotPose current_base;
         std::string current_map_id;
-        // How many of current_route's points are released in the order as last published (by navigate_route() or release_more()).
+        // Number of route points released in the last published order.
         std::size_t current_released_count = 0;
         std::optional<vda5050::ParsedState> last_state;
         // Visualization data is used only to refine pose and velocity.
@@ -222,38 +209,38 @@ private:
     // Subscribes to a robot's uplink topics.
     void subscribe_robot(const RobotContext &ctx);
 
-    // Finds a robot by MQTT topic. Caller must hold _mutex.
+    // Find a robot by MQTT topic; the caller holds _mutex.
     RobotContext *match_robot(const std::string &topic);
 
     // Publishes a serialized payload without throwing.
     CommandStatus publish_raw(const std::string &topic, const std::string &payload);
 
-    // Selects a factsheet-compatible blocking type. Caller must hold _mutex.
+    // Choose a factsheet-compatible blocking type; the caller holds _mutex.
     static std::string blocking_type_for(const RobotContext &ctx,
                                          const std::string &action_type,
                                          const std::string &preferred);
                                          
-    // Reports invalid or unsupported navigation inputs. Caller must hold _mutex.
+    // Report unsupported navigation inputs; the caller holds _mutex.
     void warn_if_unroutable(const RobotContext &ctx, const std::string &dest_node_id,
                             double x, double y, double theta,
                             const std::string &map_id,
                             std::optional<double> speed_limit) const;
 
-    // Reports action conflicts using the latest state and factsheet. Caller must hold _mutex.
+    // Report action conflicts; the caller holds _mutex.
     void warn_if_action_conflicts(const RobotContext &ctx, const std::string &action_type,
                                   const std::string &blocking_type) const;
 
-    // Reports factsheet protocol-limit violations and updates last_order_time. Caller must hold _mutex.
+    // Check factsheet protocol limits and update the order timestamp; the caller holds _mutex.
     void warn_if_order_oversized(RobotContext &ctx, std::size_t node_count,
                                  std::size_t edge_count) const;
 
-    // Reports an order mapId that disagrees with the AGV's own last-reported mapId. Caller must hold _mutex.
+    // Report a map ID mismatch with the AGV; the caller holds _mutex.
     void warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_map_id) const;
 
-    // Reports changes in cached operational state. Caller must hold _mutex.
+    // Report changes in cached operational state; the caller holds _mutex.
     void report_state_changes(RobotContext &ctx);
 
-    // Wired to _mqtt_client's callbacks.
+    // Handle callbacks from the MQTT client.
     void on_connected();
     void on_connection_lost(const std::string &cause);
     void on_error(const std::string &context, const std::string &what);

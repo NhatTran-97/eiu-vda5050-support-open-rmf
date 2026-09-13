@@ -1,4 +1,4 @@
-# Fleet configuration for the VDA5050 fleet adapter.
+# Fleet and VDA5050 settings for the adapter.
 
 rmf_fleet:
   name: "tb3_fleet"
@@ -29,10 +29,8 @@ rmf_fleet:
     delivery: true
   actions: ["dock"]
 
-  finishing_request: "park"   # park | charge | nothing
-  # "park": goes to robots.<name>.charger and stays idle, no charging signal needed.
-  # "charge": waits for charging=true -- never comes while account_for_battery_drain
-  # is off, so the robot only parks and never actually charges. Would get stuck here.
+  finishing_request: "park"   # Post-task action: park, charge, or nothing
+  # Park robots at their charger waypoint after a task.
 
   robots:
     tb3_1:
@@ -40,13 +38,9 @@ rmf_fleet:
 
       responsive_wait: false
 
-# --------------------------------------------------------------------------- #
-# VDA5050 / MQTT settings (consumed by vda5050_fleet_adapter_full_control, not RMF core)
-# --------------------------------------------------------------------------- #
+# VDA5050 and MQTT settings used by the adapter.
 vda5050:
-  # MUST match the robot-side vda5050_client_adapter identity so both ends share
-  # the same MQTT topics:  {interface_name}/v2/{manufacturer}/{serial}/{topic}
-  # (their vda5050_params.yaml: interface_name=TB3, manufacturer=ROBOTIS, serial=0001)
+  # Match the AGV's MQTT interface, manufacturer, and serial number.
   interface_name: "TB3"
   update_rate_hz: 10.0
   mqtt:

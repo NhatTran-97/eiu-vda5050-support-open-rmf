@@ -8,8 +8,7 @@
 
 namespace vda5050_fleet_adapter_full_control::vda5050 {
 
-// Builds an 'instantActions' message carrying a single cancelOrder action.
-// Callers should use the blocking type declared by the AGV factsheet.
+// Build a cancelOrder instant action with the selected blocking type.
 nlohmann::json build_cancel_order(int header_id, const std::string &manufacturer,
                                   const std::string &serial,
                                   const std::string &blocking_type = "HARD");

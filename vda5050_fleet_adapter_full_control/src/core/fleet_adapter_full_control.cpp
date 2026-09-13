@@ -14,8 +14,10 @@
 #include <Eigen/Geometry>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rmf_fleet_adapter/StandardNames.hpp>
 #include <rmf_fleet_adapter/agv/Adapter.hpp>
 #include <rmf_fleet_adapter/agv/EasyFullControl.hpp>
+#include <rmf_fleet_msgs/msg/lane_request.hpp>
 #include <rmf_traffic/agv/Planner.hpp>
 #include <rmf_traffic_ros2/Time.hpp>
 
@@ -57,10 +59,10 @@ int run_fleet_adapter_full_control(int argc, char **argv)
 
     try
     {
-        // VDA5050 and MQTT settings; parsed first since server_uri() feeds into fleet_config below.
+        // Load VDA5050 and MQTT settings before configuring the RMF fleet.
         const Config config(args.config_file);
 
-        // Reuse RMF's FleetConfiguration parser for fleet, graph, and task planning parameters. Robot control is registered through FullControl.
+        // Load RMF fleet, graph, and task settings for FullControl.
         auto fleet_config = EasyFullControl::FleetConfiguration::from_config_files(
             args.config_file, args.nav_graph, config.server_uri());
         if (!fleet_config)
@@ -111,6 +113,27 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         fleet->set_retreat_to_charger_interval(fleet_config->retreat_to_charger_interval());
         fleet->default_maximum_delay(fleet_config->max_delay());
         fleet->fleet_state_topic_publish_period(fleet_config->update_interval());
+
+        // Apply no-go zone / lane closures requested from the operator UI.
+        const std::string this_fleet_name = fleet_config->fleet_name();
+        const auto lane_request_sub = adapter->node()->create_subscription<rmf_fleet_msgs::msg::LaneRequest>(
+            rmf_fleet_adapter::LaneClosureRequestTopicName,
+            rclcpp::QoS(10).reliable().transient_local(),
+            [fleet, this_fleet_name](rmf_fleet_msgs::msg::LaneRequest::UniquePtr msg)
+            {
+                if (msg->fleet_name != this_fleet_name)
+                {
+                    return;
+                }
+                if (!msg->close_lanes.empty())
+                {
+                    fleet->close_lanes(std::vector<std::size_t>(msg->close_lanes.begin(), msg->close_lanes.end()));
+                }
+                if (!msg->open_lanes.empty())
+                {
+                    fleet->open_lanes(std::vector<std::size_t>(msg->open_lanes.begin(), msg->open_lanes.end()));
+                }
+            });
 
         // Register configured PerformAction categories with the task planner.
         for (const auto &[category, consider] : fleet_config->action_consideration())
@@ -163,8 +186,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         std::map<std::string, RobotSetup> robot_setup;
 
         std::map<std::string, std::shared_ptr<rmf::VdaRobotCommandHandle>> robots;
-        // One counter per robot, bumped on every add_robot() attempt --
-        // handle_cb checks its own captured value against it, so a superseded (timed-out) attempt can't register a stale handle.
+        // Identify the latest registration attempt for each robot.
         std::map<std::string, std::shared_ptr<std::atomic<int>>> registration_generation;
         std::set<std::pair<std::string, std::string>> seen_identities;
         for (const auto &name : fleet_config->known_robots())
@@ -220,11 +242,11 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         }
         OperatorInterface operator_interface(*adapter->node(), *connector, std::move(hooks));
 
-        // VDA5050 state -> RMF update loop
+        // Update RMF from VDA5050 state.
         std::atomic<bool> running{true};
         const auto period = std::chrono::duration<double>(1.0 / config.update_rate_hz());
 
-        // Tracks asynchronous RMF robot registrations.
+        // Track pending RMF robot registrations.
         std::map<std::string, std::chrono::steady_clock::time_point> registration_started;
 
         std::thread update_thread([&] {
@@ -249,7 +271,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                         const auto data = connector->get_data(name);
                         if (!data)
                         {
-                            // State is alive but has no usable pose (e.g. lost localization) -- update() won't run to catch this, so decommission explicitly.
+                            // Decommission robots that have lost a usable pose.
                             if (command->added())
                             {
                                 command->set_ready_for_orders(false, "no valid pose");
@@ -298,7 +320,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             {
                                 if (generation->load() != this_attempt)
                                 {
-                                    // Arrived after a retry started a newer attempt -- registering it risks a second RMF participant for this robot.
+                                    // Ignore registration callbacks superseded by a retry.
                                     RCLCPP_WARN(logger,
                                                 "Robot '%s' registration callback arrived "
                                                 "after a retry superseded it -- ignoring",

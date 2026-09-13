@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-mock_dispenser.py — simulate an RMF dispenser workcell.
-
-TurtleBot3 has no pick/load hardware, so this stands in for one: it answers
-DispenserRequest on /dispenser_requests with an ACKNOWLEDGED result, waits
---load-time seconds (simulating the physical load), then a SUCCESS result.
-Publishes DispenserState at 1 Hz so RMF's DispenseItem phase has both signals
-it looks for (see rmf_fleet_adapter's DispenseItem::ActivePhase).
-
-Usage:
-  python3 mock_dispenser.py --guid mock_dispenser_1
-  python3 mock_dispenser.py --guid mock_dispenser_1 --load-time 5.0
-"""
+"""Simulate an RMF dispenser for delivery tasks."""
 import argparse
 import sys
 

@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""
-Publish nav_graph.yaml waypoints and lanes as RViz MarkerArray.
-Usage:
-  ros2 run vda5050_fleet_adapter visualize_nav_graph.py \
-      --ros-args -p nav_graph_path:=<path_to_nav_graph.yaml>
-"""
+"""Publish navigation graph waypoints and lanes as RViz markers."""
 
 import rclpy
 from rclpy.node import Node
@@ -47,7 +42,7 @@ class NavGraphVisualizer(Node):
         markers = MarkerArray()
         mid = 0
 
-        # ── spheres + labels ────────────────────────────────────────────────
+        # Create waypoint markers and labels.
         for idx, v in enumerate(vertices):
             x, y = float(v[0]), float(v[1])
             props = v[2] if len(v) > 2 else {}
@@ -55,7 +50,7 @@ class NavGraphVisualizer(Node):
             is_charger  = bool(props.get('is_charger', False))
             is_parking  = bool(props.get('is_parking_spot', False))
 
-            # Color: charger=yellow, parking=cyan, normal=white
+            # Color charger, parking, and ordinary waypoints separately.
             if is_charger:
                 color = ColorRGBA(r=1.0, g=1.0, b=0.0, a=0.9)
             elif is_parking:
@@ -63,7 +58,7 @@ class NavGraphVisualizer(Node):
             else:
                 color = ColorRGBA(r=1.0, g=1.0, b=1.0, a=0.8)
 
-            # Sphere
+            # Waypoint sphere marker.
             m = Marker()
             m.header.frame_id = self._frame
             m.ns   = 'waypoints'
@@ -78,7 +73,7 @@ class NavGraphVisualizer(Node):
             m.color = color
             markers.markers.append(m)
 
-            # Label
+            # Waypoint name label.
             t = Marker()
             t.header.frame_id = self._frame
             t.ns   = 'labels'
@@ -97,7 +92,7 @@ class NavGraphVisualizer(Node):
             t.text = f'[{idx}] {name}{suffix}'
             markers.markers.append(t)
 
-        # ── lanes as lines ──────────────────────────────────────────────────
+        # Draw navigation lanes.
         for lane in lanes:
             a, b = int(lane[0]), int(lane[1])
             if a >= len(vertices) or b >= len(vertices):
@@ -115,9 +110,9 @@ class NavGraphVisualizer(Node):
                 Point(x=x0, y=y0, z=0.05),
                 Point(x=x1, y=y1, z=0.05),
             ]
-            line.scale.x = 0.08   # shaft diameter
-            line.scale.y = 0.18   # head diameter
-            line.scale.z = 0.15   # head length
+            line.scale.x = 0.08   # Arrow shaft diameter
+            line.scale.y = 0.18   # Arrowhead diameter
+            line.scale.z = 0.15   # Arrowhead length
             line.color = ColorRGBA(r=0.0, g=0.9, b=0.2, a=0.9)
             markers.markers.append(line)
 

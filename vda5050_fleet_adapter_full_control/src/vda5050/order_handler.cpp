@@ -22,7 +22,7 @@ nlohmann::json build_route_order(
             "must generate it before calling, so it can track the same id " "make_order() ends up sending.");
     }
 
-    // Clamped, not trusted: a caller-supplied count past route.size() would otherwise silently release nothing.
+    // Clamp the released count to the route length.
     const std::size_t release_edges = std::min(released_count.value_or(route.size()), route.size());
 
     nlohmann::json nodes = nlohmann::json::array();
@@ -34,8 +34,7 @@ nlohmann::json build_route_order(
     for (std::size_t i = 0; i < route.size(); ++i)
     {
         const auto &wp = route[i];
-        // Nodes take even sequenceIds, the edges between them the odd ones
-        // in between: base is 0, so waypoint i is node 2*(i+1) and reaches it over edge 2*i+1.
+        // Assign even sequence IDs to nodes and odd IDs to connecting edges.
         const int edge_sequence = static_cast<int>(2 * i + 1);
         const int node_sequence = static_cast<int>(2 * (i + 1));
         const bool released = i < release_edges;

@@ -105,8 +105,7 @@ ParsedFactsheet::ParsedFactsheet(const nlohmann::json &raw)
         if (limits.contains("maxArrayLens") && limits["maxArrayLens"].is_object())
         {
             const auto &arr = limits["maxArrayLens"];
-            // VDA5050 §9.4 uses the literal dot-notation key "order.nodes" /
-            // "order.edges", not a nested "order": {"nodes": ...} object.
+            // Read VDA5050's dotted protocol-limit keys for order nodes and edges.
             max_order_nodes = get_uint(arr, "order.nodes");
             max_order_edges = get_uint(arr, "order.edges");
         }
@@ -145,7 +144,7 @@ bool ParsedFactsheet::supports_scope(const std::string &action_type,
     const auto it = agv_actions.find(action_type);
     if (it == agv_actions.end() || it->second.scopes.empty())
     {
-        // Undeclared action, or declared without actionScopes: unknown, not "no" -- do not block on a factsheet that simply omits this field.
+        // Accept actions whose factsheet scope is undeclared.
         return true;
     }
     const auto &scopes = it->second.scopes;

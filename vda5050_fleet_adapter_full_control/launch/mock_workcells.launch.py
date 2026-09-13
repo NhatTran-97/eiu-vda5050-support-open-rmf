@@ -1,9 +1,4 @@
-"""Launch the mock dispenser + ingestor used to demo Delivery tasks.
-
-Override defaults if needed:
-  ros2 launch vda5050_fleet_adapter_full_control mock_workcells.launch.py \
-      dispenser_guid:=dispenser_a load_time:=8.0
-"""
+"""Launch mock dispenser and ingestor workcells."""
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration

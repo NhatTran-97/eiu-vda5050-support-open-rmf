@@ -26,8 +26,7 @@ public:
 
     ~MqttClient() override;
 
-    // Configure callbacks before connect(); Paho invokes them from an internal
-    // thread and callback replacement is not synchronized.
+    // Set callbacks before connecting; Paho calls them from its worker thread.
     void set_on_message(MessageCallback cb);
     void set_on_connected(ConnectedCallback cb);
     void set_on_connection_lost(ConnectionLostCallback cb);
@@ -37,12 +36,10 @@ public:
     void shutdown(void);
     bool is_connected() const;
 
-    // Returns true when Paho accepts the asynchronous publish request. This
-    // does not confirm broker delivery or AGV execution.
+    // Return whether Paho queued the publish request, without implying delivery.
     bool publish(const std::string &topic, const std::string &payload, int qos = 1);
 
-    // Returns true when Paho accepts the asynchronous subscribe request.
-    // Subscriptions are retained locally and restored after reconnecting.
+    // Return whether Paho queued the subscription; restore it after reconnecting.
     bool subscribe(const std::string &topic, int qos = 1);
 
 private:

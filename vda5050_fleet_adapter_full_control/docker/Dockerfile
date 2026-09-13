@@ -1,10 +1,10 @@
-# Jazzy + Open-RMF + Paho MQTT C++ environment for the VDA5050 fleet adapter.
+# Build environment for the Jazzy VDA5050 fleet adapter.
 
 FROM ros:jazzy-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Open-RMF (fleet adapter + core nodes) and build/runtime deps. 
+# Install Open-RMF and build dependencies.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-jazzy-rmf-fleet-adapter \
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       mosquitto-clients \
     && rm -rf /var/lib/apt/lists/*
 
-# ── eiu_fleet_ui (PySide6/QML GUI) ──────────────────────────────────────────
+# Install the EIU fleet UI dependencies.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-pip \
       libgl1 \
@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --break-system-packages PySide6
 
-# Source ROS + the (mounted) workspace overlay for every shell.
+# Source ROS and the mounted workspace overlay in each shell.
 RUN echo 'source /opt/ros/jazzy/setup.bash' >> /root/.bashrc \
  && echo '[ -f /ros2_ws/install/setup.bash ] && source /ros2_ws/install/setup.bash' \
       >> /root/.bashrc

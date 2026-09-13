@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""
-Minimal RMF delivery dispatcher (no rmf_demos needed).
-
-Publishes a dispatch_task_request ApiRequest to /task_api_requests, same
-mechanism as dispatch_patrol.py -- see that script for the QoS/handshake notes.
-
-    python3 dispatch_delivery.py Patrol_A1 mock_dispenser_1 Patrol_F1 mock_ingestor_1
-"""
+"""Submit an RMF delivery task."""
 import argparse
 import json
 import sys

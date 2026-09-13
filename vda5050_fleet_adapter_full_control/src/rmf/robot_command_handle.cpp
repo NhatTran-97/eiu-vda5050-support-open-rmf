@@ -21,14 +21,14 @@ constexpr double kUsableSpeedMetresPerSecond = 0.05;
 // Early-arrival threshold for schedule diagnostics.
 constexpr double kEarlyArrivalWarnSeconds = 2.0;
 
-// Tolerance for treating a waypoint as the AGV's current pose rather than a real hop to a distinct graph waypoint.
+// Treat near-identical poses as the same waypoint.
 constexpr double kSamePoseMetres = 0.05;
 constexpr double kSamePoseRadians = 0.05;
 
-// How long stop()'s pause waits for a resuming follow_new_path() before escalating to a real cancelOrder.
+// Allow this long for a new path before a traffic hold becomes a cancellation.
 constexpr double kTrafficPauseTimeoutSeconds = 10.0;
 
-// How many of `times` are releasable at `now`: route point 0 is always releasable; point k>=1 requires times[k-1] to have passed.
+// Count route points whose release time has passed; the first point is always released.
 std::size_t releasable_count(const std::vector<rmf_traffic::Time> &times, rmf_traffic::Time now)
 {
     if (times.empty())
@@ -97,7 +97,7 @@ std::string VdaRobotCommandHandle::node_id_for(
     std::string name;
     if (_graph && wp.graph_index().has_value())
     {
-        // Graph::Waypoint::name() returns nullptr for an unnamed waypoint.
+        // Handle unnamed graph waypoints.
         const auto *n = _graph->get_waypoint(*wp.graph_index()).name();
         if (n)
         {
@@ -136,7 +136,7 @@ double VdaRobotCommandHandle::estimate_seconds(
     const Eigen::Vector3d &from, const Eigen::Vector3d &to,
     const std::optional<vda5050::Velocity> &velocity) const
 {
-    // Use measured speed while it indicates real motion; otherwise the nominal fleet speed.
+    // Use measured speed while moving, otherwise the fleet's nominal speed.
     double speed = _nominal_speed;
     if (velocity.has_value() && velocity->speed() >= kUsableSpeedMetresPerSecond)
     {
@@ -164,8 +164,7 @@ void VdaRobotCommandHandle::follow_new_path(
         return;
     }
 
-    // Drop waypoints[0] only if it geometrically matches the AGV's own reported pose (position and heading) -- it then duplicates the base
-    // node Connector::navigate_route() builds separately. A same-position, different-heading pair is a real in-place turn and must stay.
+    // Skip the first RMF waypoint only when its pose matches the AGV's current pose.
     std::size_t start_index = 0;
     const auto current = _connector.get_data(_name);
     if (current.has_value())
@@ -192,7 +191,7 @@ void VdaRobotCommandHandle::follow_new_path(
 
     if (_honor_waypoint_timing)
     {
-        // RMF resets maximum_delay() to the fleet default per command -- reassert it here.
+        // Restore the configured delay limit for each new RMF command.
         std::shared_ptr<RobotUpdateHandle> handle;
         {
             std::lock_guard<std::mutex> lock(_mutex);
@@ -225,7 +224,7 @@ void VdaRobotCommandHandle::follow_new_path(
             const auto &wp_map = _graph->get_waypoint(*wp.graph_index()).get_map_name();
             if (!map_name.empty() && map_name != wp_map)
             {
-                // The order builder emits one mapId per route.
+                // Use one map ID for the entire VDA5050 order.
                 RCLCPP_WARN(_logger,
                             "[%s] path spans maps '%s' and '%s'; sending it as one "
                             "order on '%s', which the AGV may reject",
@@ -251,7 +250,7 @@ void VdaRobotCommandHandle::follow_new_path(
 
     if (map_name.empty())
     {
-        // Fall back to the map in the latest AGV state.
+        // Use the AGV's latest map when the route has no map ID.
         const auto data = _connector.get_data(_name);
         if (data.has_value())
         {
@@ -266,7 +265,7 @@ void VdaRobotCommandHandle::follow_new_path(
     RCLCPP_INFO(_logger, "[%s] follow_new_path: %zu waypoint(s) on '%s', ending at '%s'",
                 _name.c_str(), route.size(), map_name.c_str(), route.back().node_id.c_str());
 
-    // Clear _path before publishing so update() can't fire stale callbacks.
+    // Clear the old path before publishing a new order.
     bool had_active_path = false;
     bool resuming_from_pause = false;
     {
@@ -313,7 +312,7 @@ void VdaRobotCommandHandle::follow_new_path(
     const auto result = _connector.navigate_route(_name, route, map_name, initial_release);
     if (result.status == CommandStatus::transport_failed)
     {
-        // No path is stored and no callback runs: RMF sees no progress on a command that never left this process.
+        // Keep the path inactive when its order was never published.
         RCLCPP_ERROR(_logger,
                      "[%s] follow_new_path: order was not published (transport failure) -- "
                      "RMF will see no progress on this command",
@@ -336,8 +335,7 @@ void VdaRobotCommandHandle::follow_new_path(
 
 void VdaRobotCommandHandle::stop()
 {
-    // RMF also calls this for a real cancellation, not just a traffic hold --
-    // pause here, update() escalates to a real cancelOrder if unresumed.
+    // Pause on stop and cancel only if no replacement path arrives.
     if (_connector.pause(_name) == CommandStatus::transport_failed)
     {
         RCLCPP_ERROR(_logger,
@@ -358,7 +356,7 @@ void VdaRobotCommandHandle::dock(const std::string &dock_name, RequestCompleted 
 
     if (action_id.empty())
     {
-        // No completion callback runs for an action that was never dispatched.
+        // Do not complete an action that was never dispatched.
         RCLCPP_ERROR(_logger,
                      "[%s] dock '%s' was not published (unregistered robot or transport "
                      "failure) -- RMF will see no progress on this dock",
@@ -376,7 +374,7 @@ void VdaRobotCommandHandle::on_perform_action(const std::string &category, const
 {
     RCLCPP_INFO(_logger, "[%s] action '%s'", _name.c_str(), category.c_str());
 
-    // Passed through as-is so each parameter keeps its JSON type.
+    // Preserve each action parameter's JSON type.
     const nlohmann::json params = description.is_object() ? description : nlohmann::json::object();
     const std::string action_id = _connector.execute_instant_action(_name, category, params);
     if (action_id.empty())
@@ -391,14 +389,14 @@ void VdaRobotCommandHandle::on_perform_action(const std::string &category, const
         std::lock_guard<std::mutex> lock(_mutex);
         if (_action_exec.has_value())
         {
-            // Two overlapping PerformAction dispatches shouldn't happen -- release the earlier one.
+            // Complete the previous action before tracking a new one.
             RCLCPP_WARN(_logger, "[%s] action '%s' dispatched while action %s was still tracked -- " "abandoning the earlier one",  _name.c_str(), action_id.c_str(), _action_id.c_str());
             superseded = std::move(_action_exec);
         }
         _action_id = action_id;
         _action_exec = std::move(execution);
     }
-    // Outside the lock: error() re-enters RMF, which may call back into this object.
+    // Call RMF outside the command lock to allow callbacks.
     if (superseded.has_value())
     {
         superseded->error("Superseded by another action before finishing");
@@ -407,7 +405,7 @@ void VdaRobotCommandHandle::on_perform_action(const std::string &category, const
 
 void VdaRobotCommandHandle::update(const RobotData &data)
 {
-    // Read the update handle under the lock; set_update_handle() may write it from a different thread.
+    // Read the update handle under the command lock.
     std::shared_ptr<RobotUpdateHandle> handle;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -422,7 +420,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         data.map_name, Eigen::Vector3d(data.position[0], data.position[1], data.position[2]));
     handle->update_battery_soc(data.battery_soc);
 
-    // Resync _paused with what the AGV actually reports; a stale flag blocks pause()/resume().
+    // Sync the pause flag with the AGV's reported state.
     bool was_paused;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -452,7 +450,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         RCLCPP_INFO(_logger, "[%s] AGV pause state changed to %s outside pause()/resume() -- syncing RMF",  _name.c_str(), data.paused ? "paused" : "not paused");
     }
 
-    // stop()'s pause was never resumed -- cancel for real.
+    // Cancel a traffic hold that received no replacement path.
     bool escalate_to_cancel = false;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -527,7 +525,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                 _dock_action_id.clear();
                 if (dock_failed)
                 {
-                    // No failure signal in RequestCompleted -- drop the callback instead of reporting success.
+                    // Do not report success when the request failed.
                     _dock_finished = nullptr;
                 }
                 else
@@ -542,7 +540,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         {
             if (!_action_exec->okay())
             {
-                // VDA5050 defines no cancellation for an instant action already dispatched; the AGV may keep running it after RMF withdraws the activity.
+                // A dispatched instant action may continue after RMF withdraws it.
                 RCLCPP_WARN(_logger, "[%s] action %s was stopped by RMF -- the AGV may still be " "executing it, VDA5050 offers no way to cancel it", _name.c_str(), _action_id.c_str());
                 _action_exec.reset();
                 _action_id.clear();
@@ -565,8 +563,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         {
             auto &path = *_path;
 
-            // Grow the released horizon as the times gating it pass;
-            // independent of progress below, which advances on the AGV's own reported sequenceId, not the clock.
+            // Release route points as their scheduled times pass.
             if (_honor_waypoint_timing && _clock && path.released_count < path.times.size())
             {
                 const auto now = rmf_traffic_ros2::convert(_clock->now());
@@ -580,8 +577,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
 
             const Eigen::Vector3d here(data.position[0], data.position[1], data.position[2]);
 
-            // build_route_order() places route point i at sequenceId 2*(i+1); trusted only while the AGV echoes this path's own
-            // orderId, to avoid jumping progress from a stale sequenceId.
+            // Match sequence progress only to the active order ID.
             if (data.last_node_sequence_id.has_value() && !path.order_id.empty() &&
                 data.order_id == path.order_id)
             {
@@ -591,7 +587,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                     std::max(path.next_index, std::min(passed, path.node_ids.size()));
             }
 
-            // A waypoint counts as passed once the AGV echoes its nodeId as lastNodeId, or is simply standing on it.
+            // Advance progress when the AGV reports or reaches a waypoint.
             while (path.next_index < path.node_ids.size())
             {
                 const auto &target = path.positions[path.next_index];
@@ -600,7 +596,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                 const bool standing_on_it = std::hypot(target.x() - here.x(), target.y() - here.y()) <= kWaypointReachedMetres;
                 bool reached = reported || standing_on_it;
 
-                // A repeated nodeId is an in-place turn at the same node (see follow_new_path()'s dedup) 
+                // Keep repeated node IDs for in-place turns.
                 if (reached && path.next_index > 0 &&
                     path.node_ids[path.next_index] == path.node_ids[path.next_index - 1])
                 {
@@ -614,7 +610,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                     break;
                 }
 
-                // VDA5050 orders carry no waypoint hold time -- this only reports when the AGV runs ahead of RMF's schedule.
+                // Report early arrival against RMF's schedule.
                 if (path.next_index < path.times.size() && _clock)
                 {
                     const double early = std::chrono::duration<double>( path.times[path.next_index] - rmf_traffic_ros2::convert(_clock->now())).count();
@@ -636,17 +632,17 @@ void VdaRobotCommandHandle::update(const RobotData &data)
             }
             else if (!path.replan_requested && _connector.is_order_stuck(_name))
             {
-                // AGV hasn't picked up this order after a fair wait -- replan around it.
+                // Request a replan when the AGV does not accept the order in time.
                 path.replan_requested = true;
                 trigger_replan = true;
             }
             else if (path.next_index < path.positions.size() && path.arrival_estimator)
             {
                 estimator = path.arrival_estimator;
-                // path.next_index may start at RMF waypoints[1], not [0] (see waypoint_offset); ArrivalEstimator wants RMF's index.
+                // Restore the RMF path index after dropping a redundant first waypoint.
                 estimate_index = path.next_index + path.waypoint_offset;
 
-                // Still outside the released horizon -- report the release time, not a distance/speed estimate.
+                // Use the next release time for points still in the horizon.
                 const bool gated_by_horizon = _honor_waypoint_timing && _clock &&  path.next_index >= path.released_count && path.next_index < path.times.size();
                 if (gated_by_horizon)
                 {
@@ -661,7 +657,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         }
     }
 
-    // Outside the lock: these callbacks re-enter RMF, which may call straight back into this object.
+    // Invoke RMF callbacks outside the command lock.
     if (trigger_replan)
     {
         RCLCPP_WARN(_logger, "[%s] order unacknowledged for too long -- asking RMF to replan",_name.c_str());
@@ -670,7 +666,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
     if (grow_release_to > 0 &&
         _connector.release_more(_name, grow_release_to) != CommandStatus::transport_failed)
     {
-        // Only committed if this order is still active -- a follow_new_path() in between must not have its released_count overwritten by a stale grow request.
+        // Apply horizon growth only while this order remains active.
         std::lock_guard<std::mutex> lock(_mutex);
         if (_path.has_value() && _path->order_id == grow_order_id)
         {
@@ -683,7 +679,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
     }
     if (dock_failed)
     {
-        // No failure signal in RequestCompleted -- ask for a replan directly.
+        // Request a replan when the active path cannot complete.
         RCLCPP_ERROR(_logger, "[%s] dock action %s FAILED -- asking RMF to replan",  _name.c_str(), dock_action_id_done.c_str());
         handle->replan();
     }
@@ -723,11 +719,11 @@ void VdaRobotCommandHandle::set_update_handle(std::shared_ptr<RobotUpdateHandle>
 
     if (_honor_waypoint_timing)
     {
-        // A hold at the release boundary is expected, not a delay -- is_order_stuck() covers a real stuck AGV.
+        // Treat a stop at the release boundary as a scheduled hold.
         handle->maximum_delay(rmf_utils::optional<rmf_traffic::Duration>());
     }
 
-    // weak_ptr: RMF holds this executor for as long as the robot is registered.
+    // Keep the executor tied to the robot's RMF registration.
     std::weak_ptr<VdaRobotCommandHandle> weak = weak_from_this();
     handle->set_action_executor([weak](const std::string &category, const nlohmann::json &description, RobotUpdateHandle::ActionExecution execution)
         {
@@ -760,14 +756,14 @@ std::string VdaRobotCommandHandle::pause()
         handle = _update_handle;
     }
 
-    // interrupt() would cancel the active order, the opposite of a pause -- lift the delay ceiling instead; resume() restores it.
+    // Pause without cancelling the order and lift the delay ceiling.
     const auto saved_delay = handle->maximum_delay();
     handle->maximum_delay(rmf_utils::optional<rmf_traffic::Duration>());
 
     const auto status = _connector.pause(_name);
     if (status == CommandStatus::transport_failed)
     {
-        // Pause never reached the AGV -- restore the ceiling.
+        // Restore the delay ceiling if the pause action fails.
         handle->maximum_delay(saved_delay);
         RCLCPP_ERROR(_logger, "[%s] pause: startPause did not reach the AGV (transport failure)", _name.c_str());
         return "startPause failed to reach the AGV (MQTT publish failed)";
@@ -796,11 +792,11 @@ std::string VdaRobotCommandHandle::resume()
         saved_delay = _saved_maximum_delay;
     }
 
-    // Resume the AGV first, then restore the ceiling.
+    // Resume the AGV before restoring the delay ceiling.
     const auto status = _connector.resume(_name);
     if (status == CommandStatus::transport_failed)
     {
-        // stopPause never reached the AGV -- stay paused.
+        // Keep the pause state if stopPause fails.
         RCLCPP_ERROR(_logger,
                      "[%s] resume: stopPause did not reach the AGV (transport failure) -- "
                      "still paused",
@@ -853,7 +849,7 @@ void VdaRobotCommandHandle::set_ready_for_orders(bool ready, const std::string &
 
 void VdaRobotCommandHandle::apply_commission()
 {
-    // set_commission() runs outside the lock -- avoids a re-entrant deadlock.
+    // Apply commission changes outside the command lock.
     std::shared_ptr<RobotUpdateHandle> handle;
     bool commission = false;
     std::string reason;

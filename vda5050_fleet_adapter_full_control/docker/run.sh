@@ -18,7 +18,7 @@ if [ -n "${DISPLAY:-}" ] && command -v xhost >/dev/null 2>&1; then
 fi
 
 echo ">> container=$CONTAINER  ws=$WS  domain=$DOMAIN  (network=host)"
-# Remove any stopped container with the same name before starting a fresh one.
+# Clear a stopped container before starting a new one.
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 exec docker run --rm -it \
   --name "$CONTAINER" \

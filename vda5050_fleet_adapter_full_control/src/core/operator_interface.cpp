@@ -189,7 +189,7 @@ void OperatorInterface::on_init_position(
         it->second->publish(out);
     };
 
-    // Not get_data(): it withholds everything until the AGV is localized, which is exactly what this command exists to fix. Only the map name is needed.
+    // Read the latest map name even when the AGV has no usable pose.
     const auto map_name = _connector.get_known_map(robot_name);
     if (!map_name.has_value())
     {
@@ -215,7 +215,7 @@ void OperatorInterface::on_init_position(
         return;
     }
 
-    // Sent is not accepted -- the AGV's verdict only arrives in its actionStates.
+    // Wait for the AGV's action state before reporting initPosition success.
     std::lock_guard<std::mutex> lock(_pending_mutex);
     _pending_init_actions[robot_name] = PendingInitAction{action_id, std::chrono::steady_clock::now() + kInitActionTimeout};
 }

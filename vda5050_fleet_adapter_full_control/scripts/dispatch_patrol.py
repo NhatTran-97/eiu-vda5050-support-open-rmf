@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""
-Minimal RMF patrol dispatcher (no rmf_demos needed).
-
-Publishes a dispatch_task_request ApiRequest to /task_api_requests with the QoS
-the RMF dispatcher expects (reliable + transient_local), then waits for the
-subscription so the request is actually delivered.
-
-    python3 dispatch_patrol.py wp2_parking
-    python3 dispatch_patrol.py wp2_parking wp1_charging initial_wp --rounds 2
-    python3 ~/ros2_ws/src/vda5050_fleet_adapter/scripts/dispatch_patrol.py wp6
-
-"""
+"""Submit an RMF patrol task."""
 import argparse
 import json
 import sys
@@ -55,7 +44,7 @@ def main():
     msg.request_id = "cli-" + uuid.uuid4().hex[:8]
     msg.json_msg = json.dumps({"type": "dispatch_task_request", "request": request})
 
-    # Capture the task_id RMF assigns, from the matching response.
+    # Match RMF's response to the requested task ID.
     result = {"task_id": None}
 
     def on_response(resp):
@@ -69,7 +58,7 @@ def main():
 
     node.create_subscription(ApiResponse, "/task_api_responses", on_response, qos)
 
-    # Wait for the dispatcher's subscription so the message is delivered.
+    # Wait until the dispatcher subscribes to task requests.
     print("Waiting for /task_api_requests subscriber (the RMF dispatcher)...")
     for _ in range(50):
         if pub.get_subscription_count() > 0:
@@ -88,7 +77,7 @@ def main():
     print(f"Dispatched patrol -> places={args.places} rounds={args.rounds} "
           f"(request_id={msg.request_id})")
 
-    # Spin to let the request go out and the response (with task_id) come back.
+    # Receive the assigned RMF task ID after publishing.
     end = time.time() + 3.0
     while time.time() < end and result["task_id"] is None:
         rclpy.spin_once(node, timeout_sec=0.1)

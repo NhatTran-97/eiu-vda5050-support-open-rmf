@@ -34,8 +34,7 @@ Config::Config(const std::string &config_file)
         throw std::runtime_error("vda5050.interface_name must not be empty");
     }
 
-    // Capped at 100 Hz: the update loop converts 1/rate to whole
-    // milliseconds, so above 1000 Hz it would floor to a busy-loop.
+    // Limit the update rate so whole-millisecond timer intervals remain valid.
     _update_rate_hz = vda["update_rate_hz"] ? vda["update_rate_hz"].as<double>() : 10.0;
     if (!std::isfinite(_update_rate_hz) || !(_update_rate_hz > 0.0) || _update_rate_hz > 100.0)
     {
@@ -107,7 +106,7 @@ RobotConfig Config::robot_config(const std::string &name) const
     {
         const auto t = rc["transform"];
         const double rot = t["rotation"] ? t["rotation"].as<double>() : 0.0;
-        // Transform::to_rmf() requires an invertible scale.
+        // Require a nonzero scale for the inverse map transform.
         const double scale = t["scale"] ? t["scale"].as<double>() : 1.0;
         if (!std::isfinite(scale) || scale == 0.0)
         {

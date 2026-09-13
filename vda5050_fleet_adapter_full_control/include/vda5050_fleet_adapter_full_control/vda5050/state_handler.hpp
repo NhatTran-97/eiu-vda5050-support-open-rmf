@@ -34,8 +34,7 @@ struct SafetyState
     bool triggered() const;
 };
 
-// Parsed subset of a VDA5050 state message. Required-field validation is
-// performed by Connector before construction; incompatible present values may raise a nlohmann::json type exception.
+// Parsed VDA5050 state used for pose, battery, safety, and order tracking.
 class ParsedState
 {
 public:
@@ -90,17 +89,17 @@ public:
     // Returns the first FATAL error type, or an empty string when none exists.
     std::string first_fatal_error() const;
 
-    // Checks route completion for a tracked order and optional target node. The caller must clear its tracked order after issuing cancelOrder.
+    // Check whether the tracked order reached its target node.
     bool order_finished(const std::string &order_id, const std::string &target_node_id = "", const std::vector<std::string> &order_action_ids = {}) const;
 
-    // Returns false when a supplied action is reported in a non-terminal state. Missing and unrelated action states are ignored.
+    // Check whether the supplied actions all reached terminal states.
     bool actions_settled(const std::vector<std::string> &action_ids) const;
 
-    // FINISHED / FAILED / RUNNING / ... for one action, or nullopt when the AGV has not reported it.
+    // Read an action's reported status, or nullopt before it appears.
     std::optional<std::string> action_status(const std::string &action_id) const;
 };
 
-// Pose and velocity parsed from a VDA5050 visualization message. Visualization data may refine localization but is not used for order completion.
+// Pose and velocity from visualization messages, used to refine localization.
 class ParsedVisualization
 {
 public:

@@ -1,26 +1,5 @@
 #!/usr/bin/env python3
-"""
-test_pause_resume.py — checks that an operator pause holds the robot without
-throwing its order away.
-
-RMF stops a robot as part of interrupting it, and a naive adapter forwards
-that stop as a VDA5050 cancelOrder — which discards the order the pause is
-supposed to preserve. This test dispatches a long route, pauses mid-way, and
-fails if a cancelOrder shows up.
-
-It watches MQTT directly, so it sees what the AGV sees:
-  PASS  startPause arrives, no cancelOrder, stopPause on resume, and the
-        robot keeps working the same order afterwards.
-  FAIL  a cancelOrder appears, or a second order is issued on resume.
-
-Prerequisites (already running, same ROS_DOMAIN_ID):
-  ros2 run rmf_traffic_ros2 rmf_traffic_schedule
-  ros2 run rmf_task_ros2 rmf_task_dispatcher
-  ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py
-
-Usage:
-  python3 test_pause_resume.py --target Patrol_F3
-"""
+"""Check that pausing and resuming keeps the robot's active order."""
 import argparse
 import json
 import os
@@ -40,8 +19,8 @@ class Watcher:
     def __init__(self, base: str):
         self.base = base
         self.lock = threading.Lock()
-        self.orders = []          # order ids, in the order they were sent
-        self.actions = []         # (timestamp, actionType)
+        self.orders = []          # Published order IDs in sequence
+        self.actions = []         # Action timestamps and types
         self.client = mqtt.Client()
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
@@ -106,7 +85,7 @@ def main() -> int:
                    help="seconds to stay paused while watching for a cancelOrder")
     args = p.parse_args()
 
-    # A stale mock on the same identity makes every observation meaningless.
+    # Stop if another mock robot is using the same MQTT identity.
     subprocess.run(["pkill", "-f", "mock_mqtt_robot.py"], capture_output=True)
     time.sleep(1.0)
 

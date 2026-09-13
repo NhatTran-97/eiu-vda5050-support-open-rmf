@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""
-Cancel a running RMF task by task_id.
-
-The task_id is printed by dispatch_patrol.py, or read from
-    ros2 topic echo /task_api_responses
-
-Usage (run on the HOST, same ROS_DOMAIN_ID as the RMF core — domain 5 here):
-    python3 cancel_task.py patrol.dispatch-3
-"""
+"""Cancel an RMF task by its task ID."""
 import argparse
 import json
 import sys

@@ -1,9 +1,4 @@
-"""Launch the C++ VDA5050 fleet adapter.
-
-Override paths if needed:
-  ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py \
-      config_file:=/abs/config.yaml nav_graph:=/abs/nav_graph.yaml
-"""
+"""Launch the VDA5050 fleet adapter node."""
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution

@@ -20,31 +20,22 @@
 
 namespace vda5050_fleet_adapter_full_control::core {
 
-// Operator commands provided by one robot command handle. Each callback returns an empty string on success or an error description on failure.
+// Callbacks for one robot's operator commands; an empty result means success.
 struct RobotHooks
 {
     std::function<std::string()> pause;
     std::function<std::string()> resume;
 };
 
-// Exposes operator controls that are not part of RobotCommandHandle.
-//
-// Per robot <name>:
-//   <node>/<name>/init_position         (geometry_msgs/PoseWithCovarianceStamped)
-//   <node>/<name>/init_position_result  (std_msgs/String, published back: "ok" or "error: <reason>")
-//   <node>/<name>/pause                 (std_srvs/Trigger)
-//   <node>/<name>/resume                (std_srvs/Trigger)
-//
-// Per-robot speed cap:
-//   speed_limit.<name>  (double, m/s; 0.0 disables the cap)
+// Expose per-robot localization, pause, resume, and speed-limit controls through ROS.
 class OperatorInterface
 {
 public:
-    // `node` and `connector` must outlive this object.
+    // The node and connector must outlive this interface.
     OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, std::map<std::string, RobotHooks> hooks);
 
 private:
-    // An initPosition sent to an AGV, awaiting its verdict in actionStates.
+    // An initPosition request awaiting the AGV's result.
     struct PendingInitAction
     {
         std::string action_id;
@@ -53,7 +44,7 @@ private:
 
     void on_init_position(const std::string &robot_name, const geometry_msgs::msg::PoseWithCovarianceStamped &msg);
 
-    // Publish the AGV's verdict on each pending initPosition once it lands or times out.
+    // Publish the result of each pending initPosition request or its timeout.
     void poll_pending_init_actions();
 
     // Validate speed-limit updates before ROS commits them.
@@ -77,13 +68,12 @@ private:
     std::mutex _pending_mutex;
     std::map<std::string, PendingInitAction> _pending_init_actions;
 
-    // Declared last so they are destroyed first: their callbacks read the members above.
+    // Destroy ROS callbacks before the state they access.
     std::vector<rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr> _init_position_subs;
     std::vector<rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr> _services;
     rclcpp::TimerBase::SharedPtr _init_action_timer;
 
-    // Held only to keep the registrations alive for this object's lifetime;
-    // dropping either shared_ptr deregisters its callback. Not read again after construction.
+    // Keep parameter callbacks registered for this interface's lifetime.
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr _on_set_params;
     rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr _post_set_params;
 };

@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
-"""
-mock_ingestor.py — simulate an RMF ingestor workcell.
-
-TurtleBot3 has no drop/unload hardware, so this stands in for one: it answers
-IngestorRequest on /ingestor_requests with an ACKNOWLEDGED result, waits
---unload-time seconds (simulating the physical unload), then a SUCCESS result.
-Publishes IngestorState at 1 Hz so RMF's IngestItem phase has both signals
-it looks for (see rmf_fleet_adapter's IngestItem::ActivePhase).
-
-Usage:
-  python3 mock_ingestor.py --guid mock_ingestor_1
-  python3 mock_ingestor.py --guid mock_ingestor_1 --unload-time 5.0
-"""
+"""Simulate an RMF ingestor for delivery tasks."""
 import argparse
 import sys
 

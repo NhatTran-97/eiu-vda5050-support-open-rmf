@@ -10,20 +10,21 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# find dependencies
+# Find ROS and third-party dependencies.
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rmf_fleet_adapter REQUIRED)
 find_package(rmf_traffic REQUIRED)
 find_package(rmf_traffic_ros2 REQUIRED)
 find_package(rmf_battery REQUIRED)
+find_package(rmf_fleet_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
 
-# ─── Paho MQTT C++ (apt: libpaho-mqttpp-dev libpaho-mqtt-dev) ──────────────────
+# Find Paho MQTT C++.
 find_library(PAHO_MQTTPP_LIB NAMES paho-mqttpp3)
 find_library(PAHO_MQTT_C_LIB NAMES paho-mqtt3as paho-mqtt3a)
 find_path(PAHO_MQTTPP_INC NAMES mqtt/async_client.h)
@@ -32,7 +33,7 @@ if(NOT PAHO_MQTTPP_LIB OR NOT PAHO_MQTT_C_LIB OR NOT PAHO_MQTTPP_INC)
 endif()
 
 
-# ─── Core library  ─────────────────────
+# Build the adapter library.
 add_library(${PROJECT_NAME}_core SHARED
   src/mqtt/mqtt_client.cpp
   src/vda5050/message_builder.cpp
@@ -61,9 +62,9 @@ target_link_libraries(${PROJECT_NAME}_core PUBLIC
   ${PAHO_MQTT_C_LIB}
 )
 ament_target_dependencies(${PROJECT_NAME}_core PUBLIC
-  rclcpp rmf_traffic rmf_traffic_ros2 rmf_battery geometry_msgs std_srvs)
+  rclcpp rmf_traffic rmf_traffic_ros2 rmf_battery rmf_fleet_msgs geometry_msgs std_srvs)
 
-# ─── Node executable ──────────────────────────────────────────────────────────
+# Build the adapter node.
 add_executable(fleet_adapter
   src/main.cpp
   src/core/fleet_adapter_full_control.cpp

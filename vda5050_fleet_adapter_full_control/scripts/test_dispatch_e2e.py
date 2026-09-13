@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""
-test_dispatch_e2e.py — end-to-end integration test for the vda5050_fleet_adapter.
-
-Verifies the full dispatch -> navigate -> complete loop using a simulated AGV
-(mock_mqtt_robot.py), with no hardware. It:
-  1. launches the mock robot (unless --no-mock),
-  2. dispatches a patrol to a target waypoint via dispatch_patrol.py,
-  3. watches MQTT and asserts the adapter published at least one `order` AND the
-     robot reported arrival (lastNodeId == target),
-  4. exits 0 on PASS, 1 on FAIL.
-
-Prerequisites (already running, same ROS_DOMAIN_ID):
-  ros2 run rmf_traffic_ros2 rmf_traffic_schedule
-  ros2 run rmf_task_ros2 rmf_task_dispatcher
-  ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py
-
-Usage:
-  python3 test_dispatch_e2e.py --target Patrol_C2
-  python3 test_dispatch_e2e.py --target Patrol_B2 --no-mock   # external robot
-"""
+"""Check task dispatch and route execution through the adapter."""
 import argparse
 import json
 import os

@@ -25,8 +25,7 @@ std::string topic(const std::string &interface_name,
                   const std::string &manufacturer,
                   const std::string &serial,
                   const std::string &leaf);
-// Inputs are serialized without validation. Callers must provide finite poses
-// and deviations within the VDA5050 limits.
+// Serialize caller-validated VDA5050 fields into a message envelope.
 nlohmann::json make_node(const std::string &node_id, int sequence_id,
                         double x, double y, double theta,
                         const std::string &map_id, bool released = true,
@@ -41,8 +40,7 @@ nlohmann::json make_edge(const std::string &edge_id, int sequence_id,
 nlohmann::json make_order(int header_id, const std::string &manufacturer, const std::string &serial,
                          const nlohmann::json &nodes, const nlohmann::json &edges,
                           const std::string &order_id = "", int order_update_id = 0);
-// `blocking_type` must be NONE, SOFT, or HARD. Parameter value types are
-// preserved when converted to VDA5050 actionParameters.
+// Build an action with a supported blocking type and typed parameters.
 nlohmann::json make_action(const std::string &action_type, const std::string &blocking_type = "HARD", const std::string &action_id = "",
                            const nlohmann::json &parameters = nlohmann::json::object());
 

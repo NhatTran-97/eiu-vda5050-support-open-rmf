@@ -16,8 +16,7 @@ namespace vda5050_fleet_adapter_full_control::rmf {
 
 namespace {
 
-// Validate the state fields required for completion, readiness, and battery
-// reporting. Invalid messages are rejected without replacing the last valid state.
+// Validate state fields needed for readiness, progress, and battery reporting.
 bool has_required_state_fields(const nlohmann::json &raw)
 {
     return raw.is_object() &&
@@ -38,7 +37,7 @@ bool has_required_state_fields(const nlohmann::json &raw)
            raw["batteryState"]["batteryCharge"].is_number();
 }
 
-// Build a readable client ID that remains unique across hosts and containers.
+// Create a readable MQTT client ID that is unique across hosts and containers.
 std::string make_mqtt_client_id(const std::string &interface_name)
 {
     char hostname[256] = {};
@@ -50,7 +49,7 @@ std::string make_mqtt_client_id(const std::string &interface_name)
     std::random_device rd;
     std::uniform_int_distribution<std::uint32_t> dist;
 
-    // Preserve space for the process and random uniqueness suffixes.
+    // Reserve room for the process and random ID suffixes.
     char buf[96];
     std::snprintf(buf, sizeof(buf), "_%.32s_%d_%08x", hostname, ::getpid(), dist(rd));
     return "rmf_vda5050_adapter_" + interface_name + buf;
@@ -151,7 +150,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         waypoints.reserve(route.size());
         for (const auto &p : route)
         {
-            // Apply the most restrictive graph and operator speed limits.
+            // Apply the lower of the graph and operator speed limits.
             std::optional<double> speed_limit = p.speed_limit;
             if (ctx.operator_speed_limit.has_value())
             {
@@ -193,7 +192,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
 
     if (status == CommandStatus::transport_failed)
     {
-        // Do not track an order that was not queued for transport.
+        // Leave order tracking unchanged if MQTT cannot queue the message.
         RCLCPP_ERROR(_logger,
                      "[VDA5050] %s -> order '%s' NOT published (transport failure) -- not "
                      "tracking it",
@@ -201,7 +200,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         return {CommandStatus::transport_failed, {}};
     }
 
-    // Commit tracking only after the transport accepts the request.
+    // Track the order only after MQTT accepts the publish request.
     {
         std::lock_guard<std::mutex> lock(_mutex);
         auto it = _robots.find(name);
@@ -252,7 +251,7 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
         if (ctx.current_order_id.empty() || ctx.current_route.empty() ||
             clamped <= ctx.current_released_count)
         {
-            // Nothing to extend, or no growth past what's already released.
+            // Stop when the released horizon cannot grow.
             return CommandStatus::transport_failed;
         }
 
@@ -278,9 +277,7 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
 
     if (status == CommandStatus::transport_failed)
     {
-        // The orderUpdateId counter is not rolled back: VDA5050 only
-        // requires it to increase, not to be gap-free, and the next
-        // successful release_more() will simply use the next value.
+        // Keep orderUpdateId increasing even when an update is not queued.
         RCLCPP_ERROR(_logger,
                      "[VDA5050] %s -> order '%s' update %d NOT published (transport failure)",
                      name.c_str(), order_id.c_str(), order_update_id);
@@ -368,7 +365,7 @@ CommandStatus Connector::stop(const std::string &name)
     const CommandStatus status = publish_raw(topic, msg.dump());
     if (status == CommandStatus::transport_failed)
     {
-        // Preserve active-order tracking when cancelOrder is not queued.
+        // Keep the active order when cancelOrder cannot be queued.
         RCLCPP_ERROR(_logger, "[VDA5050] %s -> cancelOrder NOT published (transport failure) -- " "still tracking the order as active", name.c_str());
         return status;
     }
@@ -514,7 +511,7 @@ std::string Connector::execute_instant_action(
         }
         else if (ctx.factsheet.has_value() && !ctx.factsheet->supports_scope(action_type, "INSTANT"))
         {
-            // This API publishes only INSTANT-scoped actions.
+            // Publish only actions supported in the INSTANT scope.
             RCLCPP_WARN(_logger,"[VDA5050] %s: action '%s' is scoped NODE/EDGE only in the AGV's "
                         "factsheet, not INSTANT -- sending it as an instantAction anyway",
                         name.c_str(), action_type.c_str());
@@ -596,7 +593,7 @@ void Connector::warn_if_action_conflicts(const RobotContext &ctx,  const std::st
     }
     const auto &s = *ctx.last_state;
 
-    // HARD and SOFT actions require motion to stop; NONE may run in parallel.
+    // Enforce the motion rules for NONE, SOFT, and HARD actions.
     if (s.driving && blocking_type != "NONE")
     {
         RCLCPP_WARN(_logger,
@@ -612,7 +609,7 @@ void Connector::warn_if_action_conflicts(const RobotContext &ctx,  const std::st
         return;
     }
 
-    // A running HARD-only action holds exclusive execution.
+    // A running HARD action has exclusive control.
     for (const auto &running : s.action_states)
     {
         const std::string status = running.value("actionStatus", std::string{});
@@ -626,7 +623,7 @@ void Connector::warn_if_action_conflicts(const RobotContext &ctx,  const std::st
         {
             continue;
         }
-        // Report only conflicts whose blocking type is unambiguous.
+        // Report conflicts only when the blocking type is known.
         const auto it = ctx.factsheet->agv_actions.find(running_type);
         if (it != ctx.factsheet->agv_actions.end() &&
             it->second.blocking_types.size() == 1 &&
@@ -822,7 +819,7 @@ void Connector::report_state_changes(RobotContext &ctx)
     {
         if (s.new_base_request)
         {
-            // Purely diagnostic -- release is driven by Plan::Waypoint::time() (see honor_waypoint_timing()), never by this request.
+            // Log horizon requests; the route schedule determines actual release.
             const std::size_t total = ctx.current_route.size();
             if (ctx.current_released_count >= total)
             {
@@ -1033,11 +1030,11 @@ std::optional<RobotData> Connector::get_data(const std::string &name)
     data.new_base_request = s.new_base_request;
     data.localization_score = s.localization_score;
 
-    // Prefer fresher visualization pose and velocity over state telemetry.
+    // Use the fresher visualization pose and velocity when available.
     if (ctx.last_visualization.has_value() && ctx.last_visualization_time > ctx.last_state_time)
     {
         const auto &v = *ctx.last_visualization;
-        // Do not combine telemetry from different map frames.
+        // Keep pose and velocity from the same map frame.
         if (v.map_id.empty() || v.map_id == s.map_id)
         {
             data.position = ctx.transform.to_rmf(*v.x, *v.y, *v.theta);
@@ -1082,7 +1079,7 @@ bool Connector::is_command_completed(const std::string &name)
         return true;
     }
 
-    // Report order actions that are still active after navigation settles.
+    // Report order actions still running after navigation ends.
     if (s.node_states.empty() && s.edge_states.empty() && !s.driving &&
         !s.actions_settled(ctx.order_action_ids))
     {

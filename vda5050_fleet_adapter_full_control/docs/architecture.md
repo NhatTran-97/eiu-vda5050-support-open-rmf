@@ -17,6 +17,7 @@ normal VDA5050 master controller.
 | Factsheet awareness | Reads the AGV's declared speed/array-length/order-interval limits and warns before exceeding them |
 | Stuck-order detection | Replans if an AGV never acknowledges a dispatched order's `orderId` within a timeout |
 | Config validation | Fails fast at startup on bad MQTT settings, duplicate identities, or a nav-graph robot missing from `vda5050.robots` |
+| Lane closures (no-go zones) | Subscribes to `/lane_closure_requests`; matching `fleet_name` calls `FleetUpdateHandle::close_lanes()` / `open_lanes()`, so RMF stops routing through those lanes fleet-wide |
 
 ## System architecture
 
@@ -48,6 +49,7 @@ flowchart LR
     CN <-->|order, state, connection,\ninstantActions| MQ
     MQ <--> CA
     UI -->|pause/resume/speed_limit/\ninit_position| OI
+    UI -->|lane_closure_requests| FA
     UI -.->|reads /fleet_states,\n/task_api_*| RMF
 ```
 
@@ -143,6 +145,7 @@ both must return before it's offered work again.
 | This adapter ↔ RMF core | `RobotCommandHandle` / `RobotUpdateHandle` (FullControl) | In-process RMF API |
 | This adapter ↔ robot | `order`, `state`, `connection`, `instantActions`, `factsheet` | MQTT |
 | This adapter ↔ eiu_fleet_ui | `<robot>/pause`, `<robot>/resume`, `speed_limit.<robot>`, `<robot>/init_position` | ROS 2, same domain |
+| This adapter ← eiu_fleet_ui | `/lane_closure_requests` (fleet-wide, not per-robot) | ROS 2, same domain |
 | This adapter → eiu_fleet_ui | `task_state_update`, `task_log_update` | WebSocket, optional |
 | Bridge ↔ Nav2 | `NavigateToPose`, `/odom` | ROS 2, on-robot |
 

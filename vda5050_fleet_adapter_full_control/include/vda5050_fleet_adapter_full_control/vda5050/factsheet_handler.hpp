@@ -10,8 +10,7 @@
 
 namespace vda5050_fleet_adapter_full_control::vda5050 {
 
-// Parsed subset of a VDA5050 factsheet used for capability checks. Unsupported
-// or missing fields are ignored because factsheet data is advisory.
+// Factsheet capabilities used to check actions and protocol limits.
 class ParsedFactsheet
 {
 public:
@@ -49,15 +48,13 @@ public:
     // True when the AGV declared this actionType in protocolFeatures.agvActions.
     bool supports_action(const std::string &action_type) const;
 
-    // Checks an explicitly declared action scope. Missing declarations are
-    // treated as unknown and therefore accepted.
+    // Check an action scope when the factsheet declares one.
     bool supports_scope(const std::string &action_type, const std::string &scope) const;
 
-    // Selects the preferred blocking type when supported, otherwise the first
-    // declared type. Returns `preferred` when no declaration is available.
+    // Use the preferred blocking type when supported, or the first declared type.
     std::string blocking_type_for(const std::string &action_type, const std::string &preferred = "HARD") const;
 
-    // True when at least one supported factsheet field was parsed.
+    // Whether any supported capability was read from the factsheet.
     bool has_content() const;
 };
 

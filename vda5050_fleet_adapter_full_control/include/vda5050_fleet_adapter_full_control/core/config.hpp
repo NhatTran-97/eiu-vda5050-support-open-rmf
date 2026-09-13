@@ -32,9 +32,7 @@ struct RobotConfig
     rmf::Transform transform;
 };
 
-// Parses the `vda5050` configuration block. Invalid YAML, invalid field
-// types, and unsupported values are reported as exceptions. Optional fields
-// use the defaults declared by this class.
+// Parse the VDA5050 config block, using defaults for optional fields and throwing on invalid values.
 class Config
 {
 public:

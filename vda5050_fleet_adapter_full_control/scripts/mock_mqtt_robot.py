@@ -1,30 +1,5 @@
 #!/usr/bin/env python3
-"""
-mock_mqtt_robot.py — simulate a VDA5050 AGV over MQTT.
-
-Replaces the entire robot side (vda5050_client_adapter + tb3_vda5050_bridge +
-Nav2) so the vda5050_fleet_adapter can be exercised end-to-end without hardware.
-
-Behaviour:
-  * publishes `connection` ONLINE on start (retained),
-  * answers a `stateRequest` instant action with an immediate `state`,
-  * on each `order`, simulates driving from the current pose to the end node,
-    streaming `state` (driving=true) and finally reporting arrival
-    (lastNodeId = end node, driving=false, node/edge states cleared),
-  * honours `released` on nodes/edges: holds (driving=false) at the last
-    released node instead of driving past it, and only continues once an
-    order-update (same orderId, higher orderUpdateId) releases more,
-  * on `cancelOrder`, stops and clears the active order,
-  * publishes periodic `state`.
-
-The identity flags MUST match the adapter's `vda5050:` config block.
-
-Usage:
-  python3 mock_mqtt_robot.py
-  python3 mock_mqtt_robot.py --host localhost --interface TB3 \
-      --manufacturer ROBOTIS --serial 0001 \
-      --x 15.28 --y -8.80 --theta 0.9 --start-node wp1_charging
-"""
+"""Simulate a VDA5050 robot over MQTT for adapter testing."""
 import argparse
 import datetime
 import json
@@ -51,40 +26,35 @@ class MockRobot:
         self.order_id = ""
         self.order_update_id = 0
         self.driving = False
-        # True only while held at a release boundary, waiting for an
-        # order-update to extend the base -- mirrors a real VDA5050 client.
+        # Whether the robot is waiting for more released route points.
         self.new_base_request = False
         self.node_states = []
         self.edge_states = []
         self.action_states = []
         self.header = 0
 
-        # Full node/edge arrays of the active order, including unreleased
-        # ones -- an order-update swaps these in place without restarting
-        # the drive thread. nodes[0] is the base node the AGV stands on.
+        # Full route arrays, including points still in the horizon.
         self.nodes = []
         self.edges = []
 
         self.lock = threading.Lock()
-        # Wraps `lock`: lets the drive thread block at a release boundary
-        # and be woken by an order-update without a separate lock.
+        # Wake the drive loop when a new horizon arrives.
         self.cond = threading.Condition(self.lock)
         self._drive_thread = None
         self._cancel = threading.Event()
-        # Set by startPause, cleared by stopPause. The drive loop waits on it
-        # without dropping the order, the way a VDA5050 client holds.
+        # Hold the active order while paused.
         self.paused = threading.Event()
 
         self.client = mqtt.Client()
         self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
-        # Last-will so the broker marks us OFFLINE if we crash.
+        # Mark the robot offline if the MQTT connection drops.
         self.client.will_set(
             f"{self.base}/connection",
             json.dumps(self._connection_payload("CONNECTIONBROKEN")),
             qos=1, retain=True)
 
-    # ── MQTT plumbing ──────────────────────────────────────────────────────────
+    # MQTT connection and callbacks.
 
     def _next_header(self) -> int:
         self.header += 1
@@ -107,7 +77,7 @@ class MockRobot:
         elif msg.topic.endswith("/instantActions"):
             self._handle_instant_actions(payload)
 
-    # ── Publishers ─────────────────────────────────────────────────────────────
+    # Publish VDA5050 messages.
 
     def _connection_payload(self, state: str) -> dict:
         return {
@@ -153,7 +123,7 @@ class MockRobot:
             }
         self.client.publish(f"{self.base}/state", json.dumps(msg), qos=1)
 
-    # ── Order handling ─────────────────────────────────────────────────────────
+    # Accept orders and horizon updates.
 
     def _handle_order(self, order: dict):
         nodes = sorted(order.get("nodes", []), key=lambda n: n.get("sequenceId", 0))
@@ -167,10 +137,8 @@ class MockRobot:
             is_update = bool(order_id) and order_id == self.order_id
             if is_update:
                 if update_id <= self.order_update_id:
-                    return  # stale/duplicate order-update
-                # Same order still in flight: swap in the wider node/edge
-                # arrays and wake the drive thread if it is holding at a
-                # release boundary. Does not touch the running thread.
+                    return  # Ignore stale order updates
+                # Extend the active order and wake the drive loop.
                 self.nodes = nodes
                 self.edges = edges
                 self.order_update_id = update_id
@@ -185,7 +153,7 @@ class MockRobot:
         print(f"[mock] order {order_id[:8]} -> {nodes[-1].get('nodeId')} "
               f"({len(nodes)} node(s))", flush=True)
 
-        # A genuinely new order: interrupt any drive already in flight.
+        # Stop the previous drive loop before starting a new order.
         self._cancel.set()
         if self._drive_thread and self._drive_thread.is_alive():
             self._drive_thread.join(timeout=2.0)
@@ -196,8 +164,7 @@ class MockRobot:
             self.order_update_id = update_id
             self.nodes = nodes
             self.edges = edges
-            # lastNodeSequenceId is scoped to the current order -- the
-            # base is always sequenceId 0.
+            # Reset sequence progress for each new order.
             self.last_node_sequence_id = 0
 
         self._drive_thread = threading.Thread(target=self._drive_route, daemon=True)
@@ -216,8 +183,7 @@ class MockRobot:
                 "released": bool(edge.get("released", True))}
 
     def _await_release(self, index: int) -> bool:
-        """Blocks while self.nodes[index] is not yet released, holding
-        position and publishing state. Returns False if cancelled."""
+        """Wait for a route point to be released, or return False if cancelled."""
         while True:
             with self.cond:
                 if self._cancel.is_set():
@@ -236,11 +202,7 @@ class MockRobot:
                     self.cond.wait(timeout=1.0)
 
     def _drive_route(self):
-        """Execute self.nodes/self.edges the way a VDA5050 client does:
-        drive in sequenceId order, holding at the last released node until
-        an order-update releases more. self.nodes[0] is the base node the
-        AGV is already standing on; the node/edge arrays keep a fixed
-        length for the life of the order, only their `released` flags grow."""
+        """Drive released route points in sequence and publish progress."""
         with self.lock:
             total = len(self.nodes)
 
@@ -267,8 +229,7 @@ class MockRobot:
                 ty = pos.get("y", self.y)
                 tth = pos.get("theta", self.theta)
                 node_id = node.get("nodeId")
-                # Everything still ahead of the AGV, including the node it
-                # is driving towards and the edge it is on.
+                # Report the route points still ahead of the robot.
                 self.driving = True
                 self.node_states = [self._node_state(n) for n in self.nodes[index:]]
                 self.edge_states = [self._edge_state(e) for e in self.edges[index - 1:]]
@@ -276,7 +237,7 @@ class MockRobot:
 
             sx, sy, sth = self.x, self.y, self.theta
             dist = ((tx - sx) ** 2 + (ty - sy) ** 2) ** 0.5
-            steps = max(1, int(dist / 0.3))    # ~0.3 m per step
+            steps = max(1, int(dist / 0.3))    # Approximately 0.3 m per step
 
             for i in range(1, steps + 1):
                 if self._cancel.is_set():
@@ -292,8 +253,7 @@ class MockRobot:
                 self.publish_state()
                 time.sleep(self.args.step_time)
 
-                # Hold here for as long as startPause is in force. The order,
-                # the route and the progress so far all stay put.
+                # Wait while paused without clearing route progress.
                 while self.paused.is_set() and not self._cancel.is_set():
                     with self.lock:
                         self.driving = False
@@ -348,7 +308,7 @@ class MockRobot:
                 self.publish_state()
                 print("[mock] cancelOrder", flush=True)
 
-    # ── Main loop ──────────────────────────────────────────────────────────────
+    # Run the mock robot.
 
     def run(self):
         self.client.connect(self.args.host, self.args.port, keepalive=30)

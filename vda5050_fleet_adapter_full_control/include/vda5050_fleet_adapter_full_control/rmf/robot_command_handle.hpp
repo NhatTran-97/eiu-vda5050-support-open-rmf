@@ -20,7 +20,7 @@
 
 namespace vda5050_fleet_adapter_full_control::rmf {
 
-// Implements RMF FullControl commands for one VDA5050 robot. Planned routes  are published as multi-node VDA5050 orders.
+// Implement RMF FullControl commands as VDA5050 multi-node orders.
 class VdaRobotCommandHandle : public rmf_fleet_adapter::agv::RobotCommandHandle,
     public std::enable_shared_from_this<VdaRobotCommandHandle>
 {
@@ -30,7 +30,7 @@ public:
     using ArrivalEstimator = Base::ArrivalEstimator;
     using RequestCompleted = Base::RequestCompleted;
 
-    // `connector` and `graph` must outlive this object; `clock` must share the RMF plan's time source -- see Config::honor_waypoint_timing().
+    // The connector and graph must outlive this handle; the clock uses the RMF plan's time source.
     VdaRobotCommandHandle(rclcpp::Logger logger, std::string name,
                           Connector &connector,
                           std::shared_ptr<const rmf_traffic::agv::Graph> graph,
@@ -38,7 +38,7 @@ public:
                           rclcpp::Clock::SharedPtr clock,
                           bool honor_waypoint_timing = false);
 
-    // rmf_fleet_adapter::agv::RobotCommandHandle
+    // RMF RobotCommandHandle interface.
     void follow_new_path(
         const std::vector<rmf_traffic::agv::Plan::Waypoint> &waypoints, ArrivalEstimator next_arrival_estimator, RequestCompleted path_finished_callback) override;
 
@@ -58,34 +58,34 @@ public:
     // Updates RMF commission state from VDA5050 connectivity and readiness.
     void set_online(bool online);
 
-    // Marks readiness outside of update() -- e.g. a lost pose, which update() itself can't catch since it only runs when a pose is available.
+    // Update readiness when no usable pose is available to the regular update loop.
     void set_ready_for_orders(bool ready, const std::string &reason = "");
 
-    // Pauses the AGV while preserving its active order. Returns an empty string on success or an error description on failure.
+    // Pause the AGV without clearing its order; return an error string on failure.
     std::string pause();
 
-    // Resumes a paused order. Uses the same result convention as pause().
+    // Resume the AGV's paused order; return an error string on failure.
     std::string resume();
 
     // Derives a stable VDA5050 nodeId from RMF waypoint metadata.
     static std::string derive_node_id(const std::string &name, std::optional<std::size_t> graph_index, double x, double y);
 
 private:
-    // Progress state for the active RMF path. May be indexed from RMF waypoints[1], not [0] -- see follow_new_path(); waypoint_offset records which, so ArrivalEstimator's path_index can add it back.
+    // Track progress through the active RMF path, including any skipped leading waypoint.
     struct ActivePath
     {
         // VDA5050 orderId associated with this path.
         std::string order_id;
         std::vector<std::string> node_ids;  // one per RMF path index
         std::vector<Eigen::Vector3d> positions;
-        // Planned arrival times used for schedule diagnostics. The current VDA5050 order does not encode waypoint hold times.
+        // Planned arrival times used to report schedule drift.
         std::vector<rmf_traffic::Time> times;
         std::size_t next_index = 0;
-        // 0 or 1: how many leading RMF waypoints were dropped as redundant with the AGV's current pose before this path was built.
+        // Count of leading RMF waypoints that duplicate the AGV's current pose.
         std::size_t waypoint_offset = 0;
-        // How many leading route points are released, as last published -- meaningful only when honor_waypoint_timing() is on. Mirrors Connector::RobotContext::current_released_count.
+        // Number of route points released in the latest order update.
         std::size_t released_count = 0;
-        // Set once a stuck-order timeout has already triggered a replan for this path, so a stuck order is reported and replanned once, not every update() tick until it resolves.
+        // Whether this path has already requested a replan for a stuck order.
         bool replan_requested = false;
         ArrivalEstimator arrival_estimator;
         RequestCompleted finished;
@@ -134,7 +134,7 @@ private:
     bool _paused = false;
     // RMF's delay ceiling as it was before a pause lifted it.
     rmf_utils::optional<rmf_traffic::Duration> _saved_maximum_delay;
-    // Set by stop() while waiting for a resuming follow_new_path(); if none  comes in time, update() escalates the hold to a real cancelOrder.
+    // Time when a traffic hold should become a full cancellation if no new path arrives.
     std::optional<std::chrono::steady_clock::time_point> _traffic_pause_deadline;
 };
 
