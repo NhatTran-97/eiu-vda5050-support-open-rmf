@@ -840,6 +840,11 @@ void BridgeNode::arm_nav2_retry()
   nav2_retry_timer_ = create_wall_timer(
     std::chrono::seconds(2),
     [this]() {
+      if (last_operating_mode_ == "MANUAL") {
+        // A human has taken over -- don't burn the retry budget while they're driving.
+        nav2_retry_deadline_ += std::chrono::seconds(2);
+        return;
+      }
       if (std::chrono::steady_clock::now() >= nav2_retry_deadline_) {
         cancel_nav2_retry();
         nav2_retry_deadline_set_ = false;
