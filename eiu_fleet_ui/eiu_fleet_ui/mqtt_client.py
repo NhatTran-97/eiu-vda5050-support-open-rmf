@@ -8,6 +8,7 @@ class only owns the paho connection, per-robot dispatch, and Qt-side throttling.
 
 import json
 import threading
+import time
 
 import paho.mqtt.client as mqtt
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
@@ -17,6 +18,9 @@ from .vda5050.state import parse_state
 
 LEAF_CONNECTION = "connection"
 LEAF_STATE = "state"
+# A robot can stay MQTT-connected while its own state-publishing loop hangs;
+# past this age since the last `state` message, telemetry is flagged stale.
+STATE_STALE_AFTER_SEC = 5.0
 
 
 class MqttClient(QObject):
@@ -27,7 +31,7 @@ class MqttClient(QObject):
     QML receives:
         mqtt.connected        -> bool (broker connection status)
         mqtt.robotsOnlineJson -> JSON object {robot_name: bool}
-        mqtt.telemetryJson    -> JSON object {robot_name: RobotState.to_dict()}
+        mqtt.telemetryJson    -> JSON object {robot_name: RobotState.to_dict() + "stale"}
     """
 
     stateChanged = Signal()
@@ -40,12 +44,13 @@ class MqttClient(QObject):
         self._config = config
         self._connected = False
 
-        # Paho callbacks run outside Qt's UI thread; they only ever touch
-        # _online/_telemetry under this lock. The Qt timer below is what
-        # publishes to QML, so a burst of updates cannot flood Qt's event queue.
+        # Paho callbacks run outside Qt's UI thread and only touch _online/_telemetry
+        # under this lock; the Qt timer below flushes to QML, so bursts can't flood it.
         self._lock = threading.Lock()
         self._online = {r.name: False for r in config.robots}
         self._telemetry = {}
+        self._last_state_rx: dict[str, float] = {}
+        self._stale_reported: dict[str, bool] = {}
         self._online_dirty = False
         self._telemetry_dirty = False
         self._online_json = json.dumps(self._online)
@@ -127,27 +132,46 @@ class MqttClient(QObject):
         except Exception:
             return
 
-        if msg.topic == robot.topic(LEAF_CONNECTION):
-            online = data.get("connectionState", "") == "ONLINE"
-            with self._lock:
-                if self._online.get(robot.name) != online:
-                    self._online[robot.name] = online
-                    self._online_dirty = True
-        elif msg.topic == robot.topic(LEAF_STATE):
-            state = parse_state(data)
-            with self._lock:
-                self._telemetry[robot.name] = state
-                self._telemetry_dirty = True
+        # Paho re-raises an uncaught exception here (suppress_exceptions is off
+        # by default), which would kill its background thread and freeze all
+        # telemetry -- so a malformed payload (wrong type, wrong field type)
+        # is logged and dropped instead of ever reaching that point.
+        try:
+            if msg.topic == robot.topic(LEAF_CONNECTION):
+                online = data.get("connectionState", "") == "ONLINE"
+                with self._lock:
+                    if self._online.get(robot.name) != online:
+                        self._online[robot.name] = online
+                        self._online_dirty = True
+            elif msg.topic == robot.topic(LEAF_STATE):
+                state = parse_state(data)
+                with self._lock:
+                    self._telemetry[robot.name] = state
+                    self._last_state_rx[robot.name] = time.monotonic()
+                    self._telemetry_dirty = True
+        except Exception as e:
+            print(f"[MQTT] malformed payload on {msg.topic}: {e}")
 
     def _flush(self):
         """Move the latest maps onto the Qt thread and notify QML, once each."""
+        now = time.monotonic()
         with self._lock:
             online_payload = json.dumps(self._online) if self._online_dirty else None
             self._online_dirty = False
+
+            # Re-checked every tick, not just on a new message -- a robot that
+            # simply stops publishing should still flip to stale eventually.
+            stale_now = {name: (now - self._last_state_rx.get(name, 0.0)) > STATE_STALE_AFTER_SEC
+                         for name in self._telemetry}
+            if stale_now != self._stale_reported:
+                self._stale_reported = stale_now
+                self._telemetry_dirty = True
+
             telemetry_payload = None
             if self._telemetry_dirty:
-                telemetry_payload = json.dumps(
-                    {name: s.to_dict() for name, s in self._telemetry.items()})
+                telemetry_payload = json.dumps({
+                    name: {**s.to_dict(), "stale": stale_now.get(name, False)}
+                    for name, s in self._telemetry.items()})
             self._telemetry_dirty = False
 
         if online_payload is not None:

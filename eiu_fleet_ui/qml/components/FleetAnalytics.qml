@@ -12,6 +12,7 @@ Rectangle {
     property var robotsOnline: ({})
     property var waypoints: []
     property string selectedRobotName: ""
+    property var telemetry: ({})
 
     // Approximate route completion for the task associated with the displayed
     // robot. Progress is kept monotonic while RMF replans the remaining path.
@@ -21,12 +22,8 @@ Rectangle {
     property real taskProgress: 0
     property var taskProgressCache: ({})
 
-    // Visual thresholds are component inputs so the dashboard can tune them in
-    // one place without changing the task/progress calculation.
-    property real progressWarningThreshold: 0.30
-    property real progressSuccessThreshold: 0.70
 
-    readonly property real uiScale: Math.max(1.0, Math.min(1.35, width / 760))
+    readonly property real uiScale: Math.max(0.7, Math.min(1.35, width / 760))
     readonly property var robotNames: buildRobotNames()
     readonly property int selectedRobotIndex: robotNames.indexOf(selectedRobotName)
 
@@ -35,6 +32,12 @@ Rectangle {
     readonly property real posX: primaryRobot ? Number(primaryRobot.x || 0) : 0
     readonly property real posY: primaryRobot ? Number(primaryRobot.y || 0) : 0
     readonly property real yaw: primaryRobot ? Number(primaryRobot.yaw || 0) : 0
+    readonly property real speed: primaryRobot
+                                   ? Number((telemetry[primaryRobot.name] || {}).speed || 0) : 0
+    // Real odometry distance since the last reached waypoint -- resets each
+    // leg, so this is "into the current leg", not the trip total.
+    readonly property real distanceSinceLastNode: primaryRobot
+                                   ? Number((telemetry[primaryRobot.name] || {}).distance_since_last_node || 0) : 0
     readonly property string robotName: primaryRobot ? primaryRobot.name : "NO ROBOT"
     readonly property string robotStatus: primaryRobot ? primaryRobot.status : "OFFLINE"
     readonly property bool robotOnline: primaryRobot
@@ -44,7 +47,8 @@ Rectangle {
     readonly property int completedCount: countTaskState("completed")
     readonly property int underwayCount: countTaskState("underway")
     readonly property int queuedCount: countTaskState("queued")
-    readonly property int stoppedCount: countStoppedTasks()
+    readonly property int cancelledCount: countTaskState("cancelled")
+    readonly property int failedCount: countTaskState("failed")
     readonly property int taskTotal: countRobotTasks()
     readonly property var displayTask: findTaskForRobot()
     readonly property string displayTaskState: displayTask
@@ -54,14 +58,14 @@ Rectangle {
                                                 || displayTaskState === "cancelled"
                                                 || displayTaskState === "failed"
     readonly property color displayTaskColor: taskStateColor(displayTaskState)
-    readonly property color displayProgressColor: taskProgressColor(
-                                                       displayTaskState,
-                                                       taskProgress)
+    // Cancelled (operator choice) and Failed (real error) stay separate -- one
+    // red "Stopped" bucket would read as "errored" even for a normal cancel.
     readonly property var taskStats: [
         { "label": "Completed", "value": completedCount, "barColor": C.success },
         { "label": "Underway",  "value": underwayCount,  "barColor": C.cyan },
         { "label": "Queued",    "value": queuedCount,    "barColor": C.warn },
-        { "label": "Stopped",   "value": stoppedCount,   "barColor": C.err }
+        { "label": "Cancelled", "value": cancelledCount, "barColor": C.textDim },
+        { "label": "Failed",    "value": failedCount,    "barColor": C.err }
     ]
 
     function buildRobotNames() {
@@ -125,17 +129,6 @@ Rectangle {
         return count
     }
 
-    function countStoppedTasks() {
-        var count = 0
-        for (var i = 0; i < tasks.length; ++i) {
-            if (taskBelongsToSelectedRobot(tasks[i])
-                    && (tasks[i].state === "failed"
-                        || tasks[i].state === "cancelled"))
-                count++
-        }
-        return count
-    }
-
     function findTaskForRobot() {
         var robot = selectedRobot()
         if (!robot)
@@ -167,27 +160,13 @@ Rectangle {
     function taskStateColor(state) {
         if (state === "completed")
             return C.success
-        if (state === "failed" || state === "cancelled")
+        if (state === "failed")
             return C.err
+        if (state === "cancelled")
+            return C.textDim
         if (state === "queued")
             return C.warn
-        return C.cyan
-    }
-
-    function taskProgressColor(state, progress) {
-        // Terminal/error colors always win over percentage colors.
-        if (state === "failed" || state === "cancelled")
-            return C.err
-        if (state === "completed")
-            return C.success
-        if (state === "queued")
-            return C.warn
-
-        if (progress < progressWarningThreshold)
-            return C.err
-        if (progress < progressSuccessThreshold)
-            return C.warn
-        return C.success
+        return C.cyan   // underway: just running, not a fault
     }
 
     function taskKey(task) {
@@ -389,18 +368,21 @@ Rectangle {
 
             // ── Primary robot telemetry ──────────────────────────────────────
             Rectangle {
+                id: telemetryPanel
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 Layout.preferredWidth: 310
+                Layout.minimumWidth: 150
                 radius: 10
                 color: C.surface
                 border.color: C.border
                 border.width: 1
+                clip: true
 
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 12
-                    spacing: 8
+                    spacing: 13
 
                     ColumnLayout {
                         Layout.fillWidth: true
@@ -421,6 +403,7 @@ Rectangle {
                                 id: robotSelector
                                 objectName: "robotSelector"
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 64
                                 Layout.maximumWidth: 260 * root.uiScale
                                 Layout.preferredHeight: 34 * Math.min(1.15, root.uiScale)
                                 model: root.robotNames
@@ -454,7 +437,7 @@ Rectangle {
                                     radius: 8
                                     color: robotSelector.hovered || robotSelector.popup.visible
                                            ? C.surfaceRaised : C.surfaceAlt
-                                    border.color: robotSelector.popup.visible ? C.cyan : C.border
+                                    border.color: robotSelector.popup.visible ? C.cyanBright : C.border
                                     border.width: 1
                                 }
 
@@ -518,7 +501,7 @@ Rectangle {
                                     background: Rectangle {
                                         radius: 9
                                         color: C.surfaceAlt
-                                        border.color: C.cyan
+                                        border.color: C.cyanBright
                                         border.width: 1
                                     }
                                 }
@@ -526,6 +509,7 @@ Rectangle {
                             Rectangle {
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth: statusText.implicitWidth + 18
+                                Layout.minimumWidth: statusText.implicitWidth + 10
                                 Layout.preferredHeight: 25
                                 radius: 8
                                 color: "transparent"
@@ -548,13 +532,17 @@ Rectangle {
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        spacing: 12
+                        // Bounded by the panel's own width, not just font scale --
+                        // otherwise a wide gap is what pushes the grid past the card edge.
+                        spacing: Math.max(10, Math.min(32 * root.uiScale, telemetryPanel.width * 0.09))
 
                         Item { Layout.fillWidth: true }
 
                         Item {
                             Layout.preferredWidth: 96 * Math.min(1.2, root.uiScale)
+                            Layout.minimumWidth: 56
                             Layout.preferredHeight: Layout.preferredWidth
+                            Layout.minimumHeight: 56
 
                             Canvas {
                                 id: batteryGauge
@@ -607,18 +595,41 @@ Rectangle {
                         }
 
                         GridLayout {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 90
                             columns: 2
                             columnSpacing: 9
                             rowSpacing: 5
 
                             Text { text: "POSITION X"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
-                            Text { text: root.primaryRobot ? root.posX.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.posX.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "POSITION Y"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
-                            Text { text: root.primaryRobot ? root.posY.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.posY.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "HEADING"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
-                            Text { text: root.primaryRobot ? root.headingDegrees(root.yaw).toFixed(0) + "°" : "—"; color: C.cyan; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.headingDegrees(root.yaw).toFixed(0) + "°" : "—"; color: C.cyan; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { text: "SPEED"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.speed.toFixed(2) + " m/s" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text {
+                                text: "SINCE LAST NODE"
+                                color: C.textDim
+                                font.pixelSize: 10 * root.uiScale
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.maximumWidth: 100 * root.uiScale
+                                MouseArea {
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.WhatsThisCursor
+                                    ToolTip.visible: containsMouse
+                                    ToolTip.delay: 400
+                                    ToolTip.text: "Real distance driven (from odometry) since the AGV last "
+                                                  + "reached a waypoint. Resets to 0 at each new node -- this "
+                                                  + "is progress on the current leg, not the total trip distance."
+                                }
+                            }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.distanceSinceLastNode.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "LEVEL"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
-                            Text { text: root.primaryRobot ? root.primaryRobot.level : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.primaryRobot.level : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                         }
 
                         Item { Layout.fillWidth: true }
@@ -697,7 +708,7 @@ Rectangle {
                                     text: !root.displayTask ? "—"
                                           : (root.displayTaskState === "queued" ? "WAIT"
                                              : Math.round(root.taskProgress * 100) + "%")
-                                    color: root.displayTask ? root.displayProgressColor : C.textDim
+                                    color: root.displayTask ? root.displayTaskColor : C.textDim
                                     font.family: fontMono
                                     font.pixelSize: 13 * root.uiScale
                                     font.bold: true
@@ -729,7 +740,7 @@ Rectangle {
                                         }
                                         height: parent.height
                                         radius: parent.radius
-                                        color: root.displayProgressColor
+                                        color: root.displayTaskColor
 
                                         Behavior on width {
                                             NumberAnimation {
@@ -754,7 +765,7 @@ Rectangle {
                                                   + " m LEFT"
                                                 : root.taskKey(root.displayTask)))
                                     color: root.displayTask && root.displayTask.error
-                                           ? C.err : root.displayProgressColor
+                                           ? C.err : root.displayTaskColor
                                     font.family: fontMono
                                     font.pixelSize: 8 * root.uiScale
                                     horizontalAlignment: Text.AlignRight
@@ -779,7 +790,7 @@ Rectangle {
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 12
-                    spacing: 7
+                    spacing: 12
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -812,55 +823,137 @@ Rectangle {
                         }
                     }
 
-                    Repeater {
-                        model: root.taskStats
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        spacing: 14 * root.uiScale
 
-                        delegate: RowLayout {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            spacing: 8
+                        Item {
+                            Layout.preferredWidth: 84 * Math.min(1.15, root.uiScale)
+                            Layout.preferredHeight: Layout.preferredWidth
+                            Layout.alignment: Qt.AlignVCenter
 
-                            Text {
-                                Layout.minimumWidth: implicitWidth
-                                Layout.preferredWidth: Math.max(
-                                    implicitWidth,
-                                    82 * Math.min(1.15, root.uiScale))
-                                text: modelData.label
-                                color: C.text
-                                font.pixelSize: 11 * root.uiScale
-                                font.bold: true
-                            }
-                            Rectangle {
-                                id: chartTrack
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 9
-                                radius: 4.5
-                                color: C.surfaceRaised
+                            Canvas {
+                                id: taskDonut
+                                anchors.fill: parent
+                                antialiasing: true
+                                Component.onCompleted: requestPaint()
+                                onPaint: {
+                                    var ctx = getContext("2d")
+                                    ctx.reset()
+                                    var cx = width / 2
+                                    var cy = height / 2
+                                    var radius = Math.min(width, height) / 2 - 6
+                                    var start = -Math.PI / 2
 
-                                Rectangle {
-                                    width: modelData.value > 0
-                                           ? Math.max(5, parent.width * modelData.value
-                                                      / Math.max(1, root.taskTotal))
-                                           : 0
-                                    height: parent.height
-                                    radius: parent.radius
-                                    color: modelData.barColor
+                                    ctx.lineCap = "butt"
+                                    ctx.lineWidth = 10
+                                    ctx.strokeStyle = C.surfaceRaised
+                                    ctx.beginPath()
+                                    ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+                                    ctx.stroke()
 
-                                    Behavior on width {
-                                        NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+                                    if (root.taskTotal <= 0) return
+                                    for (var i = 0; i < root.taskStats.length; i++) {
+                                        var seg = root.taskStats[i]
+                                        if (seg.value <= 0) continue
+                                        var sweep = Math.PI * 2 * (seg.value / root.taskTotal)
+                                        ctx.strokeStyle = seg.barColor
+                                        ctx.beginPath()
+                                        ctx.arc(cx, cy, radius, start, start + sweep)
+                                        ctx.stroke()
+                                        start += sweep
                                     }
                                 }
                             }
-                            Text {
-                                Layout.preferredWidth: 24
-                                text: modelData.value
-                                color: modelData.barColor
-                                font.family: fontMono
-                                font.pixelSize: 13 * root.uiScale
-                                font.bold: true
-                                horizontalAlignment: Text.AlignRight
+                            Column {
+                                anchors.centerIn: parent
+                                spacing: -2
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: root.taskTotal > 0
+                                          ? Math.round(100 * root.completedCount / root.taskTotal) + "%"
+                                          : "—"
+                                    color: C.success
+                                    font.family: fontMono
+                                    font.pixelSize: 16 * root.uiScale
+                                    font.bold: true
+                                }
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    text: "DONE"
+                                    color: C.textDim
+                                    font.pixelSize: 8 * root.uiScale
+                                    font.bold: true
+                                    font.letterSpacing: 0.6
+                                }
                             }
                         }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            spacing: 4
+
+                            Repeater {
+                                model: root.taskStats
+
+                                delegate: RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
+                                    spacing: 8
+                                    // A zero-count row (e.g. "Failed: 0") shouldn't compete
+                                    // for attention with rows that actually have something.
+                                    opacity: modelData.value > 0 ? 1.0 : 0.45
+
+                                    Text {
+                                        Layout.minimumWidth: implicitWidth
+                                        Layout.preferredWidth: Math.max(
+                                            implicitWidth,
+                                            76 * Math.min(1.15, root.uiScale))
+                                        text: modelData.label
+                                        color: C.text
+                                        font.pixelSize: 11 * root.uiScale
+                                        font.bold: true
+                                    }
+                                    Rectangle {
+                                        id: chartTrack
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 9
+                                        radius: 4.5
+                                        color: C.surfaceRaised
+
+                                        Rectangle {
+                                            width: modelData.value > 0
+                                                   ? Math.max(5, parent.width * modelData.value
+                                                              / Math.max(1, root.taskTotal))
+                                                   : 0
+                                            height: parent.height
+                                            radius: parent.radius
+                                            color: modelData.barColor
+
+                                            Behavior on width {
+                                                NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        Layout.preferredWidth: 24
+                                        text: modelData.value
+                                        color: modelData.barColor
+                                        font.family: fontMono
+                                        font.pixelSize: 13 * root.uiScale
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Connections {
+                        target: root
+                        function onTaskStatsChanged() { taskDonut.requestPaint() }
                     }
 
                     Text {

@@ -1,13 +1,10 @@
 """Websocket server receiving RMF's task/fleet event broadcast.
 
-The fleet adapter is the client here (rmf_websocket::BroadcastClient) -- it
-connects OUT to the URI configured as vda5050.ui_websocket_uri and pushes one
-JSON object per text frame, {"type": ..., "data": ...}, matching rmf_api_msgs'
-task_state_update/task_log_update/fleet_state_update/fleet_log_update schemas.
-Disabled (server never listens) when the adapter's config doesn't set that URI.
+The fleet adapter is the client (rmf_websocket::BroadcastClient): it connects
+out to vda5050.ui_websocket_uri and pushes {"type", "data"} frames matching
+rmf_api_msgs' task/fleet state/log schemas. Disabled when that URI isn't set.
 
-Runs on Qt's own event loop via QtWebSockets -- no separate thread, no new
-dependency beyond PySide6 already being required.
+Runs on Qt's own event loop via QtWebSockets -- no separate thread needed.
 """
 
 import json

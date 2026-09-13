@@ -1,20 +1,15 @@
 """Fleet identity, broker settings and task categories for the UI.
 
-Everything the UI needs in order to reach the fleet is already declared in the
-adapter's config.yaml: the MQTT broker, the VDA5050 interface name, and each
-robot's manufacturer/serial. Restating any of it here is exactly how the UI and
-the adapter drift apart, so this module reads that file and treats it as the
-source of truth.
+Reads the adapter's own config.yaml (MQTT broker, VDA5050 interface, robot
+manufacturer/serial) instead of restating it, so the two can't drift apart.
 
-Resolution order for the config file:
-
+Resolution order:
   1. $EIU_FLEET_CONFIG                       explicit path, wins over everything
   2. <workspace>/src/vda5050_fleet_adapter_full_control/config/config.yaml
   3. the installed share/ directory of vda5050_fleet_adapter_full_control
-  4. nothing found -> built-in defaults, and a warning saying so
+  4. nothing found -> built-in defaults, with a warning
 
-Individual fields can still be overridden for a one-off run via EIU_MQTT_HOST
-and EIU_MQTT_PORT.
+EIU_MQTT_HOST / EIU_MQTT_PORT override individual fields for a one-off run.
 """
 
 import json
@@ -43,10 +38,8 @@ _CAPABILITY_TO_CATEGORY = {
     "clean": "clean",
 }
 
-# Categories RosBridge.dispatch() can actually build a request for. A category
-# the fleet advertises but the UI cannot describe would be offered in the task
-# dialog and then rejected by the dispatcher, so it is filtered out here and
-# named in the log instead.
+# Categories RosBridge.dispatch() can build a request for -- an advertised
+# category the UI can't describe is logged and hidden, not offered then rejected.
 _UI_SUPPORTED_CATEGORIES = ("patrol",)
 
 
@@ -97,9 +90,8 @@ def _candidate_paths() -> list[tuple[Path, str]]:
     if explicit:
         out.append((Path(explicit), "$EIU_FLEET_CONFIG"))
 
-    # Sibling package in the same workspace source tree. This is the path that
-    # matters during development, where the UI runs from source on the host
-    # while the adapter is built inside its container.
+    # Sibling package in the workspace source tree -- the path that matters
+    # when the UI runs from source on the host while the adapter runs in its container.
     src_root = Path(__file__).resolve().parents[2]
     out.append((src_root / ADAPTER_PACKAGE / "config" / "config.yaml",
                 f"{ADAPTER_PACKAGE} source tree"))
@@ -209,10 +201,9 @@ def load_fleet_config() -> FleetConfig:
 def client_id(prefix: str = "eiu_fleet_ui") -> str:
     """A client id unique to every caller.
 
-    Two clients sharing an id make the broker evict whichever connected first,
-    so they kick each other in a loop. A pid is not enough — two clients can
-    live in one process — so this is random per call. Kept to 21 characters,
-    inside the 23-byte limit MQTT 3.1 brokers may still enforce.
+    Shared ids make the broker evict and reconnect them in a loop; random
+    per call (a pid isn't enough since two clients can share a process),
+    kept under MQTT 3.1's 23-byte id limit.
     """
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 

@@ -63,10 +63,9 @@ def _qt_msg_handler(msg_type, _ctx, message):
 def _suppress_rcutils_spam():
     """Filter rcutils DDS deserialization error blocks from fd-2 (C-level stderr).
 
-    Jazzy RMF nodes on the same DDS domain publish FleetState with Jazzy's message
-    serialization; Humble rclpy can't deserialize it, causing cascading rcutils
-    error blocks.  Python sys.stderr redirect doesn't reach C fwrite(stderr) so we
-    intercept at the file-descriptor level.
+    Jazzy RMF nodes on this DDS domain publish messages Humble rclpy can't
+    deserialize, causing cascading rcutils error blocks; sys.stderr redirects
+    don't reach C's fwrite(stderr), so this intercepts at the fd level instead.
     """
     real_fd = os.dup(2)
     r_fd, w_fd = os.pipe()
@@ -105,13 +104,13 @@ from .task_websocket import TaskEventServer
 
 
 def main():
-    # Opt-in only: this takes over fd 2 for the whole process and never gives it
-    # back, so it hides real errors as well as the rcutils blocks. Leave it off
-    # during bring-up; set EIU_FILTER_RCUTILS=1 once the log is understood.
+    # Opt-in: takes over fd 2 for the whole process (hides real errors too), so
+    # leave it off during bring-up; set EIU_FILTER_RCUTILS=1 once the log is understood.
     if os.environ.get("EIU_FILTER_RCUTILS") == "1":
         _suppress_rcutils_spam()
     qInstallMessageHandler(_qt_msg_handler)
     app = QApplication(sys.argv)
+    app.setOrganizationName("EIU")
     app.setApplicationName("EIU Fleet UI")
     logo_dir = _resource_dir("logo")
     eiu_logo_path = logo_dir / "eiu_logo.png"
@@ -121,9 +120,8 @@ def main():
     font_sans, font_mono = _load_fonts(app)
 
     # ── Backend objects ───────────────────────────────────────────────────────
-    # Broker address, VDA5050 identities and task categories all come from the
-    # adapter's config.yaml, so the UI never restates what the fleet already
-    # declares. See config.py for the resolution order.
+    # Broker/VDA5050/task-category config comes from the adapter's config.yaml,
+    # not restated here (see config.py for the resolution order).
     fleet_cfg  = load_fleet_config()
     print(f"[CFG] fleet '{fleet_cfg.fleet_name}' from {fleet_cfg.source}")
 
@@ -132,6 +130,7 @@ def main():
     map_prov   = MapProvider(fleet_cfg)
     mqtt       = MqttClient(fleet_cfg)
     ros        = RosBridge()
+    ros.set_fleet_name(fleet_cfg.fleet_name)
     control    = RosControl(fleet_cfg)
     ws_tasks   = TaskEventServer(fleet_cfg.websocket_uri)
     ws_tasks.taskStateUpdate.connect(ros.apply_task_state_update)
@@ -153,6 +152,17 @@ def main():
         QUrl.fromLocalFile(str(logo_dir / "robot.png")),
     )
     ctx.setContextProperty("eiuLogoUrl", QUrl.fromLocalFile(str(eiu_logo_path)))
+
+    # KPI tile logos -- distinct from robotIconUrl above (the on-map marker).
+    icons_dir = _resource_dir("icons")
+    ctx.setContextProperty(
+        "statusActiveIconUrl",
+        QUrl.fromLocalFile(str(icons_dir / "active.png")),
+    )
+    ctx.setContextProperty(
+        "fleetRobotIconUrl",
+        QUrl.fromLocalFile(str(icons_dir / "robot.png")),
+    )
 
     # ── Load QML ─────────────────────────────────────────────────────────────
 

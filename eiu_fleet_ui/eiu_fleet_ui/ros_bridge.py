@@ -13,6 +13,7 @@ import time
 import datetime
 import queue
 import threading
+from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 
@@ -20,7 +21,13 @@ FLEET_STATES_TOPIC  = "/fleet_states"
 TASK_API_TOPIC      = "/task_api_requests"
 TASK_RESP_TOPIC     = "/task_api_responses"
 DISPATCH_STATES_TOPIC = "/dispatch_states"
+LANE_STATES_TOPIC   = "/lane_states"
+NEGOTIATION_STATUSES_TOPIC = "/rmf_traffic/negotiation_statuses"
 OFFLINE_AFTER_SEC   = 5.0
+
+# Persisted here so a UI restart doesn't lose track of a task the robot is
+# still running (see _on_task_response's "not in local list" handling).
+_TASKS_CACHE_PATH = Path.home() / ".config" / "eiu_fleet_ui" / "tasks_cache.json"
 
 _MODE_NAMES = {
     0: "IDLE", 1: "CHARGING", 2: "MOVING",  3: "PAUSED",
@@ -81,6 +88,7 @@ class RosBridge(QObject):
     rmfOnlineChanged = Signal()
     tasksChanged     = Signal()
     pathChanged      = Signal()
+    trafficChanged   = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -88,10 +96,14 @@ class RosBridge(QObject):
         self._robots_json  = "[]"
         self._rmf_online   = False
         self._last_rx      = 0.0
-        self._tasks        = []       # list[dict], most recent first
-        self._tasks_json   = "[]"
+        self._tasks        = self._load_tasks()   # list[dict], most recent first
+        self._tasks_json   = json.dumps(self._tasks)
         self._planned_dest = ""
         self._waypoints    = []       # list[dict] {name,x,y} from nav_graph
+        self._fleet_name   = ""
+        self._blocked_lanes    = 0    # rmf_fleet_msgs/LaneStates.closed_lanes count, this fleet
+        self._closed_lane_indices_json = "[]"  # same, as raw indices for the map
+        self._active_conflicts = 0    # rmf_traffic_msgs/NegotiationStatuses.negotiations
 
 
         self._task_lock = threading.RLock()
@@ -119,16 +131,40 @@ class RosBridge(QObject):
         """Receive the waypoint list from MapProvider, for use by _nearest_wp_name."""
         self._waypoints = wp_list
 
+    def set_fleet_name(self, name: str):
+        """LaneStates is published per-fleet; only count this fleet's own closures."""
+        self._fleet_name = name
+
+    @staticmethod
+    def _load_tasks() -> list:
+        try:
+            return json.loads(_TASKS_CACHE_PATH.read_text())
+        except Exception:
+            return []
+
+    def _save_tasks(self):
+        try:
+            _TASKS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _TASKS_CACHE_PATH.write_text(self._tasks_json)
+        except Exception as e:
+            print(f"[ROS] failed to persist task cache: {e}")
+
     def _publish_tasks(self):
-        """Serialise the task table and notify QML. Call with _task_lock held."""
+        """Serialise the task table, persist it, and notify QML. Call with _task_lock held."""
         self._tasks_json = json.dumps(self._tasks)
+        self._save_tasks()
         self.tasksChanged.emit()
 
-    def _nearest_wp_name(self, robots: list) -> str:
-        """Find the waypoint nearest to the first robot's position."""
+    def _nearest_wp_name(self, robots: list, robot_name: str = "") -> str:
+        """Find the waypoint nearest to a robot's position.
+
+        Defaults to the first robot when robot_name isn't given or isn't
+        found -- only correct for a single-robot fleet, but there's no better
+        guess for a fleet-wide dispatch that isn't yet assigned to anyone.
+        """
         if not robots or not self._waypoints:
             return ""
-        r = robots[0]
+        r = next((x for x in robots if x.get("name") == robot_name), robots[0])
         rx, ry = float(r.get("x", 0)), float(r.get("y", 0))
         best, best_d = "", float("inf")
         for wp in self._waypoints:
@@ -158,8 +194,9 @@ class RosBridge(QObject):
             from rclpy.qos import (QoSProfile, QoSDurabilityPolicy,
                                    QoSReliabilityPolicy, QoSHistoryPolicy)
             from rclpy.executors import SingleThreadedExecutor
-            from rmf_fleet_msgs.msg import FleetState
+            from rmf_fleet_msgs.msg import FleetState, LaneStates
             from rmf_task_msgs.msg import ApiRequest, ApiResponse, DispatchStates
+            from rmf_traffic_msgs.msg import NegotiationStatuses
         except Exception as e:
             print(f"[ROS] import error ({e}). GUI runs but without RMF data.")
             return
@@ -196,6 +233,12 @@ class RosBridge(QObject):
             self._node.create_subscription(
                 DispatchStates, DISPATCH_STATES_TOPIC,
                 self._on_dispatch_states, reliable_volatile)
+
+            self._node.create_subscription(
+                LaneStates, LANE_STATES_TOPIC, self._on_lane_states, reliable_tl)
+            self._node.create_subscription(
+                NegotiationStatuses, NEGOTIATION_STATUSES_TOPIC,
+                self._on_negotiation_statuses, reliable_tl)
 
             # QML queues command payloads; the ROS executor owns publishing so a
             # slow DDS writer can never block Qt's UI thread.
@@ -303,13 +346,9 @@ class RosBridge(QObject):
             if r.task_id:
                 robot_task_map[r.task_id] = (r.name, _finish_from_path(r.path))
 
-            # RMF's task dispatcher never actually publishes a "completed"
-            # signal over ROS - rmf_task_ros2's own Dispatcher.cpp only ever
-            # replies once, at assignment time, and pushes further updates (if
-            # any) over a websocket (rmf_websocket::BroadcastClient) that this
-            # UI has no connection to. So a robot's task_id going away from an
-            # rmf_id that was "underway" is the only completion signal this
-            # bridge can actually observe.
+            # RMF's task dispatcher never publishes a "completed" event over ROS
+            # (further updates go out over a websocket this UI isn't connected to),
+            # so a robot's task_id disappearing while "underway" is the only signal we get.
             prev_task_id = self._robot_last_task_id.get(r.name, "")
             if prev_task_id and prev_task_id != r.task_id:
                 self._mark_task_completed(prev_task_id)
@@ -358,6 +397,22 @@ class RosBridge(QObject):
         if self._rmf_online and stale:
             self._rmf_online = False
             self.rmfOnlineChanged.emit()
+
+    def _on_lane_states(self, msg):
+        if self._fleet_name and msg.fleet_name != self._fleet_name:
+            return
+        indices = list(msg.closed_lanes)
+        indices_json = json.dumps(indices)
+        if len(indices) != self._blocked_lanes or indices_json != self._closed_lane_indices_json:
+            self._blocked_lanes = len(indices)
+            self._closed_lane_indices_json = indices_json
+            self.trafficChanged.emit()
+
+    def _on_negotiation_statuses(self, msg):
+        count = len(msg.negotiations)
+        if count != self._active_conflicts:
+            self._active_conflicts = count
+            self.trafficChanged.emit()
 
     def _sync_tasks_from_fleet(self, robot_task_map: dict):
         """Attach the executing robot to tasks we already know the RMF id of.
@@ -492,16 +547,8 @@ class RosBridge(QObject):
 
                 # DispatchState constants: queued=1, selected=2, dispatched=3,
                 # failed_to_assign=4, canceled_in_flight=5.
-                #
-                # status 3 (dispatched) is a one-time "a fleet was found"
-                # signal, not a live status - the dispatcher keeps re-publishing
-                # this same snapshot for every tracked task (active or
-                # finished-dispatching) on every publish_active_tasks_period
-                # tick, long after the robot has moved on to underway/completed.
-                # Labelling it "queued" here used to stomp those more advanced,
-                # more authoritative states (set by _sync_tasks_from_fleet /
-                # _on_task_response) back down to "queued" on the next tick, so
-                # status 3 now leaves task["state"] untouched entirely.
+                # Status 3 is a stale snapshot the dispatcher keeps re-publishing
+                # long after the robot moves on, so it leaves task["state"] untouched.
                 label = None
                 if state.status in (1, 2):
                     label = "queued"
@@ -555,11 +602,9 @@ class RosBridge(QObject):
         error_text = "; ".join(
             e.get("detail") or e.get("category", "") for e in errors if isinstance(e, dict))
 
-        # Loop/patrol tasks with rounds > 1 decompose into one phase per leg.
-        # completed/active/pending never shrink or reorder for a given task, so
-        # the total phase count is stable once known -- dividing it evenly by
-        # the requested round count gives phases-per-round without needing to
-        # know anything about how the loop task itself structures its phases.
+        # Loop/patrol tasks decompose into one phase per leg; the total phase
+        # count is stable once known, so dividing it by the round count gives
+        # phases-per-round without knowing how the task structures its phases.
         completed_phases = data.get("completed") or []
         total_phases = len(completed_phases) + len(data.get("pending") or [])
         if data.get("active") is not None:
@@ -598,6 +643,15 @@ class RosBridge(QObject):
 
     @Slot(str, str, int)
     def dispatch(self, category: str, place: str, loops: int):
+        """Fleet-wide dispatch -- RMF bids the task to whichever robot it picks."""
+        self._dispatch(category, place, loops, "")
+
+    @Slot(str, str, int, str)
+    def dispatchToRobot(self, category: str, place: str, loops: int, robot: str):
+        """Pinned to one robot via RMF's robot_task_request, bypassing bidding."""
+        self._dispatch(category, place, loops, robot)
+
+    def _dispatch(self, category: str, place: str, loops: int, robot: str):
         if not self._ok or self._task_pub is None:
             print("[ROS] dispatch skipped — ROS not ready yet")
             return
@@ -611,19 +665,26 @@ class RosBridge(QObject):
         places = [place]
         if loops > 1:
             robots = json.loads(self._robots_json)
-            home = self._nearest_wp_name(robots)
+            home = self._nearest_wp_name(robots, robot)
             if home and home != place:
                 places = [home, place]
 
-        request = {
+        task_request = {
             "category": category,
             "description": {"places": places, "rounds": int(loops)},
             "unix_millis_earliest_start_time": 0,
             "requester": "eiu_fleet_ui",
         }
-        request_json = json.dumps({"type": "dispatch_task_request", "request": request})
+        # robot_task_request bypasses bidding entirely -- RMF assigns it to
+        # this robot or rejects it outright, never to a different one.
+        envelope = ({"type": "robot_task_request", "robot": robot,
+                     "fleet": self._fleet_name, "request": task_request}
+                    if robot else
+                    {"type": "dispatch_task_request", "request": task_request})
+        request_json = json.dumps(envelope)
         self._command_queue.put((req_id, request_json))
-        print(f"[ROS] dispatch queued → place={place} loops={loops} req_id={req_id}")
+        print(f"[ROS] dispatch queued → place={place} loops={loops} "
+              f"robot={robot or '(any)'} req_id={req_id}")
 
         rec = {
             "id":          req_id,
@@ -632,7 +693,7 @@ class RosBridge(QObject):
             "requester":   "eiu_fleet_ui",
             "pickup":      "n/a",
             "destination": place,
-            "robot":       "—",
+            "robot":       robot or "—",
             "start":       datetime.datetime.now().strftime("%I:%M:%S %p"),
             "end":         "—",
             "state":       "queued",
@@ -683,6 +744,15 @@ class RosBridge(QObject):
 
     @Property(str, notify=tasksChanged)
     def tasksJson(self):    return self._tasks_json
+
+    @Property(int, notify=trafficChanged)
+    def blockedLanes(self):    return self._blocked_lanes
+
+    @Property(str, notify=trafficChanged)
+    def closedLaneIndicesJson(self): return self._closed_lane_indices_json
+
+    @Property(int, notify=trafficChanged)
+    def activeConflicts(self): return self._active_conflicts
 
     @Property(str, notify=pathChanged)
     def plannedDest(self):  return self._planned_dest

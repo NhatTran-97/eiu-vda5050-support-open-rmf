@@ -51,7 +51,7 @@ class RobotState:
     # False means the fleet adapter has no usable pose for this robot: any
     # goal -- a new dispatch or the finishing_request return-to-charger --
     # fails path planning until the operator re-localizes it.
-    position_initialized: bool = True
+    position_initialized: bool = False
 
     @property
     def operable(self) -> bool:
@@ -99,7 +99,10 @@ def parse_state(raw: dict) -> RobotState:
     if isinstance(pos, dict):
         s.localization_score = pos.get("localizationScore")
         s.map_id = pos.get("mapId", "")
-        s.position_initialized = pos.get("positionInitialized", True)
+        # Mirrors the adapter's own has_position(): a pose isn't usable unless
+        # x/y/theta are all reported too, not just the positionInitialized flag.
+        has_xytheta = all(pos.get(k) is not None for k in ("x", "y", "theta"))
+        s.position_initialized = bool(pos.get("positionInitialized", False)) and has_xytheta
 
     battery = raw.get("batteryState")
     if isinstance(battery, dict):

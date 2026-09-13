@@ -54,7 +54,10 @@ class MapProvider(QObject):
         self._px_w = 0
         self._px_h = 0
         self._waypoints = []   # list of dict
-        self._lanes = []       # list of {from, to}
+        self._lanes = []       # list of {from, to} -- de-duplicated for rendering
+        # raw nav_graph.yaml lane index -> index into self._lanes (deduped).
+        # Needed since LaneStates.closed_lanes uses the raw, one-per-direction index.
+        self._raw_lane_to_edge = []
 
         maps = _maps_dir()
         self._map_yaml = maps / "map.yaml"
@@ -86,11 +89,8 @@ class MapProvider(QObject):
         self._resolution = float(data["resolution"])
 
     def _load_png(self):
-        """Read the map image dimensions; QML loads the PNG itself.
-
-        The occupancy grid is semantic data, so it is handed to QML untouched —
-        no re-encoding, and no shared temp file whose fixed name collides
-        between users on the same machine.
+        """Read the map image dimensions; QML loads the PNG itself, untouched
+        (no re-encoding, no shared temp file that could collide between users).
         """
         img = QImage(str(self._map_png))
         self._px_w = img.width()
@@ -118,15 +118,18 @@ class MapProvider(QObject):
 
         lanes_raw = level.get("lanes", [])
         all_pairs = {(int(ln[0]), int(ln[1])) for ln in lanes_raw}
-        seen, lanes = set(), []
+        seen: dict[tuple[int, int], int] = {}
+        lanes, raw_to_edge = [], []
         for ln in lanes_raw:
             a, b = int(ln[0]), int(ln[1])
             key = (min(a, b), max(a, b))
             if key not in seen:
-                seen.add(key)
+                seen[key] = len(lanes)
                 lanes.append({"from": a, "to": b,
                               "bidir": (b, a) in all_pairs})
+            raw_to_edge.append(seen[key])
         self._lanes = lanes
+        self._raw_lane_to_edge = raw_to_edge
 
     def waypoints(self) -> list:
         """Waypoints read from the nav graph, as {name, x, y, charger, parking}."""
@@ -161,3 +164,7 @@ class MapProvider(QObject):
     @Property(str, notify=mapReady)
     def lanesJson(self):
         return json.dumps(self._lanes)
+
+    @Property(str, notify=mapReady)
+    def laneIndexMapJson(self):
+        return json.dumps(self._raw_lane_to_edge)

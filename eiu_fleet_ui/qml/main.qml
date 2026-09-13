@@ -16,6 +16,21 @@ ApplicationWindow {
     property var waypoints: []
     property var wpNames: []
     property var lanes: []
+    // raw nav_graph.yaml lane index -> index into `lanes` (RMF's LaneStates
+    // uses the former; `lanes` is de-duplicated per pair for rendering).
+    property var laneIndexMap: []
+    // De-duplicated `lanes` indices RMF currently reports as closed.
+    readonly property var blockedEdgeIndices: {
+        var raw = []
+        try { raw = JSON.parse(ros.closedLaneIndicesJson) } catch (e) { raw = [] }
+        var out = []
+        for (var i = 0; i < raw.length; i++) {
+            var edge = root.laneIndexMap[raw[i]]
+            if (edge !== undefined && out.indexOf(edge) < 0)
+                out.push(edge)
+        }
+        return out
+    }
     property var robots: []
     property var tasks: []
     // {robot_name: bool} — direct VDA5050 connectivity, distinct from rmfOnline
@@ -37,13 +52,15 @@ ApplicationWindow {
         return count
     }
 
+    // displayRobots, not robots -- /fleet_states' battery is forced to 100% when
+    // account_for_battery_drain is off, which would skew a raw average.
     readonly property real averageBattery: {
-        if (robots.length === 0)
+        if (displayRobots.length === 0)
             return 0
         var total = 0
-        for (var i = 0; i < robots.length; ++i)
-            total += Number(robots[i].battery || 0)
-        return total / robots.length
+        for (var i = 0; i < displayRobots.length; ++i)
+            total += Number(displayRobots[i].battery || 0)
+        return total / displayRobots.length
     }
     readonly property real kpiHeight: Math.max(116, Math.min(142, width / 15))
     function reloadRobots() { root.robots = JSON.parse(ros.robotsJson) }
@@ -53,12 +70,9 @@ ApplicationWindow {
     function telemetryFor(name) { return root.telemetry[name] || null }
     function reloadSpeedLimits() { root.speedLimits = JSON.parse(control.speedLimitsJson) }
 
-    // root.robots (from /fleet_states) omits any robot RMF hasn't merged onto
-    // the nav graph yet -- but Robot Control (pause/speed/re-localize) talks
-    // to the fleet adapter directly over ROS and works before that merge, so
-    // gating the whole row on /fleet_states would make re-localizing a
-    // never-merged robot unreachable from this UI. Every configured robot
-    // gets a row; one missing from /fleet_states gets a placeholder instead.
+    // root.robots (/fleet_states) omits any robot RMF hasn't merged onto the
+    // nav graph yet, but Robot Control works before that merge -- so every
+    // configured robot gets a row here, with a placeholder if not yet merged.
     readonly property var displayRobots: {
         var known = JSON.parse(cfg.robotNamesJson)
         var byName = {}
@@ -68,11 +82,17 @@ ApplicationWindow {
         var out = []
         for (var j = 0; j < known.length; j++) {
             var name = known[j]
+            var tele = root.telemetryFor(name)
             if (byName[name]) {
-                out.push(byName[name])
+                var merged = byName[name]
+                // /fleet_states' battery is RMF's planning input (forced to 100% when
+                // account_for_battery_drain is off) -- prefer the real VDA5050 value.
+                if (tele && tele.battery_soc != null) {
+                    merged = Object.assign({}, merged, { battery: tele.battery_soc * 100 })
+                }
+                out.push(merged)
                 continue
             }
-            var tele = root.telemetryFor(name)
             out.push({
                 key: cfg.fleetName + "/" + name,
                 name: name,
@@ -104,13 +124,50 @@ ApplicationWindow {
         return C.textDim
     }
 
+    // MQTT broker being reachable and a given robot's own VDA5050 connection
+    // are different things -- this counts the latter, from robotsOnline.
+    function countRobotsOnline() {
+        var n = 0
+        for (var name in root.robotsOnline) {
+            if (root.robotsOnline[name]) n++
+        }
+        return n
+    }
+
+    readonly property int criticalAlertCount: {
+        var n = ros.activeConflicts
+        for (var i = 0; i < root.displayRobots.length; i++) {
+            var r = root.displayRobots[i]
+            if (!root.robotsOnline[r.name]) n++
+            var t = root.telemetryFor(r.name)
+            if (t && t.safety && t.safety.triggered) n++
+            if (t && t.fatal_error) n++
+        }
+        return n
+    }
+    readonly property int warningAlertCount: {
+        var n = ros.blockedLanes
+        for (var i = 0; i < root.displayRobots.length; i++) {
+            var r = root.displayRobots[i]
+            if (Number(r.battery) < 20) n++
+            var t = root.telemetryFor(r.name)
+            if (t && t.position_initialized === false) n++
+            if (t && t.stale === true) n++
+        }
+        for (var j = 0; j < root.tasks.length; j++) {
+            if (root.tasks[j].state === "failed") n++
+        }
+        return n
+    }
+
     function taskColor(state) {
         if (state === "completed" || state.indexOf("complet") >= 0)
             return C.success
-        if (state === "failed" || state === "cancelled" ||
-                state.indexOf("fail") >= 0 || state.indexOf("cancel") >= 0)
+        if (state === "failed" || state.indexOf("fail") >= 0)
             return C.err
-        if (state === "queued" || state.indexOf("queue") >= 0 || state.indexOf("stale") >= 0)
+        if (state === "cancelled" || state.indexOf("cancel") >= 0 || state.indexOf("stale") >= 0)
+            return C.textDim
+        if (state === "queued" || state.indexOf("queue") >= 0)
             return C.warn
         return C.cyan
     }
@@ -119,6 +176,7 @@ ApplicationWindow {
         var wps = JSON.parse(mapProv.wpJson)
         root.waypoints = wps
         root.lanes = JSON.parse(mapProv.lanesJson)
+        root.laneIndexMap = JSON.parse(mapProv.laneIndexMapJson)
         var names = []
         for (var i = 0; i < wps.length; ++i) {
             if (wps[i].name && wps[i].name.length > 0)
@@ -258,7 +316,9 @@ ApplicationWindow {
                             anchors.topMargin: 3
                             anchors.bottomMargin: 3
                             radius: 10
-                            color: modelData.active ? C.accent : "transparent"
+                            // A touch less saturated than C.accent -- the full-strength
+                            // button blue reads as too bright for a resting nav highlight.
+                            color: modelData.active ? "#3573C4" : "transparent"
 
                             Rectangle {
                                 visible: modelData.active
@@ -286,8 +346,10 @@ ApplicationWindow {
                                 Text {
                                     anchors.verticalCenter: parent.verticalCenter
                                     text: modelData.label
-                                    color: modelData.active ? "white" : C.textDim
-                                    font.pixelSize: 13
+                                    // Brighter than global textDim -- read constantly at
+                                    // sidebar-label size, so it needs more contrast.
+                                    color: modelData.active ? "white" : "#8BA6BD"
+                                    font.pixelSize: 14
                                     font.bold: modelData.active
                                 }
                             }
@@ -340,7 +402,7 @@ ApplicationWindow {
                             color: C.textDim
                             opacity: 0.7
                             font.family: root.monoFontFamily
-                            font.pixelSize: 10
+                            font.pixelSize: 11
                         }
                     }
                 }
@@ -455,9 +517,43 @@ ApplicationWindow {
                         }
                     }
 
-                    // Only shown when vda5050.ui_websocket_uri is configured --
-                    // otherwise "WS OFFLINE" would just be noise for a feature
-                    // nobody enabled.
+                    Rectangle {
+                        Layout.preferredWidth: alertsText.implicitWidth + 30
+                        Layout.preferredHeight: 34
+                        radius: 17
+                        color: C.surface
+                        border.color: root.criticalAlertCount > 0 ? "#673044"
+                                      : (root.warningAlertCount > 0 ? "#5A4A26" : "#286A60")
+                        border.width: 1
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 7
+                            Rectangle {
+                                width: 7
+                                height: 7
+                                radius: 4
+                                color: root.criticalAlertCount > 0 ? C.err
+                                       : (root.warningAlertCount > 0 ? C.warn : C.success)
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                id: alertsText
+                                text: root.criticalAlertCount > 0
+                                      ? root.criticalAlertCount + " CRITICAL"
+                                      : (root.warningAlertCount > 0
+                                         ? root.warningAlertCount + " WARNING"
+                                         : "ALL CLEAR")
+                                color: C.text
+                                font.family: root.monoFontFamily
+                                font.pixelSize: 10
+                                font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                    }
+
+                    // Only shown when vda5050.ui_websocket_uri is configured, so it's
+                    // not noise for a feature nobody enabled.
                     Rectangle {
                         visible: cfg.websocketEnabled
                         Layout.preferredWidth: 128
@@ -536,8 +632,9 @@ ApplicationWindow {
                             value: ros.rmfOnline ? "ACTIVE" : "OFFLINE"
                             valueFontFamily: root.monoFontFamily
                             detail: ros.rmfOnline ? "Open-RMF is responding" : "Waiting for fleet states"
-                            iconText: "●"
+                            iconSource: statusActiveIconUrl
                             accentColor: ros.rmfOnline ? C.success : C.err
+                            alert: !ros.rmfOnline
                         }
                         MetricCard {
                             Layout.fillWidth: true
@@ -546,29 +643,36 @@ ApplicationWindow {
                             title: "Fleet"
                             value: root.robots.length + (root.robots.length === 1 ? " robot" : " robots")
                             valueFontFamily: root.monoFontFamily
-                            detail: root.robots.length > 0 ? "Reporting live telemetry" : "No robots discovered"
-                            iconText: "R"
+                            // MQTT broker up != a given AGV's own VDA5050 connection --
+                            // this is the latter, per-robot, not just the transport.
+                            detail: root.displayRobots.length > 0
+                                    ? root.countRobotsOnline() + "/" + root.displayRobots.length + " VDA5050 connected"
+                                    : "No robots discovered"
+                            iconSource: fleetRobotIconUrl
                             accentColor: C.cyan
                         }
                         MetricCard {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.minimumWidth: 210
-                            title: "Average battery"
-                            value: root.robots.length > 0 ? root.averageBattery.toFixed(0) + "%" : "—"
+                            title: "Traffic status"
+                            value: ros.activeConflicts > 0 ? "CONFLICT"
+                                   : (ros.blockedLanes > 0 ? "CONGESTED" : "NORMAL")
                             valueFontFamily: root.monoFontFamily
-                            detail: root.robots.length > 0 ? "Across the active fleet" : "Waiting for telemetry"
-                            iconText: "ϟ"
-                            accentColor: root.averageBattery > 20 ? C.success : C.warn
+                            detail: ros.activeConflicts + " conflicts · " + ros.blockedLanes + " blocked lanes"
+                            iconText: "⇄"
+                            accentColor: ros.activeConflicts > 0 ? C.err
+                                         : (ros.blockedLanes > 0 ? C.warn : C.success)
+                            alert: ros.activeConflicts > 0
                         }
                         MetricCard {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.minimumWidth: 210
                             title: "Active tasks"
-                            value: root.activeTaskCount.toString()
+                            value: root.activeTaskCount + " running"
                             valueFontFamily: root.monoFontFamily
-                            detail: root.tasks.length + " total task records"
+                            detail: root.tasks.length + " tasks recorded"
                             iconText: "✓"
                             accentColor: C.accent
                         }
@@ -675,10 +779,8 @@ ApplicationWindow {
                                     Layout.fillHeight: true
                                     orientation: Qt.Vertical
 
-                                    // Fit the map region to the occupancy image's real
-                                    // aspect ratio. The remaining height belongs to the
-                                    // analytics region, so no fixed 50/50-style ratio is
-                                    // needed when the window or SplitView width changes.
+                                    // Fit the map region to the occupancy image's real aspect
+                                    // ratio; the rest goes to analytics, no fixed 50/50 split.
                                     readonly property real naturalMapHeight: {
                                         if (mapProv.pixelW <= 0 || mapProv.pixelH <= 0)
                                             return 0
@@ -738,6 +840,7 @@ ApplicationWindow {
                                             tasks: root.tasks
                                             robotsOnline: root.robotsOnline
                                             waypoints: root.waypoints
+                                            telemetry: root.telemetry
                                         }
                                     }
                                 }
@@ -753,6 +856,12 @@ ApplicationWindow {
                                 target: mapLoader.item
                                 property: "edges"
                                 value: root.lanes
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
+                                property: "blockedEdgeIndices"
+                                value: root.blockedEdgeIndices
                                 when: mapLoader.status === Loader.Ready
                             }
                             Binding {
@@ -779,15 +888,27 @@ ApplicationWindow {
                         ColumnLayout {
                             id: fleetPanel
                             objectName: "fleetPanel"
-                            SplitView.preferredWidth: 720
-                            SplitView.minimumWidth: 640
-                            SplitView.maximumWidth: 900
+                            // A 3-robot fleet doesn't need the same width as a 30-robot one,
+                            // which would leave it looking empty.
+                            readonly property bool smallFleet: root.displayRobots.length <= 3
+                            SplitView.preferredWidth: smallFleet ? 480 : 720
+                            SplitView.minimumWidth: smallFleet ? 420 : 640
+                            SplitView.maximumWidth: smallFleet ? 620 : 900
                             spacing: 16
 
                             // Typography follows the width of this panel so it remains
                             // comfortably readable on large control-room displays.
                             readonly property real contentScale: Math.max(
-                                1.0, Math.min(1.25, width / 720))
+                                0.7, Math.min(1.25, width / 720))
+
+                            property string robotSearchText: ""
+                            readonly property var filteredDisplayRobots: {
+                                if (robotSearchText === "") return root.displayRobots
+                                var q = robotSearchText.toLowerCase()
+                                return root.displayRobots.filter(function(r) {
+                                    return String(r.name || "").toLowerCase().indexOf(q) >= 0
+                                })
+                            }
 
                             Rectangle {
                                 Layout.fillWidth: true
@@ -817,7 +938,22 @@ ApplicationWindow {
                                                 font.bold: true
                                                 font.letterSpacing: 0.8
                                             }
-                                            Item { Layout.fillWidth: true }
+                                            TextField {
+                                                Layout.fillWidth: true
+                                                Layout.maximumWidth: 150 * fleetPanel.contentScale
+                                                Layout.preferredHeight: 28 * fleetPanel.contentScale
+                                                placeholderText: "Search robots…"
+                                                placeholderTextColor: C.placeholderText
+                                                color: C.text
+                                                font.pixelSize: 11 * fleetPanel.contentScale
+                                                verticalAlignment: Text.AlignVCenter
+                                                leftPadding: 8
+                                                onTextChanged: fleetPanel.robotSearchText = text
+                                                background: Rectangle {
+                                                    radius: 8; color: C.surfaceAlt
+                                                    border.color: C.border; border.width: 1
+                                                }
+                                            }
                                             Rectangle {
                                                 Layout.preferredWidth: 30 * fleetPanel.contentScale
                                                 Layout.preferredHeight: 25 * fleetPanel.contentScale
@@ -825,7 +961,7 @@ ApplicationWindow {
                                                 color: "#17365A"
                                                 Text {
                                                     anchors.centerIn: parent
-                                                    text: root.robots.length
+                                                    text: fleetPanel.filteredDisplayRobots.length
                                                     color: C.cyan
                                                     font.family: root.monoFontFamily
                                                     font.pixelSize: 11 * fleetPanel.contentScale
@@ -844,7 +980,7 @@ ApplicationWindow {
                                         ListView {
                                             anchors.fill: parent
                                             anchors.margins: 8
-                                            model: root.displayRobots
+                                            model: fleetPanel.filteredDisplayRobots
                                             clip: true
                                             spacing: 3
                                             boundsBehavior: Flickable.StopAtBounds
@@ -859,9 +995,19 @@ ApplicationWindow {
                                                 // VDA5050 state.* telemetry for this robot, if any has arrived yet.
                                                 readonly property var tele: root.telemetryFor(modelData.name)
                                                 readonly property bool teleUnsafe: tele && (tele.safety.triggered || tele.fatal_error !== "")
+                                                // fatal_error, then e_stop, then a plain field-violation flag with no
+                                                // e_stop reason of its own -- otherwise that last case shows "⚠ NONE".
+                                                readonly property string safetyLabel: {
+                                                    if (!tele) return ""
+                                                    if (tele.fatal_error) return tele.fatal_error
+                                                    if (tele.safety.e_stop && tele.safety.e_stop !== "NONE") return tele.safety.e_stop
+                                                    if (tele.safety.field_violation) return "FIELD VIOLATION"
+                                                    return ""
+                                                }
                                                 // No usable pose on the fleet adapter side: it can't path-plan a new
                                                 // dispatch or a finishing_request return until re-localized.
                                                 readonly property bool notLocalized: tele && tele.position_initialized === false
+                                                readonly property bool stale: tele && tele.stale === true
 
                                                 // Multi-round loop task currently assigned to this robot, if any.
                                                 readonly property var currentTask: {
@@ -872,9 +1018,17 @@ ApplicationWindow {
                                                     }
                                                     return null
                                                 }
+                                                readonly property int roundsTotal:
+                                                    (currentTask && currentTask.rounds > 1) ? currentTask.rounds : 0
                                                 readonly property int roundsRemaining:
                                                     (currentTask && currentTask.rounds > 1)
                                                     ? (currentTask.rounds_remaining || 0) : 0
+                                                // Round in progress, 1-based -- rounds_remaining counts down
+                                                // from roundsTotal to 0 as each leg completes.
+                                                readonly property int roundsCurrent:
+                                                    roundsTotal > 0
+                                                    ? Math.min(roundsTotal, Math.max(1, roundsTotal - roundsRemaining + 1))
+                                                    : 0
 
                                                 RowLayout {
                                                     anchors.fill: parent
@@ -921,27 +1075,33 @@ ApplicationWindow {
                                                             font.pixelSize: 16 * fleetPanel.contentScale
                                                             elide: Text.ElideRight; Layout.fillWidth: true
                                                         }
-                                                        // Live VDA5050 telemetry: speed, a not-localized warning
-                                                        // (blocks path planning until SET POSITION is used), and a
-                                                        // safety/error flag when eStop, a field violation or a
-                                                        // FATAL error is active.
+                                                        // Live VDA5050 telemetry: speed, a not-localized warning,
+                                                        // a stale-data warning, and a safety/error flag.
                                                         Text {
                                                             visible: !!robotRow.tele
                                                             text: robotRow.tele
                                                                   ? Number(robotRow.tele.speed).toFixed(2) + " m/s"
+                                                                    + (robotRow.stale ? "  ⚠ NO RECENT DATA" : "")
                                                                     + (robotRow.notLocalized ? "  ⚠ NOT LOCALIZED" : "")
-                                                                    + (robotRow.teleUnsafe
-                                                                       ? "  ⚠ " + (robotRow.tele.fatal_error || robotRow.tele.safety.e_stop)
-                                                                       : "")
+                                                                    + (robotRow.teleUnsafe ? "  ⚠ " + robotRow.safetyLabel : "")
                                                                   : ""
                                                             color: robotRow.teleUnsafe ? C.err
-                                                                   : (robotRow.notLocalized ? C.warn : C.textDim)
+                                                                   : ((robotRow.notLocalized || robotRow.stale) ? C.warn : C.textDim)
                                                             font.family: root.monoFontFamily
-                                                            font.pixelSize: 14 * fleetPanel.contentScale
+                                                            font.pixelSize: Math.max(11, 14 * fleetPanel.contentScale)
+                                                            elide: Text.ElideRight; Layout.fillWidth: true
+                                                        }
+                                                        Text {
+                                                            visible: !!robotRow.currentTask
+                                                            text: "→ " + (robotRow.currentTask ? robotRow.currentTask.destination : "")
+                                                            color: C.cyan
+                                                            font.family: root.monoFontFamily
+                                                            font.pixelSize: Math.max(11, 13 * fleetPanel.contentScale)
                                                             elide: Text.ElideRight; Layout.fillWidth: true
                                                         }
                                                     }
                                                     Text {
+                                                        Layout.rightMargin: 14 * fleetPanel.contentScale
                                                         text: Number(modelData.battery).toFixed(0) + "%"
                                                               + (robotRow.tele && robotRow.tele.charging ? " ⚡" : "")
                                                         color: Number(modelData.battery) < 20 ? C.err : C.success
@@ -950,10 +1110,12 @@ ApplicationWindow {
                                                         font.bold: true
                                                     }
                                                     ColumnLayout {
+                                                        id: statusBlock
                                                         Layout.preferredWidth: 122 * fleetPanel.contentScale
+                                                        Layout.alignment: Qt.AlignVCenter
                                                         spacing: 3
                                                         Rectangle {
-                                                            Layout.preferredWidth: 122 * fleetPanel.contentScale
+                                                            Layout.fillWidth: true
                                                             Layout.preferredHeight: 40 * fleetPanel.contentScale
                                                             radius: 12 * fleetPanel.contentScale
                                                             color: "transparent"
@@ -973,27 +1135,37 @@ ApplicationWindow {
                                                         }
                                                         Text {
                                                             Layout.fillWidth: true
+                                                            Layout.topMargin: 6 * fleetPanel.contentScale
                                                             visible: robotRow.roundsRemaining > 0
-                                                            text: robotRow.roundsRemaining + (robotRow.roundsRemaining === 1 ? " round left" : " rounds left")
-                                                            color: C.textDim
+                                                            text: robotRow.roundsCurrent + "/" + robotRow.roundsTotal + " rounds"
+                                                            color: C.cyan
                                                             font.family: root.monoFontFamily
-                                                            font.pixelSize: 12 * fleetPanel.contentScale
+                                                            font.pixelSize: 14 * fleetPanel.contentScale
+                                                            font.bold: true
+                                                            elide: Text.ElideRight
                                                             horizontalAlignment: Text.AlignHCenter
                                                         }
                                                     }
                                                     Button {
-                                                        Layout.preferredWidth: 36 * fleetPanel.contentScale
-                                                        Layout.preferredHeight: 36 * fleetPanel.contentScale
+                                                        // Matches the combined height of the WORKING badge + rounds
+                                                        // text so it visually brackets that whole block, centered.
+                                                        Layout.preferredWidth: statusBlock.height
+                                                        Layout.preferredHeight: statusBlock.height
+                                                        Layout.alignment: Qt.AlignVCenter
                                                         text: "⚙"
+                                                        hoverEnabled: true
                                                         contentItem: Text {
                                                             text: parent.text; color: C.textDim
-                                                            font.pixelSize: 18 * fleetPanel.contentScale
+                                                            font.pixelSize: 26 * fleetPanel.contentScale
                                                             horizontalAlignment: Text.AlignHCenter
                                                             verticalAlignment: Text.AlignVCenter
                                                         }
                                                         background: Rectangle {
-                                                            radius: 8; color: parent.down ? C.border : "transparent"
-                                                            border.color: C.border; border.width: 1
+                                                            radius: 8
+                                                            color: parent.down ? C.border
+                                                                   : (parent.hovered ? C.surfaceAlt : "transparent")
+                                                            border.color: parent.hovered ? C.cyan : C.border
+                                                            border.width: 1
                                                         }
                                                         onClicked: {
                                                             controlDialog.robotName = modelData.name
@@ -1012,6 +1184,13 @@ ApplicationWindow {
                                             color: C.textDim
                                             font.pixelSize: 13 * fleetPanel.contentScale
                                         }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: root.robots.length > 0 && fleetPanel.filteredDisplayRobots.length === 0
+                                            text: "No robots match “" + fleetPanel.robotSearchText + "”"
+                                            color: C.textDim
+                                            font.pixelSize: 13 * fleetPanel.contentScale
+                                        }
                                     }
                                 }
                             }
@@ -1027,19 +1206,47 @@ ApplicationWindow {
                                 border.width: 1
                                 clip: true
 
-                                // Scale from the space actually available to the table,
-                                // not from the whole window. This keeps every column
-                                // readable after the SplitView handle is dragged.
+                                // Scale from the table's own width, not the whole window,
+                                // so columns stay readable after the SplitView is dragged.
                                 readonly property real tableScale: Math.max(
                                     1.0, Math.min(1.40, width / 680))
                                 readonly property real dateColumnWidth: 78 * tableScale
-                                readonly property real requesterColumnWidth: 86 * tableScale
                                 readonly property real pickupColumnWidth: 42 * tableScale
                                 readonly property real robotColumnWidth: 48 * tableScale
                                 readonly property real timeColumnWidth: 74 * tableScale
                                 readonly property real stateColumnWidth: 78 * tableScale
                                 readonly property real actionColumnWidth: 26
                                 readonly property real identityColumnGap: 8 * tableScale
+
+                                property string taskSearchText: ""
+                                property string taskStateFilter: "All"
+
+                                readonly property var filteredTasks: {
+                                    var list = root.tasks
+                                    if (taskStateFilter !== "All") {
+                                        var wanted = taskStateFilter.toLowerCase()
+                                        list = list.filter(function(t) {
+                                            return String(t.state || "").toLowerCase() === wanted
+                                        })
+                                    }
+                                    if (taskSearchText !== "") {
+                                        var q = taskSearchText.toLowerCase()
+                                        list = list.filter(function(t) {
+                                            return String(t.robot || "").toLowerCase().indexOf(q) >= 0
+                                                || String(t.destination || "").toLowerCase().indexOf(q) >= 0
+                                                || String(t.requester || "").toLowerCase().indexOf(q) >= 0
+                                        })
+                                    }
+                                    // Underway first (an operator cares about now more than most-recently
+                                    // dispatched); stable, each group keeps its newest-first order.
+                                    var underway = []
+                                    var rest = []
+                                    for (var k = 0; k < list.length; k++) {
+                                        if (list[k].state === "underway") underway.push(list[k])
+                                        else rest.push(list[k])
+                                    }
+                                    return underway.concat(rest)
+                                }
 
                                 ColumnLayout {
                                     anchors.fill: parent
@@ -1067,7 +1274,40 @@ ApplicationWindow {
                                                 font.bold: true
                                                 font.letterSpacing: 0.8
                                             }
-                                            Item { Layout.fillWidth: true }
+                                            TextField {
+                                                id: taskSearchField
+                                                Layout.fillWidth: true
+                                                Layout.maximumWidth: 180 * recentTasksPanel.tableScale
+                                                Layout.preferredHeight: 28 * recentTasksPanel.tableScale
+                                                placeholderText: "Search robot / dest…"
+                                                placeholderTextColor: C.placeholderText
+                                                color: C.text
+                                                font.pixelSize: 11 * recentTasksPanel.tableScale
+                                                verticalAlignment: Text.AlignVCenter
+                                                leftPadding: 8
+                                                onTextChanged: recentTasksPanel.taskSearchText = text
+                                                background: Rectangle {
+                                                    radius: 8; color: C.surfaceAlt
+                                                    border.color: C.border; border.width: 1
+                                                }
+                                            }
+                                            ComboBox {
+                                                id: taskStateCombo
+                                                Layout.preferredWidth: 108 * recentTasksPanel.tableScale
+                                                Layout.preferredHeight: 28 * recentTasksPanel.tableScale
+                                                model: ["All", "Queued", "Underway", "Completed", "Cancelled", "Failed"]
+                                                font.pixelSize: 11 * recentTasksPanel.tableScale
+                                                onActivated: recentTasksPanel.taskStateFilter = currentText
+                                                contentItem: Text {
+                                                    text: taskStateCombo.displayText; color: C.text; font: taskStateCombo.font
+                                                    leftPadding: 8; elide: Text.ElideRight
+                                                    verticalAlignment: Text.AlignVCenter
+                                                }
+                                                background: Rectangle {
+                                                    radius: 8; color: C.surfaceAlt
+                                                    border.color: C.border; border.width: 1
+                                                }
+                                            }
                                             Rectangle {
                                                 Layout.preferredWidth: recordsText.implicitWidth + 18
                                                 Layout.preferredHeight: 24
@@ -1079,10 +1319,12 @@ ApplicationWindow {
                                                 Text {
                                                     id: recordsText
                                                     anchors.centerIn: parent
-                                                    text: root.tasks.length + " records"
+                                                    text: (recentTasksPanel.taskSearchText === "" && recentTasksPanel.taskStateFilter === "All")
+                                                          ? root.tasks.length + " records"
+                                                          : recentTasksPanel.filteredTasks.length + " / " + root.tasks.length
                                                     color: C.cyan
                                                     font.family: root.monoFontFamily
-                                                    font.pixelSize: 10 * recentTasksPanel.tableScale
+                                                    font.pixelSize: Math.max(11, 10 * recentTasksPanel.tableScale)
                                                     font.bold: true
                                                 }
                                             }
@@ -1101,14 +1343,12 @@ ApplicationWindow {
                                             anchors.leftMargin: 19
                                             anchors.rightMargin: 16
                                             spacing: 4
-                                            Text { text: "DATE";      Layout.preferredWidth: recentTasksPanel.dateColumnWidth;      Layout.minimumWidth: Layout.preferredWidth; Layout.rightMargin: recentTasksPanel.identityColumnGap; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
-                                            Text { text: "REQUESTER"; Layout.preferredWidth: recentTasksPanel.requesterColumnWidth; Layout.minimumWidth: Layout.preferredWidth; Layout.rightMargin: recentTasksPanel.identityColumnGap; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
-                                            Text { text: "PICKUP";    Layout.preferredWidth: recentTasksPanel.pickupColumnWidth;    Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
-                                            Text { text: "DEST.";     Layout.fillWidth: true; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
-                                            Text { text: "ROBOT";     Layout.preferredWidth: recentTasksPanel.robotColumnWidth;     Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
-                                            Text { text: "START";     Layout.preferredWidth: recentTasksPanel.timeColumnWidth;      Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
-                                            Text { text: "END";       Layout.preferredWidth: recentTasksPanel.timeColumnWidth;      Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
-                                            Text { text: "STATE";     Layout.preferredWidth: recentTasksPanel.stateColumnWidth;     Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 11 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "DATE";      Layout.preferredWidth: recentTasksPanel.dateColumnWidth;      Layout.minimumWidth: Layout.preferredWidth; Layout.rightMargin: recentTasksPanel.identityColumnGap; color: C.textDim; font.pixelSize: 13 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "PICKUP";    Layout.preferredWidth: recentTasksPanel.pickupColumnWidth;    Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 13 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "DEST.";     Layout.fillWidth: true; color: C.textDim; font.pixelSize: 13 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "ROBOT";     Layout.preferredWidth: recentTasksPanel.robotColumnWidth;     Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 13 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "TIME";      Layout.preferredWidth: recentTasksPanel.timeColumnWidth;      Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 13 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
+                                            Text { text: "STATE";     Layout.preferredWidth: recentTasksPanel.stateColumnWidth;     Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.pixelSize: 13 * recentTasksPanel.tableScale; font.bold: true; font.letterSpacing: 0.6; horizontalAlignment: Text.AlignHCenter }
                                             Item { Layout.preferredWidth: recentTasksPanel.actionColumnWidth; Layout.minimumWidth: Layout.preferredWidth }
                                         }
                                     }
@@ -1121,7 +1361,7 @@ ApplicationWindow {
                                         ListView {
                                             anchors.fill: parent
                                             anchors.margins: 8
-                                            model: root.tasks
+                                            model: recentTasksPanel.filteredTasks
                                             clip: true
                                             spacing: 2
                                             boundsBehavior: Flickable.StopAtBounds
@@ -1157,22 +1397,32 @@ ApplicationWindow {
                                                         font.bold: true
                                                         horizontalAlignment: Text.AlignHCenter
                                                     }
-                                                    Text {
-                                                        text: modelData.requester
-                                                        Layout.preferredWidth: recentTasksPanel.requesterColumnWidth
-                                                        Layout.minimumWidth: Layout.preferredWidth
-                                                        Layout.rightMargin: recentTasksPanel.identityColumnGap
-                                                        color: C.cyan
-                                                        font.family: root.monoFontFamily
-                                                        font.pixelSize: 12 * recentTasksPanel.tableScale
-                                                        font.bold: true
-                                                        horizontalAlignment: Text.AlignHCenter
-                                                    }
                                                     Text { text: modelData.pickup; Layout.preferredWidth: recentTasksPanel.pickupColumnWidth; Layout.minimumWidth: Layout.preferredWidth; color: C.textDim; font.family: root.monoFontFamily; font.pixelSize: 12 * recentTasksPanel.tableScale; font.bold: true; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
                                                     Text { text: modelData.destination; Layout.fillWidth: true; color: C.text; font.bold: true; font.pixelSize: 14 * recentTasksPanel.tableScale; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
                                                     Text { text: modelData.robot; Layout.preferredWidth: recentTasksPanel.robotColumnWidth; Layout.minimumWidth: Layout.preferredWidth; color: C.text; font.family: root.monoFontFamily; font.pixelSize: 12 * recentTasksPanel.tableScale; font.bold: true; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
-                                                    Text { text: modelData.start; Layout.preferredWidth: recentTasksPanel.timeColumnWidth; Layout.minimumWidth: Layout.preferredWidth; color: "#B7CCE0"; font.family: root.monoFontFamily; font.pixelSize: 11 * recentTasksPanel.tableScale; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
-                                                    Text { text: modelData.end;   Layout.preferredWidth: recentTasksPanel.timeColumnWidth; Layout.minimumWidth: Layout.preferredWidth; color: "#B7CCE0"; font.family: root.monoFontFamily; font.pixelSize: 11 * recentTasksPanel.tableScale; elide: Text.ElideRight; horizontalAlignment: Text.AlignHCenter }
+                                                    Column {
+                                                        Layout.preferredWidth: recentTasksPanel.timeColumnWidth
+                                                        Layout.minimumWidth: Layout.preferredWidth
+                                                        spacing: 1
+                                                        Text {
+                                                            width: parent.width
+                                                            text: modelData.start
+                                                            color: "#B7CCE0"
+                                                            font.family: root.monoFontFamily
+                                                            font.pixelSize: 11 * recentTasksPanel.tableScale
+                                                            elide: Text.ElideRight
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                        }
+                                                        Text {
+                                                            width: parent.width
+                                                            text: modelData.end !== "—" ? "→ " + modelData.end : "—"
+                                                            color: C.textDim
+                                                            font.family: root.monoFontFamily
+                                                            font.pixelSize: 10 * recentTasksPanel.tableScale
+                                                            elide: Text.ElideRight
+                                                            horizontalAlignment: Text.AlignHCenter
+                                                        }
+                                                    }
                                                     Rectangle {
                                                         Layout.preferredWidth: recentTasksPanel.stateColumnWidth
                                                         Layout.minimumWidth: Layout.preferredWidth
@@ -1189,7 +1439,7 @@ ApplicationWindow {
                                                             text: modelData.state.toUpperCase()
                                                             color: parent.badgeColor
                                                             font.family: root.monoFontFamily
-                                                            font.pixelSize: 10 * recentTasksPanel.tableScale
+                                                            font.pixelSize: Math.max(11, 10 * recentTasksPanel.tableScale)
                                                             font.bold: true
                                                             horizontalAlignment: Text.AlignHCenter
                                                             elide: Text.ElideRight
@@ -1231,10 +1481,18 @@ ApplicationWindow {
 
                                         Column {
                                             anchors.centerIn: parent
-                                            visible: root.tasks.length === 0
+                                            visible: recentTasksPanel.filteredTasks.length === 0
                                             spacing: 5
-                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "NO ACTIVE MISSIONS"; color: C.textDim; font.pixelSize: 12; font.bold: true }
-                                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Create a task to get started"; color: C.textDim; opacity: 0.65; font.pixelSize: 10 }
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: root.tasks.length === 0 ? "NO ACTIVE MISSIONS" : "NO MATCHING TASKS"
+                                                color: C.textDim; font.pixelSize: 12; font.bold: true
+                                            }
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: root.tasks.length === 0 ? "Create a task to get started" : "Try clearing the search or filter"
+                                                color: C.textDim; opacity: 0.65; font.pixelSize: 10
+                                            }
                                         }
                                     }
                                 }

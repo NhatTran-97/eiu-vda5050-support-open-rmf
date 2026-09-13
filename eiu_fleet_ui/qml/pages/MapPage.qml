@@ -11,10 +11,15 @@ Rectangle {
 
     property var  waypoints:   []
     property var  edges:       []
+    property var  blockedEdgeIndices: []
     property var  mapRobots:   []
     property string plannedDest: ""
     property url robotIconSource: ""
-    property real robotMarkerSize: 34
+    property real robotMarkerSize: 46
+
+    // Labels scale with the panel (not map zoom, which markers already
+    // counter-scale against -- see below).
+    readonly property real labelScale: Math.max(0.75, Math.min(1.35, width / 900))
 
     // ── Click-to-pick: RobotControlDialog arms this to read a pose/waypoint
     // straight off the map instead of typing coordinates. "" = picking off.
@@ -43,14 +48,11 @@ Rectangle {
         return best
     }
 
-    // Robot pose comes from /fleet_states, already expressed in the RMF frame —
-    // the same frame as the nav graph and the map image. The MQTT visualization
-    // topic carries the pose in the robot's own frame, which only coincides with
-    // the RMF frame while the adapter's transform is identity, so it must not be
-    // used for drawing.
-    //
-    // mapRobots can hold more than one robot once the fleet grows past one AGV —
-    // every marker/path/destination below is drawn per-entry, not just index 0.
+    // Robot pose comes from /fleet_states (RMF frame, same as the nav graph and
+    // map image) -- never the MQTT visualization pose, which is in the robot's
+    // own frame and only coincides with RMF's while the adapter's transform is
+    // identity. mapRobots can hold more than one robot; everything below is
+    // drawn per-entry, not just index 0.
 
     property real minScale: 0.4
     property real maxScale: 8.0
@@ -65,6 +67,7 @@ Rectangle {
 
     onWaypointsChanged: requestAllPaint()
     onEdgesChanged: laneCanvas.requestPaint()
+    onBlockedEdgeIndicesChanged: laneCanvas.requestPaint()
     onMapRobotsChanged: laneCanvas.requestPaint()
     onPlannedDestChanged: laneCanvas.requestPaint()
     onPickPointChanged: laneCanvas.requestPaint()
@@ -89,9 +92,8 @@ Rectangle {
         }
     }
 
-    // Inverse of worldToScreen, taking a point already expressed in overlay's
-    // local coordinate space (use overlay.mapFromItem(...) to get there from
-    // any other item — it accounts for the pan/zoom/fit transforms for us).
+    // Inverse of worldToScreen, for a point already in overlay's local space
+    // (use overlay.mapFromItem(...) to convert from any other item).
     function screenToWorld(ox, oy) {
         return {
             x: ox * mapProv.resolution + mapProv.originX,
@@ -129,6 +131,9 @@ Rectangle {
             asynchronous: false
             cache: true
             smooth: false
+            // The occupancy grid's free space renders near-white and outshines the
+            // KPI cards; dimming it here (not the bitmap) keeps the route/robot the focus.
+            opacity: 0.5
             onStatusChanged: if (status === Image.Ready) root.requestAllPaint()
             onPaintedWidthChanged: root.scheduleGeometryPaint()
             onPaintedHeightChanged: root.scheduleGeometryPaint()
@@ -180,10 +185,11 @@ Rectangle {
                         if (!w1 || !w2) continue
                         var p1 = root.worldToScreen(w1.x, w1.y)
                         var p2 = root.worldToScreen(w2.x, w2.y)
+                        var blocked = root.blockedEdgeIndices.indexOf(i) >= 0
 
-                        ctx2d.strokeStyle = "#f5c400"
-                        ctx2d.lineWidth   = 4 / uiScale
-                        ctx2d.globalAlpha = 0.75
+                        ctx2d.strokeStyle = blocked ? "#F05265" : "#f5c400"
+                        ctx2d.lineWidth   = (blocked ? 6 : 4) / uiScale
+                        ctx2d.globalAlpha = blocked ? 0.9 : 0.75
                         ctx2d.beginPath()
                         ctx2d.moveTo(p1.x, p1.y)
                         ctx2d.lineTo(p2.x, p2.y)
@@ -205,9 +211,8 @@ Rectangle {
                         }
                     }
 
-                    // Planned path: taken directly from RMF (robot.path = Location[]).
-                    // Drawn per robot so a fleet with more than one AGV shows every
-                    // route, not just the first robot in the array.
+                    // Planned path, from RMF (robot.path = Location[]), drawn per robot
+                    // so a multi-AGV fleet shows every route, not just the first one.
                     for (var ri = 0; ri < root.mapRobots.length; ri++) {
                         var rob = root.mapRobots[ri]
                         var rmfPath = rob.path || []
@@ -265,10 +270,9 @@ Rectangle {
                         }
                     }
 
-                    // Live preview of the pose being dragged out in pick mode.
-                    // worldToScreen flips the y axis, so a world-frame yaw maps
-                    // to -yaw in screen space (lane arrows above sidestep this
-                    // by measuring their angle directly between screen points).
+                    // Live preview of the dragged pose. worldToScreen flips y, so a
+                    // world-frame yaw maps to -yaw here (lane arrows sidestep this by
+                    // measuring their angle directly between screen points).
                     if (root.pickPoint) {
                         var pk = root.worldToScreen(root.pickPoint.x, root.pickPoint.y)
                         var screenYaw = -root.pickPoint.yaw
@@ -286,10 +290,9 @@ Rectangle {
                         fillTriangle(tipX, tipY, screenYaw, 7 / uiScale)
                     }
 
-                    // Confirmed pick, kept on screen after release so the
-                    // operator can see exactly where "SET POSITION" will send
-                    // RMF -- distinct magenta so it's never mistaken for the
-                    // live white drag preview or the green route above.
+                    // Confirmed pick, kept on screen so the operator can see exactly
+                    // where SET POSITION will send RMF -- magenta, distinct from the
+                    // white drag preview and the green route.
                     if (root.pickedPose) {
                         var cp = root.worldToScreen(root.pickedPose.x, root.pickedPose.y)
                         var cpYaw = -root.pickedPose.yaw
@@ -319,6 +322,11 @@ Rectangle {
                     property color pinColor: modelData.charger ? "#F39C12"
                               : (modelData.parking ? "#2980B9" : "#27AE60")
                     property bool  picked: modelData.name === root.pickedWaypoint
+                    property bool  hasTarget: root.plannedDest !== ""
+                    property bool  isTaskTarget: hasTarget && modelData.name === root.plannedDest
+                    // Dimming only makes sense against an actual target -- with no
+                    // active order, every waypoint is equally relevant.
+                    property bool  emphasized: !hasTarget || isTaskTarget
                     x: sp.x; y: sp.y
                     z: 2
                     width: 1; height: 1
@@ -346,18 +354,23 @@ Rectangle {
                         color: "#ffffff"
                     }
                     Text {
-                        x: 14; y: -7
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        // Above the pin, clear of the lane line running through it,
+                        // instead of beside it at pin height.
+                        y: -30 * root.labelScale
+                        horizontalAlignment: Text.AlignHCenter
                         text: modelData.name
-                        font.pixelSize: 14; font.bold: true
-                        color: parent.pinColor
+                        font.pixelSize: (parent.isTaskTarget ? 17 : 15) * root.labelScale
+                        font.bold: true
+                        color: parent.emphasized ? "#EAF4FF" : C.textDim
+                        opacity: parent.emphasized ? 1.0 : 0.65
                         style: Text.Outline; styleColor: C.bg
                     }
                 }
             }
 
             // ── z:3  Robot markers — pose from /fleet_states (RMF frame) ───────
-            // One delegate per entry in mapRobots, so every robot in the fleet
-            // gets its own marker instead of only the first one.
+            // One delegate per entry in mapRobots, so every robot gets its own marker.
             Repeater {
                 model: root.mapRobots
                 delegate: Item {
@@ -368,6 +381,31 @@ Rectangle {
                     width: 1; height: 1
                     transformOrigin: Item.TopLeft
                     scale: 1 / Math.max(0.001, overlay.displayScale)
+
+                    // Distinguishes the robot from static waypoint pins at a glance.
+                    Rectangle {
+                        id: pulseRing
+                        x: -width / 2; y: -height / 2
+                        width: root.robotMarkerSize * 1.7
+                        height: width
+                        radius: width / 2
+                        color: "transparent"
+                        border.color: "#2979ff"
+                        border.width: 2
+                        opacity: 0.7
+                        scale: 0.7
+
+                        SequentialAnimation on scale {
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 0.7; to: 1.25; duration: 1200; easing.type: Easing.OutCubic }
+                            PauseAnimation { duration: 200 }
+                        }
+                        SequentialAnimation on opacity {
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 0.7; to: 0.0; duration: 1200; easing.type: Easing.OutCubic }
+                            PauseAnimation { duration: 200 }
+                        }
+                    }
 
                     Image {
                         id: robotIcon
@@ -383,11 +421,31 @@ Rectangle {
                         // Keep the replacement icon aligned with the old arrow.
                         rotation: -(modelData.yaw * 180 / Math.PI) + 90
                     }
+                    Rectangle {
+                        visible: modelData.status === "WAITING"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: -root.robotMarkerSize / 2 - 22 * root.labelScale
+                        width: waitText.implicitWidth + 12
+                        height: 18 * root.labelScale
+                        radius: height / 2
+                        color: "#5A4A26"
+                        border.color: "#F3AE3D"; border.width: 1
+                        Text {
+                            id: waitText
+                            anchors.centerIn: parent
+                            text: "WAIT"
+                            color: "#F3AE3D"
+                            font.pixelSize: 10 * root.labelScale
+                            font.bold: true
+                        }
+                    }
                     Text {
-                        x: root.robotMarkerSize / 2 + 5; y: -7
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: root.robotMarkerSize / 2 + 6
+                        horizontalAlignment: Text.AlignHCenter
                         text: modelData.name || cfg.primaryRobot
-                        font.pixelSize: 11; font.bold: true
-                        color: "#2979ff"
+                        font.pixelSize: 15 * root.labelScale; font.bold: true
+                        color: "#6FB2FF"
                         style: Text.Outline; styleColor: C.bg
                     }
                 }

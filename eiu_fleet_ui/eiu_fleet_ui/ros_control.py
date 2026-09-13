@@ -1,14 +1,11 @@
 """Direct per-robot control: pause/resume, speed limit, re-localize.
 
-Talks to the services/parameter/topic vda5050_fleet_adapter_full_control's
-OperatorInterface exposes (see core/operator_interface.hpp in that package).
-Shares RosBridge's rclpy node/executor -- attach() must run before the
-executor starts spinning, so every client/publisher exists from the first
-spin iteration, matching how RosBridge sets up its own entities.
+Talks to the services/parameter/topic OperatorInterface exposes (see
+core/operator_interface.hpp in vda5050_fleet_adapter_full_control). Shares
+RosBridge's rclpy node/executor, so attach() must run before it starts spinning.
 
 QML slots only enqueue; the ROS executor thread drains and makes the actual
-service/parameter/publish calls -- same thread-safety pattern RosBridge uses
-for dispatch()/cancel_task().
+calls -- same thread-safety pattern as RosBridge's dispatch()/cancel_task().
 """
 
 import json
@@ -43,6 +40,7 @@ class RosControl(QObject):
         self._pause_clients = {}
         self._resume_clients = {}
         self._init_pos_pubs = {}
+        self._init_pos_result_subs = {}
         self._param_clients = {}
 
         self._lock = threading.Lock()
@@ -55,6 +53,7 @@ class RosControl(QObject):
 
     def attach(self, node):
         from std_srvs.srv import Trigger
+        from std_msgs.msg import String
         from geometry_msgs.msg import PoseWithCovarianceStamped
         from rclpy.parameter_client import AsyncParameterClient
 
@@ -65,6 +64,10 @@ class RosControl(QObject):
             self._resume_clients[robot.name] = node.create_client(Trigger, f"{prefix}/resume")
             self._init_pos_pubs[robot.name] = node.create_publisher(
                 PoseWithCovarianceStamped, f"{prefix}/init_position", 1)
+            # The publish above is one-way; this carries the actual outcome.
+            self._init_pos_result_subs[robot.name] = node.create_subscription(
+                String, f"{prefix}/init_position_result",
+                lambda msg, name=robot.name: self._on_init_position_result(name, msg), 1)
             self._param_clients[robot.name] = AsyncParameterClient(node, ADAPTER_NODE)
 
         node.create_timer(0.05, self._drain_commands)
@@ -191,7 +194,11 @@ class RosControl(QObject):
         msg.pose.pose.orientation.z = math.sin(yaw / 2.0)
         msg.pose.pose.orientation.w = math.cos(yaw / 2.0)
         pub.publish(msg)
-        self.commandResult.emit(name, "init_position", True, "published")
+        # Result comes back asynchronously via _on_init_position_result.
+
+    def _on_init_position_result(self, name: str, msg) -> None:
+        ok = msg.data == "ok"
+        self.commandResult.emit(name, "init_position", ok, msg.data)
 
     # ── QML Properties ────────────────────────────────────────────────────────
 
