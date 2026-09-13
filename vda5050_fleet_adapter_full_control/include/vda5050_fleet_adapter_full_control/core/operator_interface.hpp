@@ -1,9 +1,11 @@
 #ifndef OPERATOR_INTERFACE_HPP
 #define OPERATOR_INTERFACE_HPP
 
+#include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -18,8 +20,7 @@
 
 namespace vda5050_fleet_adapter_full_control::core {
 
-// Operator commands provided by one robot command handle. Each callback
-// returns an empty string on success or an error description on failure.
+// Operator commands provided by one robot command handle. Each callback returns an empty string on success or an error description on failure.
 struct RobotHooks
 {
     std::function<std::string()> pause;
@@ -43,7 +44,17 @@ public:
     OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, std::map<std::string, RobotHooks> hooks);
 
 private:
+    // An initPosition sent to an AGV, awaiting its verdict in actionStates.
+    struct PendingInitAction
+    {
+        std::string action_id;
+        std::chrono::steady_clock::time_point deadline;
+    };
+
     void on_init_position(const std::string &robot_name, const geometry_msgs::msg::PoseWithCovarianceStamped &msg);
+
+    // Publish the AGV's verdict on each pending initPosition once it lands or times out.
+    void poll_pending_init_actions();
 
     // Validate speed-limit updates before ROS commits them.
     rcl_interfaces::msg::SetParametersResult on_set_parameters(const std::vector<rclcpp::Parameter> &parameters);
@@ -62,12 +73,17 @@ private:
     rmf::Connector &_connector;
     std::map<std::string, RobotHooks> _hooks;
 
-    std::vector<rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr> _init_position_subs;
     std::map<std::string, rclcpp::Publisher<std_msgs::msg::String>::SharedPtr> _init_position_result_pubs;
+    std::mutex _pending_mutex;
+    std::map<std::string, PendingInitAction> _pending_init_actions;
+
+    // Declared last so they are destroyed first: their callbacks read the members above.
+    std::vector<rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr> _init_position_subs;
     std::vector<rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr> _services;
+    rclcpp::TimerBase::SharedPtr _init_action_timer;
+
     // Held only to keep the registrations alive for this object's lifetime;
-    // dropping either shared_ptr deregisters its callback. Not read again
-    // after construction.
+    // dropping either shared_ptr deregisters its callback. Not read again after construction.
     rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr _on_set_params;
     rclcpp::node_interfaces::PostSetParametersCallbackHandle::SharedPtr _post_set_params;
 };

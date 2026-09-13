@@ -31,9 +31,8 @@ public:
     using ArrivalEstimator = Base::ArrivalEstimator;
     using RequestCompleted = Base::RequestCompleted;
 
-    // `connector` and `graph` must outlive this object. `clock` must use
-    // the same time source as the RMF plan. See Config::honor_waypoint_timing()
-    // for what `honor_waypoint_timing` does.
+    // `connector` and `graph` must outlive this object; `clock` must share
+    // the RMF plan's time source -- see Config::honor_waypoint_timing().
     VdaRobotCommandHandle(rclcpp::Logger logger, std::string name,
                           Connector &connector,
                           std::shared_ptr<const rmf_traffic::agv::Graph> graph,
@@ -64,6 +63,10 @@ public:
 
     // Updates RMF commission state from VDA5050 connectivity and readiness.
     void set_online(bool online);
+
+    // Marks readiness outside of update() -- e.g. a lost pose, which update()
+    // itself can't catch since it only runs when a pose is available.
+    void set_ready_for_orders(bool ready, const std::string &reason = "");
 
     // Pauses the AGV while preserving its active order. Returns an empty
     // string on success or an error description on failure.

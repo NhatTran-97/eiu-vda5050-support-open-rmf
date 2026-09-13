@@ -84,11 +84,17 @@ RobotConfig Config::robot_config(const std::string &name) const
     cfg.serial = name;
 
     const YAML::Node rc = _robots_cfg ? _robots_cfg[name] : YAML::Node();
-    if (rc && rc["manufacturer"])
+    if (!rc)
+    {
+        throw std::runtime_error(
+            "robot '" + name + "' is in the fleet's nav graph but has no entry "
+            "under vda5050.robots in config.yaml");
+    }
+    if (rc["manufacturer"])
     {
         cfg.manufacturer = rc["manufacturer"].as<std::string>();
     }
-    if (rc && rc["serial"])
+    if (rc["serial"])
     {
         cfg.serial = rc["serial"].as<std::string>();
     }

@@ -1,9 +1,12 @@
 #include "vda5050_fleet_adapter_full_control/core/operator_interface.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <utility>
 
 #include <rclcpp/logging.hpp>
+
+#include "vda5050_fleet_adapter_full_control/vda5050/state_handler.hpp"
 
 namespace vda5050_fleet_adapter_full_control::core {
 
@@ -21,6 +24,9 @@ constexpr const char *kSpeedLimitPrefix = "speed_limit.";
 
 // A zero parameter value disables the speed cap.
 constexpr double kNoSpeedLimit = 0.0;
+
+// How long to wait for an AGV's verdict on an initPosition before giving up.
+constexpr std::chrono::seconds kInitActionTimeout{10};
 
 }  // namespace
 
@@ -44,24 +50,18 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
 {
     for (const auto &[name, robot_hooks] : _hooks)
     {
-        _init_position_result_pubs[name] = _node.create_publisher<std_msgs::msg::String>(
-            "~/" + name + "/init_position_result", rclcpp::QoS(1));
+        _init_position_result_pubs[name] = _node.create_publisher<std_msgs::msg::String>("~/" + name + "/init_position_result", rclcpp::QoS(1));
 
         _init_position_subs.push_back(
-            _node.create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-                "~/" + name + "/init_position", rclcpp::QoS(1),
-                [this, name](
+            _node.create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("~/" + name + "/init_position", rclcpp::QoS(1),[this, name](
                     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
                 {
                     on_init_position(name, *msg);
                 }));
 
-        const auto make_service =
-            [&](const std::string &verb, std::function<std::string()> action)
+        const auto make_service = [&](const std::string &verb, std::function<std::string()> action)
         {
-            return _node.create_service<std_srvs::srv::Trigger>(
-                "~/" + name + "/" + verb,
-                [this, name, verb, action](
+            return _node.create_service<std_srvs::srv::Trigger>("~/" + name + "/" + verb, [this, name, verb, action](
                     const std::shared_ptr<std_srvs::srv::Trigger::Request>,
                     std::shared_ptr<std_srvs::srv::Trigger::Response> response)
                 {
@@ -76,8 +76,7 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
                     response->message = error.empty() ? verb + "d" : error;
                     if (!response->success)
                     {
-                        RCLCPP_WARN(_node.get_logger(), "%s for '%s' refused: %s",
-                                    verb.c_str(), name.c_str(), error.c_str());
+                        RCLCPP_WARN(_node.get_logger(), "%s for '%s' refused: %s", verb.c_str(), name.c_str(), error.c_str());
                     }
                 });
         };
@@ -86,8 +85,7 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
         _services.push_back(make_service("resume", robot_hooks.resume));
 
         // Apply an initial value supplied through ROS parameters.
-        const double initial =
-            _node.declare_parameter<double>(speed_limit_parameter(name), kNoSpeedLimit);
+        const double initial = _node.declare_parameter<double>(speed_limit_parameter(name), kNoSpeedLimit);
         if (initial != kNoSpeedLimit)
         {
             apply_speed_limit(name, initial);
@@ -96,9 +94,11 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
         RCLCPP_INFO(_node.get_logger(),
                     "Operator interface for '%s': %s/%s/{init_position, pause, resume}, "
                     "parameter %s",
-                    name.c_str(), _node.get_name(), name.c_str(),
-                    speed_limit_parameter(name).c_str());
+                    name.c_str(), _node.get_name(), name.c_str(), speed_limit_parameter(name).c_str());
     }
+
+    _init_action_timer = _node.create_wall_timer(
+        std::chrono::milliseconds(500), [this]() { poll_pending_init_actions(); });
 
     _on_set_params = _node.add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &parameters)
         {
@@ -165,13 +165,11 @@ void OperatorInterface::on_parameters_set(const std::vector<rclcpp::Parameter> &
 
 void OperatorInterface::apply_speed_limit(const std::string &robot_name, double limit)
 {
-    const std::optional<double> cap =
-        limit == kNoSpeedLimit ? std::nullopt : std::optional<double>(limit);
+    const std::optional<double> cap = limit == kNoSpeedLimit ? std::nullopt : std::optional<double>(limit);
 
     if (!_connector.set_speed_limit(robot_name, cap))
     {
-        RCLCPP_ERROR(_node.get_logger(), "speed limit for '%s' was not applied",
-                     robot_name.c_str());
+        RCLCPP_ERROR(_node.get_logger(), "speed limit for '%s' was not applied", robot_name.c_str());
     }
 }
 
@@ -179,9 +177,7 @@ void OperatorInterface::on_init_position(
     const std::string &robot_name,
     const geometry_msgs::msg::PoseWithCovarianceStamped &msg)
 {
-    // A fire-and-forget topic (no service round trip): publish the outcome on a companion
-    // topic so an operator UI can tell "silently ignored"/"not published" apart from success,
-    // instead of only ever seeing "published" the instant the request left the UI process.
+    // Report the outcome on the companion topic; the request itself is one-way.
     const auto publish_result = [this, &robot_name](const std::string &result)
     {
         const auto it = _init_position_result_pubs.find(robot_name);
@@ -194,15 +190,15 @@ void OperatorInterface::on_init_position(
         it->second->publish(out);
     };
 
-    // Use the map from the robot's latest state report.
-    const auto data = _connector.get_data(robot_name);
-    if (!data.has_value())
+    // Not get_data(): it withholds everything until the AGV is localized, which is exactly what this command exists to fix. Only the map name is needed.
+    const auto map_name = _connector.get_known_map(robot_name);
+    if (!map_name.has_value())
     {
         RCLCPP_WARN(_node.get_logger(),
-                    "init_position for '%s' ignored: no VDA5050 state yet, so the map "
-                    "it is on is unknown",
+                    "init_position for '%s' ignored: the AGV has never reported a VDA5050 "
+                    "state, so it is not reachable yet",
                     robot_name.c_str());
-        publish_result("error: no VDA5050 state yet from the robot -- try again shortly");
+        publish_result("error: no VDA5050 state from the robot yet -- is it online?");
         return;
     }
 
@@ -210,18 +206,57 @@ void OperatorInterface::on_init_position(
     const double y = msg.pose.pose.position.y;
     const double theta = yaw_of(msg.pose.pose.orientation);
 
-    RCLCPP_INFO(_node.get_logger(),
-                "init_position for '%s': (%.2f, %.2f, %.2f rad) on '%s'",
-                robot_name.c_str(), x, y, theta, data->map_name.c_str());
+    RCLCPP_INFO(_node.get_logger(), "init_position for '%s': (%.2f, %.2f, %.2f rad) on '%s'", robot_name.c_str(), x, y, theta, map_name->c_str());
 
-    if (_connector.init_position(robot_name, x, y, theta, data->map_name).empty())
+    const std::string action_id = _connector.init_position(robot_name, x, y, theta, *map_name);
+    if (action_id.empty())
     {
-        RCLCPP_ERROR(_node.get_logger(), "init_position for '%s' was not published",
-                     robot_name.c_str());
+        RCLCPP_ERROR(_node.get_logger(), "init_position for '%s' was not published",robot_name.c_str());
         publish_result("error: could not publish initPosition (MQTT transport failure)");
         return;
     }
-    publish_result("ok");
+
+    // Sent is not accepted -- the AGV's verdict only arrives in its actionStates.
+    std::lock_guard<std::mutex> lock(_pending_mutex);
+    _pending_init_actions[robot_name] = PendingInitAction{action_id, std::chrono::steady_clock::now() + kInitActionTimeout};
+}
+
+void OperatorInterface::poll_pending_init_actions()
+{
+    std::map<std::string, std::string> finished;
+    {
+        std::lock_guard<std::mutex> lock(_pending_mutex);
+        for (auto it = _pending_init_actions.begin(); it != _pending_init_actions.end();)
+        {
+            const auto result = _connector.get_action_result(it->first, it->second.action_id);
+            if (result.has_value() && vda5050::is_terminal_action_status(result->first))
+            {
+                finished[it->first] = result->first == "FINISHED"? "ok" : "error: robot refused -- " + (result->second.empty() ? std::string("no reason given") : result->second);
+                it = _pending_init_actions.erase(it);
+                continue;
+            }
+            if (std::chrono::steady_clock::now() >= it->second.deadline)
+            {
+                finished[it->first] = "error: no reply from the robot within " + std::to_string(kInitActionTimeout.count()) + "s";
+                it = _pending_init_actions.erase(it);
+                continue;
+            }
+            ++it;
+        }
+    }
+
+    for (const auto &[robot_name, result] : finished)
+    {
+        const auto it = _init_position_result_pubs.find(robot_name);
+        if (it == _init_position_result_pubs.end())
+        {
+            continue;
+        }
+        std_msgs::msg::String out;
+        out.data = result;
+        it->second->publish(out);
+        RCLCPP_INFO(_node.get_logger(), "init_position for '%s': %s", robot_name.c_str(), result.c_str());
+    }
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::core

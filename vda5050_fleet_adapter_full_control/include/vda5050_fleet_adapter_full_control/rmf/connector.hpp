@@ -8,6 +8,7 @@
 #include <optional>
 #include <string>
 #include <array>
+#include <utility>
 #include <vector>
 
 #include <rclcpp/logger.hpp>
@@ -20,16 +21,14 @@
 
 namespace vda5050_fleet_adapter_full_control::rmf {
 
-// Result of handing a downlink message to the MQTT client. A queued message is
-// not an acknowledgement from the broker or AGV.
+// Result of handing a downlink message to the MQTT client. A queued message is not an acknowledgement from the broker or AGV.
 enum class CommandStatus
 {
     queued,
     transport_failed,
 };
 
-// Per-robot state in RMF coordinates, assembled from VDA5050 state and
-// visualization messages.
+// Per-robot state in RMF coordinates, assembled from VDA5050 state and visualization messages.
 struct RobotData
 {
     std::string map_name;
@@ -56,8 +55,7 @@ struct RobotData
     // First FATAL error type reported by the AGV.
     std::string fatal_error;
     // state.paused: the AGV itself reports being on hold, regardless of who
-    // requested it (this fleet's own pause(), a local control panel, or
-    // another master).
+    // requested it (this fleet's own pause(), a local control panel, or another master).
     bool paused = false;
     // The AGV is asking for more of the order horizon to be released.
     bool new_base_request = false;
@@ -100,8 +98,7 @@ public:
     };
 
     // Publishes one multi-node order and tracks completion at the final route
-    // point. The order identifier is committed only after MQTT accepts the
-    // publish request.
+    // point. The order identifier is committed only after MQTT accepts the publish request.
     struct NavigateResult
     {
         CommandStatus status = CommandStatus::queued;
@@ -109,18 +106,15 @@ public:
     };
 
     // `released_count`: how many of `route`'s points are released;
-    // nullopt releases the whole route. A smaller value leaves the rest
-    // as VDA5050 horizon, grown later by release_more().
+    // nullopt releases the whole route. A smaller value leaves the rest as VDA5050 horizon, grown later by release_more().
     NavigateResult navigate_route(const std::string &name,
                                   const std::vector<RoutePoint> &route,
                                   const std::string &map_id,
                                   std::optional<std::size_t> released_count = std::nullopt);
 
-    // Releases more of the route already sent by navigate_route(): same
-    // orderId, orderUpdateId incremented, already-released nodes/edges
-    // unchanged (a valid stitch, not a new order). Returns
-    // transport_failed, with no state change, if there's no active route
-    // to extend or `released_count` doesn't exceed what's released.
+    // Extends the route from navigate_route(): same orderId, orderUpdateId
+    // incremented, a stitch not a new order. transport_failed (no state
+    // change) if there's nothing to extend past what's already released.
     CommandStatus release_more(const std::string &name, std::size_t released_count);
 
     // Sets an operator speed cap for subsequent orders. The effective edge
@@ -164,6 +158,11 @@ public:
     bool is_order_stuck(const std::string &name, double timeout_s = 15.0) const;
     std::optional<std::string> get_action_state(const std::string &name,
                                                 const std::string &action_id);
+    // Status and resultDescription of `action_id` as last reported by the AGV.
+    std::optional<std::pair<std::string, std::string>> get_action_result(
+        const std::string &name, const std::string &action_id);
+    // Best-known map for `name`, without requiring the AGV to be localized.
+    std::optional<std::string> get_known_map(const std::string &name);
     bool is_online(const std::string &name, double state_timeout_s = 10.0);
 
 private:
@@ -173,6 +172,9 @@ private:
         std::string manufacturer;
         std::string serial;
         std::string interface_name;
+        // "/manufacturer/serial/", precomputed once so match_robot() doesn't
+        // rebuild it per candidate on every incoming MQTT message.
+        std::string mqtt_needle;
         Transform transform;
         // VDA5050 header counters are maintained independently per topic.
         int order_header_id = 0;
@@ -188,9 +190,8 @@ private:
         // VDA5050 orderUpdateId of current_order_id: 0 for a fresh order,
         // incremented by each release_more() extending it.
         int order_update_id = 0;
-        // Route/base/map last dispatched, kept so release_more() can
-        // rebuild the order with a larger released portion. Robot frame,
-        // not RMF's.
+        // Route/base/map last dispatched, kept so release_more() can rebuild
+        // with a larger released portion. Robot frame, not RMF's.
         std::vector<vda5050::RouteWaypoint> current_route;
         std::string current_base_id;
         vda5050::RobotPose current_base;

@@ -268,7 +268,13 @@ void VdaRobotCommandHandle::follow_new_path(
                     "[%s] follow_new_path: superseding an order still in progress -- "
                     "cancelling it before publishing the replacement",
                     _name.c_str());
-        _connector.stop(_name);
+        if (_connector.stop(_name) == CommandStatus::transport_failed)
+        {
+            RCLCPP_WARN(_logger,
+                        "[%s] follow_new_path: cancelOrder was not published -- the AGV "
+                        "may still be executing the order this one is replacing",
+                        _name.c_str());
+        }
     }
 
     std::optional<std::size_t> initial_release;
@@ -403,11 +409,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         data.map_name, Eigen::Vector3d(data.position[0], data.position[1], data.position[2]));
     handle->update_battery_soc(data.battery_soc);
 
-    // Ground truth from the robot's own reported state always wins over this cached flag --
-    // e.g. this process restarting mid-pause, or something outside pause()/resume() below
-    // (robot_local_ui, a raw VDA5050 startPause/stopPause) changing the AGV's real pause
-    // state without going through them. Left unreconciled, a stale _paused=true blocks
-    // every future pause() with "already paused" even once the AGV is driving normally again.
+    // Resync _paused with what the AGV actually reports; a stale flag blocks pause()/resume().
     bool was_paused;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -694,8 +696,11 @@ void VdaRobotCommandHandle::update(const RobotData &data)
     }
     if (dock_failed)
     {
-        RCLCPP_ERROR(_logger, "[%s] dock action %s FAILED -- RMF will see no progress on this dock",
+        // RequestCompleted has no failure signal, so ask for a replan now
+        // instead of leaving RMF to notice only via its own timeout.
+        RCLCPP_ERROR(_logger, "[%s] dock action %s FAILED -- asking RMF to replan",
                      _name.c_str(), dock_action_id_done.c_str());
+        handle->replan();
     }
     if (dock_done)
     {
@@ -851,6 +856,23 @@ void VdaRobotCommandHandle::set_online(bool online)
             return;
         }
         _online = online;
+    }
+    apply_commission();
+}
+
+void VdaRobotCommandHandle::set_ready_for_orders(bool ready, const std::string &reason)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_ready_for_orders == ready)
+        {
+            return;
+        }
+        _ready_for_orders = ready;
+        if (!ready)
+        {
+            _not_ready_reason = reason;
+        }
     }
     apply_commission();
 }

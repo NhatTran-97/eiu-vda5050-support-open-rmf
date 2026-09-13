@@ -103,6 +103,7 @@ void Connector::add_robot(const std::string &name, const std::string &manufactur
     ctx->manufacturer = manufacturer;
     ctx->serial = serial;
     ctx->interface_name = _interface_name;
+    ctx->mqtt_needle = "/" + manufacturer + "/" + serial + "/";
     ctx->transform = transform;
 
     RobotContext *ctx_ptr = nullptr;
@@ -557,8 +558,7 @@ Connector::RobotContext *Connector::match_robot(const std::string &topic)
 {
     for (auto &[_, ctx] : _robots)
     {
-        const std::string needle = "/" + ctx->manufacturer + "/" + ctx->serial + "/";
-        if (topic.find(needle) != std::string::npos)
+        if (topic.find(ctx->mqtt_needle) != std::string::npos)
         {
             return ctx.get();
         }
@@ -1176,6 +1176,42 @@ std::optional<std::string> Connector::get_action_state(
         }
     }
     return std::nullopt;
+}
+
+std::optional<std::pair<std::string, std::string>> Connector::get_action_result(
+    const std::string &name, const std::string &action_id)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it == _robots.end() || !it->second->last_state.has_value())
+    {
+        return std::nullopt;
+    }
+    for (const auto &a : it->second->last_state->action_states)
+    {
+        if (a.value("actionId", std::string{}) == action_id)
+        {
+            return std::make_pair(a.value("actionStatus", std::string{}),
+                                  a.value("resultDescription", std::string{}));
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> Connector::get_known_map(const std::string &name)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it == _robots.end() || !it->second->last_state.has_value())
+    {
+        return std::nullopt;
+    }
+    const RobotContext &ctx = *it->second;
+    if (!ctx.last_state->map_id.empty())
+    {
+        return ctx.last_state->map_id;
+    }
+    return ctx.current_map_id;
 }
 
 bool Connector::is_online(const std::string &name, double state_timeout_s)

@@ -57,12 +57,10 @@ int run_fleet_adapter_full_control(int argc, char **argv)
 
     try
     {
-        // VDA5050 and MQTT settings; parsed first since server_uri() feeds
-        // into fleet_config below.
+        // VDA5050 and MQTT settings; parsed first since server_uri() feeds into fleet_config below.
         const Config config(args.config_file);
 
-        // Reuse RMF's FleetConfiguration parser for fleet, graph, and task
-        // planning parameters. Robot control is registered through FullControl.
+        // Reuse RMF's FleetConfiguration parser for fleet, graph, and task planning parameters. Robot control is registered through FullControl.
         auto fleet_config = EasyFullControl::FleetConfiguration::from_config_files(
             args.config_file, args.nav_graph, config.server_uri());
         if (!fleet_config)
@@ -89,16 +87,14 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                                         fleet_config->server_uri());
         if (!fleet)
         {
-            RCLCPP_FATAL(logger, "add_fleet failed for '%s'",
-                         fleet_config->fleet_name().c_str());
+            RCLCPP_FATAL(logger, "add_fleet failed for '%s'", fleet_config->fleet_name().c_str());
             return 1;
         }
 
         const bool account_for_battery_drain = fleet_config->account_for_battery_drain();
         if (!account_for_battery_drain)
         {
-            RCLCPP_WARN(logger,
-                        "Battery accounting is disabled; reporting battery SoC=1.0 to RMF");
+            RCLCPP_WARN(logger,"Battery accounting is disabled; reporting battery SoC=1.0 to RMF");
         }
 
         // Apply the configured post-task finishing behavior.
@@ -108,8 +104,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                 fleet_config->recharge_threshold(), fleet_config->recharge_soc(),
                 account_for_battery_drain, fleet_config->finishing_request()))
         {
-            RCLCPP_FATAL(logger, "set_task_planner_params failed -- this fleet would "
-                                 "never bid for a task");
+            RCLCPP_FATAL(logger, "set_task_planner_params failed -- this fleet would " "never bid for a task");
             return 1;
         }
 
@@ -121,8 +116,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         for (const auto &[category, consider] : fleet_config->action_consideration())
         {
             fleet->add_performable_action(category, consider);
-            RCLCPP_INFO(logger, "Fleet '%s' can perform action '%s'",
-                        fleet_config->fleet_name().c_str(), category.c_str());
+            RCLCPP_INFO(logger, "Fleet '%s' can perform action '%s'", fleet_config->fleet_name().c_str(), category.c_str());
         }
 
         // Register configured task capabilities with their RMF request handlers.
@@ -135,20 +129,17 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             if (task == "delivery")
             {
                 fleet->consider_delivery_requests(consider, consider);
-                RCLCPP_INFO(logger, "Fleet '%s' can perform delivery tasks",
-                            fleet_config->fleet_name().c_str());
+                RCLCPP_INFO(logger, "Fleet '%s' can perform delivery tasks", fleet_config->fleet_name().c_str());
             }
             else if (task == "patrol")
             {
                 fleet->consider_patrol_requests(consider);
-                RCLCPP_INFO(logger, "Fleet '%s' can perform patrol tasks",
-                            fleet_config->fleet_name().c_str());
+                RCLCPP_INFO(logger, "Fleet '%s' can perform patrol tasks", fleet_config->fleet_name().c_str());
             }
             else if (task == "clean")
             {
                 fleet->consider_cleaning_requests(consider);
-                RCLCPP_INFO(logger, "Fleet '%s' can perform cleaning tasks",
-                            fleet_config->fleet_name().c_str());
+                RCLCPP_INFO(logger, "Fleet '%s' can perform cleaning tasks", fleet_config->fleet_name().c_str());
             }
         }
 
@@ -158,8 +149,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         }
 
         auto connector = std::make_shared<rmf::Connector>(
-            logger, config.mqtt().broker_url, config.interface_name(),
-            config.mqtt().username, config.mqtt().password);
+            logger, config.mqtt().broker_url, config.interface_name(), config.mqtt().username, config.mqtt().password);
         connector->start();
 
         const double nominal_speed = traits->linear().get_nominal_velocity();
@@ -174,8 +164,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
 
         std::map<std::string, std::shared_ptr<rmf::VdaRobotCommandHandle>> robots;
         // One counter per robot, bumped on every add_robot() attempt --
-        // handle_cb checks its own captured value against it, so a
-        // superseded (timed-out) attempt can't register a stale handle.
+        // handle_cb checks its own captured value against it, so a superseded (timed-out) attempt can't register a stale handle.
         std::map<std::string, std::shared_ptr<std::atomic<int>>> registration_generation;
         std::set<std::pair<std::string, std::string>> seen_identities;
         for (const auto &name : fleet_config->known_robots())
@@ -251,9 +240,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             {
                                 command->set_online(false);
                                 RCLCPP_WARN_THROTTLE(
-                                    logger, *adapter->node()->get_clock(), 10000,
-                                    "Robot '%s' is offline - no recent VDA5050 state",
-                                    name.c_str());
+                                    logger, *adapter->node()->get_clock(), 10000, "Robot '%s' is offline - no recent VDA5050 state",name.c_str());
                             }
                             continue;
                         }
@@ -262,6 +249,11 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                         const auto data = connector->get_data(name);
                         if (!data)
                         {
+                            // State is alive but has no usable pose (e.g. lost localization) -- update() won't run to catch this, so decommission explicitly.
+                            if (command->added())
+                            {
+                                command->set_ready_for_orders(false, "no valid pose");
+                            }
                             continue;
                         }
 
@@ -292,10 +284,8 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             {
                                 RCLCPP_WARN_THROTTLE(
                                     logger, *adapter->node()->get_clock(), 10000,
-                                    "Robot '%s' at (%.2f, %.2f) on '%s' does not merge "
-                                    "onto the nav graph -- cannot add it to RMF yet",
-                                    name.c_str(), position.x(), position.y(),
-                                    data->map_name.c_str());
+                                    "Robot '%s' at (%.2f, %.2f) on '%s' does not merge " "onto the nav graph -- cannot add it to RMF yet",
+                                    name.c_str(), position.x(), position.y(), data->map_name.c_str());
                                 continue;
                             }
 
@@ -308,9 +298,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             {
                                 if (generation->load() != this_attempt)
                                 {
-                                    // Arrived after a retry started a newer
-                                    // attempt -- registering it risks a
-                                    // second RMF participant for this robot.
+                                    // Arrived after a retry started a newer attempt -- registering it risks a second RMF participant for this robot.
                                     RCLCPP_WARN(logger,
                                                 "Robot '%s' registration callback arrived "
                                                 "after a retry superseded it -- ignoring",
