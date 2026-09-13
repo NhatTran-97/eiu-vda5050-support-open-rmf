@@ -926,6 +926,8 @@ void VDA5050Node::on_order_dropped(const std_msgs::msg::String::SharedPtr msg)
   action_manager_->cancel_all("");
   order_manager_->cancel_order(msg->data);
   clear_errors_by_type("navigationOrderError");
+  // Only a new order cleared this before -- a decommissioned robot never gets one.
+  clear_errors_by_type("navigationError");
   sync_action_blocking();
   publish_state();
 }

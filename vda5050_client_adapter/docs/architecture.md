@@ -344,6 +344,13 @@ driven distance live as it moves, instead of only updating once per
 `node_reached` — so `state.distanceSinceLastNode` tracks progress within
 the current leg in real time.
 
+`~/operating_mode` (`std_msgs/String`, already subscribed — see §9 Data
+Model) is fed a real signal as of the bridge's `twist_mux` diagnostics
+read: `AUTOMATIC` while Nav2/RMF drives, `MANUAL` the moment a joystick or
+keyboard override outranks it. Before that, this field existed in the
+protocol but had no real source and stayed `AUTOMATIC` regardless of what
+was actually happening on the robot.
+
 ---
 
 ## 12. ActionManager — Blocking Semantics
