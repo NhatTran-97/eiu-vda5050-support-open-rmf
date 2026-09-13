@@ -92,8 +92,7 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
         }
 
         RCLCPP_INFO(_node.get_logger(),
-                    "Operator interface for '%s': %s/%s/{init_position, pause, resume}, "
-                    "parameter %s",
+                    "Operator interface for '%s': %s/%s/{init_position, pause, resume}, " "parameter %s",
                     name.c_str(), _node.get_name(), name.c_str(), speed_limit_parameter(name).c_str());
     }
 

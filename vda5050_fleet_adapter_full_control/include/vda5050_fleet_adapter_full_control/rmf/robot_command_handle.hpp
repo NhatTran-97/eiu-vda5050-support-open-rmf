@@ -1,6 +1,7 @@
 #ifndef ROBOT_COMMAND_HANDLE_HPP
 #define ROBOT_COMMAND_HANDLE_HPP
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -19,10 +20,8 @@
 
 namespace vda5050_fleet_adapter_full_control::rmf {
 
-// Implements RMF FullControl commands for one VDA5050 robot. Planned routes
-// are published as multi-node VDA5050 orders.
-class VdaRobotCommandHandle
-  : public rmf_fleet_adapter::agv::RobotCommandHandle,
+// Implements RMF FullControl commands for one VDA5050 robot. Planned routes  are published as multi-node VDA5050 orders.
+class VdaRobotCommandHandle : public rmf_fleet_adapter::agv::RobotCommandHandle,
     public std::enable_shared_from_this<VdaRobotCommandHandle>
 {
 public:
@@ -31,8 +30,7 @@ public:
     using ArrivalEstimator = Base::ArrivalEstimator;
     using RequestCompleted = Base::RequestCompleted;
 
-    // `connector` and `graph` must outlive this object; `clock` must share
-    // the RMF plan's time source -- see Config::honor_waypoint_timing().
+    // `connector` and `graph` must outlive this object; `clock` must share the RMF plan's time source -- see Config::honor_waypoint_timing().
     VdaRobotCommandHandle(rclcpp::Logger logger, std::string name,
                           Connector &connector,
                           std::shared_ptr<const rmf_traffic::agv::Graph> graph,
@@ -42,18 +40,14 @@ public:
 
     // rmf_fleet_adapter::agv::RobotCommandHandle
     void follow_new_path(
-        const std::vector<rmf_traffic::agv::Plan::Waypoint> &waypoints,
-        ArrivalEstimator next_arrival_estimator,
-        RequestCompleted path_finished_callback) override;
+        const std::vector<rmf_traffic::agv::Plan::Waypoint> &waypoints, ArrivalEstimator next_arrival_estimator, RequestCompleted path_finished_callback) override;
 
     void stop() override;
 
-    void dock(const std::string &dock_name,
-              RequestCompleted docking_finished_callback) override;
+    void dock(const std::string &dock_name, RequestCompleted docking_finished_callback) override;
 
     // Dispatches an RMF PerformAction activity as a VDA5050 instant action.
-    void on_perform_action(const std::string &category, const nlohmann::json &description,
-                           RobotUpdateHandle::ActionExecution execution);
+    void on_perform_action(const std::string &category, const nlohmann::json &description, RobotUpdateHandle::ActionExecution execution);
 
     // Publishes robot state to RMF and advances active command tracking.
     void update(const RobotData &data);
@@ -64,12 +58,10 @@ public:
     // Updates RMF commission state from VDA5050 connectivity and readiness.
     void set_online(bool online);
 
-    // Marks readiness outside of update() -- e.g. a lost pose, which update()
-    // itself can't catch since it only runs when a pose is available.
+    // Marks readiness outside of update() -- e.g. a lost pose, which update() itself can't catch since it only runs when a pose is available.
     void set_ready_for_orders(bool ready, const std::string &reason = "");
 
-    // Pauses the AGV while preserving its active order. Returns an empty
-    // string on success or an error description on failure.
+    // Pauses the AGV while preserving its active order. Returns an empty string on success or an error description on failure.
     std::string pause();
 
     // Resumes a paused order. Uses the same result convention as pause().
@@ -142,6 +134,8 @@ private:
     bool _paused = false;
     // RMF's delay ceiling as it was before a pause lifted it.
     rmf_utils::optional<rmf_traffic::Duration> _saved_maximum_delay;
+    // Set by stop() while waiting for a resuming follow_new_path(); if none  comes in time, update() escalates the hold to a real cancelOrder.
+    std::optional<std::chrono::steady_clock::time_point> _traffic_pause_deadline;
 };
 
 }  // namespace vda5050_fleet_adapter_full_control::rmf

@@ -239,13 +239,11 @@ private:
                             const std::string &map_id,
                             std::optional<double> speed_limit) const;
 
-    // Reports action conflicts using the latest state and factsheet.
-    // Caller must hold _mutex.
+    // Reports action conflicts using the latest state and factsheet. Caller must hold _mutex.
     void warn_if_action_conflicts(const RobotContext &ctx, const std::string &action_type,
                                   const std::string &blocking_type) const;
 
-    // Reports factsheet protocol-limit violations and updates last_order_time.
-    // Caller must hold _mutex.
+    // Reports factsheet protocol-limit violations and updates last_order_time. Caller must hold _mutex.
     void warn_if_order_oversized(RobotContext &ctx, std::size_t node_count,
                                  std::size_t edge_count) const;
 
