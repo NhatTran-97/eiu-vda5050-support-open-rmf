@@ -143,7 +143,7 @@ Config file: [`config/vda5050_params.yaml`](config/vda5050_params.yaml)
 cd src/vda5050_client_adapter
 docker compose up -d --build
 
-# Or build from source (Humble)
+# Or build from source (Humble/Jazzy)
 sudo apt install libpaho-mqttpp-dev libpaho-mqtt-dev nlohmann-json3-dev
 colcon build --packages-select vda5050_msgs vda5050_client_adapter
 source install/setup.bash

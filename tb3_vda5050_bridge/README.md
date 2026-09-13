@@ -10,7 +10,7 @@ The bridge is the southbound robot driver for the VDA5050 stack. It receives val
 
 ```mermaid
 flowchart LR
-    subgraph robot ["TurtleBot3 · Humble"]
+    subgraph robot ["TurtleBot3 · Humble/Jazzy"]
         ca("vda5050_client_adapter")
         br("tb3_vda5050_bridge\n← THIS PACKAGE")
         nav2("Nav2\nNavigateToPose")
@@ -35,7 +35,7 @@ flowchart TB
     Node --> Session & SM
     Node <-->|"vda5050_msgs topics"| Adapter["vda5050_client_adapter"]
     Node <-->|"NavigateToPose goal/result"| Nav2["Nav2"]
-    Node <--|"odom · battery_state"| TB3["TurtleBot3 sensors"]
+    TB3["TurtleBot3 sensors"] -->|"odom · battery_state"| Node
 ```
 
 ### State machine
