@@ -38,6 +38,8 @@ Rectangle {
     // leg, so this is "into the current leg", not the trip total.
     readonly property real distanceSinceLastNode: primaryRobot
                                    ? Number((telemetry[primaryRobot.name] || {}).distance_since_last_node || 0) : 0
+    readonly property string operatingMode: primaryRobot
+                                   ? String((telemetry[primaryRobot.name] || {}).operating_mode || "AUTOMATIC") : "AUTOMATIC"
     readonly property string robotName: primaryRobot ? primaryRobot.name : "NO ROBOT"
     readonly property string robotStatus: primaryRobot ? primaryRobot.status : "OFFLINE"
     readonly property bool robotOnline: primaryRobot
@@ -630,6 +632,13 @@ Rectangle {
                             Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.distanceSinceLastNode.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "LEVEL"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
                             Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.primaryRobot.level : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { text: "MODE"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
+                            Text {
+                                Layout.fillWidth: true; elide: Text.ElideRight
+                                text: root.primaryRobot ? root.operatingMode : "—"
+                                color: root.operatingMode === "MANUAL" ? C.warn : C.text
+                                font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true
+                            }
                         }
 
                         Item { Layout.fillWidth: true }

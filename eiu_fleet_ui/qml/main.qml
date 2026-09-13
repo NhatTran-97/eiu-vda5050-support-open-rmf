@@ -1008,6 +1008,9 @@ ApplicationWindow {
                                                 // dispatch or a finishing_request return until re-localized.
                                                 readonly property bool notLocalized: tele && tele.position_initialized === false
                                                 readonly property bool stale: tele && tele.stale === true
+                                                // Joystick/manual override via twist_mux -- fleet adapter decommissions
+                                                // the robot from RMF while this is true.
+                                                readonly property bool manualMode: tele && tele.operating_mode === "MANUAL"
 
                                                 // Multi-round loop task currently assigned to this robot, if any.
                                                 readonly property var currentTask: {
@@ -1082,11 +1085,12 @@ ApplicationWindow {
                                                             text: robotRow.tele
                                                                   ? Number(robotRow.tele.speed).toFixed(2) + " m/s"
                                                                     + (robotRow.stale ? "  ⚠ NO RECENT DATA" : "")
+                                                                    + (robotRow.manualMode ? "  ⚠ MANUAL CONTROL" : "")
                                                                     + (robotRow.notLocalized ? "  ⚠ NOT LOCALIZED" : "")
                                                                     + (robotRow.teleUnsafe ? "  ⚠ " + robotRow.safetyLabel : "")
                                                                   : ""
                                                             color: robotRow.teleUnsafe ? C.err
-                                                                   : ((robotRow.notLocalized || robotRow.stale) ? C.warn : C.textDim)
+                                                                   : ((robotRow.notLocalized || robotRow.stale || robotRow.manualMode) ? C.warn : C.textDim)
                                                             font.family: root.monoFontFamily
                                                             font.pixelSize: Math.max(11, 14 * fleetPanel.contentScale)
                                                             elide: Text.ElideRight; Layout.fillWidth: true
