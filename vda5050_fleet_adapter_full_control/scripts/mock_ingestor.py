@@ -2,6 +2,7 @@
 """Simulate an RMF ingestor for delivery tasks."""
 import argparse
 import sys
+import time
 
 import rclpy
 from rclpy.node import Node
@@ -15,6 +16,7 @@ class MockIngestor(Node):
         self.guid = guid
         self.unload_time = unload_time
         self.queue: list[str] = []
+        self.deadlines: dict[str, float] = {}   # request_guid -> monotonic finish time
 
         self.result_pub = self.create_publisher(IngestorResult, "/ingestor_results", 10)
         self.state_pub = self.create_publisher(IngestorState, "/ingestor_states", 10)
@@ -27,6 +29,7 @@ class MockIngestor(Node):
 
         self.get_logger().info(f"ingesting for request {msg.request_guid}")
         self.queue.append(msg.request_guid)
+        self.deadlines[msg.request_guid] = time.monotonic() + self.unload_time
         self._publish_result(msg.request_guid, IngestorResult.ACKNOWLEDGED)
 
         timer = None
@@ -39,6 +42,7 @@ class MockIngestor(Node):
         if request_guid not in self.queue:
             return
         self.queue.remove(request_guid)
+        self.deadlines.pop(request_guid, None)
         self._publish_result(request_guid, IngestorResult.SUCCESS)
         self.get_logger().info(f"ingested for request {request_guid}")
 
@@ -56,6 +60,8 @@ class MockIngestor(Node):
         msg.guid = self.guid
         msg.mode = IngestorState.BUSY if self.queue else IngestorState.IDLE
         msg.request_guid_queue = list(self.queue)
+        if self.queue:
+            msg.seconds_remaining = max(0.0, self.deadlines[self.queue[0]] - time.monotonic())
         self.state_pub.publish(msg)
 
 

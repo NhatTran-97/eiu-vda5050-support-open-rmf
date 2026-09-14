@@ -34,7 +34,7 @@ rmf_fleet:
 
   robots:
     tb3_1:
-      charger: "charger_1"
+      charger: "charger_2"
 
       responsive_wait: false
 
