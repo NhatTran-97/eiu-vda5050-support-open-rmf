@@ -53,6 +53,16 @@ Rectangle {
                                    ? Number((telemetry[primaryRobot.name] || {}).distance_since_last_node || 0) : 0
     readonly property string operatingMode: primaryRobot
                                    ? String((telemetry[primaryRobot.name] || {}).operating_mode || "AUTOMATIC") : "AUTOMATIC"
+    readonly property var safety: primaryRobot ? (telemetry[primaryRobot.name] || {}).safety : null
+    readonly property bool telemetryStale: primaryRobot
+                                   ? Boolean((telemetry[primaryRobot.name] || {}).stale) : false
+    readonly property bool eStopActive: !!(safety && safety.triggered)
+    readonly property string eStopLabel: {
+        if (!safety) return ""
+        if (safety.e_stop && safety.e_stop !== "NONE") return safety.e_stop
+        if (safety.field_violation) return "FIELD VIOLATION"
+        return ""
+    }
     readonly property string robotName: primaryRobot ? primaryRobot.name : "NO ROBOT"
     readonly property string robotStatus: primaryRobot ? primaryRobot.status : "OFFLINE"
     readonly property bool robotOnline: primaryRobot
@@ -342,7 +352,7 @@ Rectangle {
                     Layout.preferredHeight: 24
                     radius: 12
                     color: Qt.rgba(0.13, 0.84, 0.63, 0.08)
-                    border.color: robotOnline ? C.success : C.border
+                    border.color: !robotOnline ? C.border : (root.telemetryStale ? C.warn : C.success)
                     border.width: 1
 
                     Row {
@@ -351,12 +361,13 @@ Rectangle {
                         spacing: 6
                         Rectangle {
                             width: 7; height: 7; radius: 3.5
-                            color: robotOnline ? C.success : C.textDim
+                            color: !robotOnline ? C.textDim : (root.telemetryStale ? C.warn : C.success)
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         Text {
-                            text: robotOnline ? "LIVE DATA" : "WAITING DATA"
-                            color: robotOnline ? C.success : C.textDim
+                            // Distinguish "robot is stationary" from "data stopped updating".
+                            text: !robotOnline ? "WAITING DATA" : (root.telemetryStale ? "STALE" : "LIVE DATA")
+                            color: !robotOnline ? C.textDim : (root.telemetryStale ? C.warn : C.success)
                             font.family: fontMono
                             font.pixelSize: 10 * root.uiScale
                             font.bold: true
@@ -526,15 +537,16 @@ Rectangle {
                                 Layout.minimumWidth: statusText.implicitWidth + 10
                                 Layout.preferredHeight: 25
                                 radius: 8
-                                color: "transparent"
-                                border.color: root.primaryRobot
-                                              ? C.cyan : C.border
+                                color: root.eStopActive ? C.err : "transparent"
+                                border.color: root.eStopActive ? C.err
+                                              : (root.primaryRobot ? C.cyan : C.border)
                                 border.width: 1
                                 Text {
                                     id: statusText
                                     anchors.centerIn: parent
-                                    text: root.robotStatus
-                                    color: root.primaryRobot ? C.cyan : C.textDim
+                                    text: root.eStopActive ? "E-STOP" : root.robotStatus
+                                    color: root.eStopActive ? C.text
+                                           : (root.primaryRobot ? C.cyan : C.textDim)
                                     font.family: fontMono
                                     font.pixelSize: 10 * root.uiScale
                                     font.bold: true
@@ -648,6 +660,13 @@ Rectangle {
                                 Layout.fillWidth: true; elide: Text.ElideRight
                                 text: root.primaryRobot ? root.operatingMode : "—"
                                 color: root.operatingMode === "MANUAL" ? C.warn : C.text
+                                font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true
+                            }
+                            Text { text: "SAFETY"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
+                            Text {
+                                Layout.fillWidth: true; elide: Text.ElideRight
+                                text: !root.primaryRobot ? "—" : (root.eStopActive ? "⚠ " + root.eStopLabel : "OK")
+                                color: root.eStopActive ? C.err : C.success
                                 font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true
                             }
                         }

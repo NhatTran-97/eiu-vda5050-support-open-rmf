@@ -16,7 +16,7 @@ cancels, and directly controls robots through the same channels.
 | Robot Control dialog | Pause/resume, speed-limit override, re-localize (click-on-map or typed pose), direct "go to waypoint" pinned to that one robot |
 | Recent Tasks table | Search/filter, underway-first sort, cancel button, dispatch confirmed synchronously with error feedback and a server-side timeout for a dispatcher that never responds |
 | New Task dialog | Fleet-wide patrol dispatch (category, destination, loop count) — RMF bids it to whichever robot it picks |
-| Fleet Analytics | Battery/task-distribution gauges, current task progress, live distance-since-last-node |
+| Fleet Analytics | Battery/task-distribution gauges, current task progress, live distance-since-last-node, eStop/safety status per robot |
 | Traffic awareness | Blocked lanes and active negotiation/conflict counts, read from real RMF topics, not inferred |
 | No-go zones | Drag a rectangle on the map; every lane it crosses is closed via RMF's own lane-closure mechanism. Multiple zones at once, click to select, delete to reopen |
 | Resilience | VDA5050 telemetry staleness detection, malformed-MQTT-payload hardening, dispatch/cancel confirmation with timeout |

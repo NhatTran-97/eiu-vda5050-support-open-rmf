@@ -40,14 +40,16 @@ ApplicationWindow {
     property var speedLimits: ({})
     readonly property string monoFontFamily: fontMono
 
-    readonly property int activeTaskCount: {
+    function countTasksByState(state) {
         var count = 0
         for (var i = 0; i < tasks.length; ++i) {
-            if (tasks[i].state === "queued" || tasks[i].state === "underway")
-                count++
+            if (tasks[i].state === state) count++
         }
         return count
     }
+    readonly property int runningTaskCount: countTasksByState("underway")
+    readonly property int queuedTaskCount: countTasksByState("queued")
+    readonly property int completedTaskCount: countTasksByState("completed")
 
     // Calculate average battery from robot measurements.
     readonly property real averageBattery: {
@@ -91,7 +93,7 @@ ApplicationWindow {
                 name: name,
                 fleet: cfg.fleetName,
                 model: "",
-                status: "NOT MERGED",
+                status: "PENDING SYNC",
                 battery: (tele && tele.battery_soc != null) ? tele.battery_soc * 100 : 0,
                 level: (tele && tele.map_id) ? tele.map_id : "—",
                 task: "",
@@ -112,7 +114,7 @@ ApplicationWindow {
             return C.cyan
         if (status === "EMERGENCY" || status === "ERROR")
             return C.err
-        if (status === "PAUSED" || status === "WAITING" || status === "NOT MERGED")
+        if (status === "PAUSED" || status === "WAITING" || status === "PENDING SYNC")
             return C.warn
         return C.textDim
     }
@@ -126,30 +128,113 @@ ApplicationWindow {
         return n
     }
 
-    readonly property int criticalAlertCount: {
-        var n = ros.activeConflicts
+    // Single source of truth for "what needs an operator's attention" --
+    // the top alert badge, the System Health card, and the Needs Attention
+    // panel all read from this so they can never disagree with each other.
+    readonly property var attentionItems: {
+        var items = []
+        if (!ros.rmfOnline)
+            items.push({ severity: "critical", title: "RMF connection lost",
+                         detail: "Fleet traffic coordination unavailable" })
+        if (!mqtt.connected)
+            items.push({ severity: "critical", title: "MQTT broker disconnected",
+                         detail: "No VDA5050 telemetry from any robot" })
+        if (ros.activeConflicts > 0)
+            items.push({ severity: "critical", title: ros.activeConflicts + " traffic conflict(s)",
+                         detail: "RMF is negotiating a route conflict" })
+        if (ros.blockedLanes > 0)
+            items.push({ severity: "warning", title: ros.blockedLanes + " lane(s) blocked",
+                         detail: "A no-go zone is closing part of the map" })
         for (var i = 0; i < root.displayRobots.length; i++) {
             var r = root.displayRobots[i]
-            if (!root.robotsOnline[r.name]) n++
             var t = root.telemetryFor(r.name)
-            if (t && t.safety && t.safety.triggered) n++
-            if (t && t.fatal_error) n++
+            if (!root.robotsOnline[r.name])
+                items.push({ severity: "critical", title: r.name + " VDA5050 offline",
+                             detail: "No recent telemetry from the robot" })
+            if (t && t.safety && t.safety.triggered)
+                items.push({ severity: "critical", title: r.name + " emergency stop",
+                             detail: (t.safety.e_stop && t.safety.e_stop !== "NONE")
+                                     ? t.safety.e_stop : "Field violation" })
+            if (t && t.fatal_error)
+                items.push({ severity: "critical", title: r.name + " fatal error", detail: t.fatal_error })
+            if (Number(r.battery) > 0 && Number(r.battery) < 20)
+                items.push({ severity: "warning", title: r.name + " battery low",
+                             detail: Number(r.battery).toFixed(0) + "% remaining" })
+            if (t && t.position_initialized === false)
+                items.push({ severity: "warning", title: r.name + " not localized",
+                             detail: "No usable pose for route planning" })
+            if (t && t.stale === true)
+                items.push({ severity: "warning", title: r.name + " telemetry stale",
+                             detail: "No recent VDA5050 state update" })
         }
+        var failedTasks = 0
+        for (var j = 0; j < root.tasks.length; j++) {
+            if (root.tasks[j].state === "failed") failedTasks++
+        }
+        if (failedTasks > 0)
+            items.push({ severity: "warning", title: failedTasks + " task(s) failed",
+                         detail: "See Recent Tasks for details" })
+        return items
+    }
+
+    function firstAttentionOfSeverity(sev) {
+        for (var i = 0; i < attentionItems.length; i++)
+            if (attentionItems[i].severity === sev) return attentionItems[i]
+        return null
+    }
+
+    readonly property int criticalAlertCount: {
+        var n = 0
+        for (var i = 0; i < attentionItems.length; i++)
+            if (attentionItems[i].severity === "critical") n++
         return n
     }
     readonly property int warningAlertCount: {
-        var n = ros.blockedLanes
-        for (var i = 0; i < root.displayRobots.length; i++) {
-            var r = root.displayRobots[i]
-            if (Number(r.battery) < 20) n++
-            var t = root.telemetryFor(r.name)
-            if (t && t.position_initialized === false) n++
-            if (t && t.stale === true) n++
-        }
-        for (var j = 0; j < root.tasks.length; j++) {
-            if (root.tasks[j].state === "failed") n++
-        }
+        var n = 0
+        for (var i = 0; i < attentionItems.length; i++)
+            if (attentionItems[i].severity === "warning") n++
         return n
+    }
+
+    // Healthy -> Degraded -> Critical -> Offline, instead of a binary that
+    // can contradict itself (e.g. "OFFLINE" while MQTT/VDA5050 are fine).
+    readonly property string systemHealthLevel: {
+        if (!ros.rmfOnline && !mqtt.connected) return "OFFLINE"
+        if (root.criticalAlertCount > 0) return "CRITICAL"
+        if (root.warningAlertCount > 0) return "DEGRADED"
+        return "HEALTHY"
+    }
+    readonly property string systemHealthDetail: {
+        if (systemHealthLevel === "OFFLINE") return "No connection to fleet"
+        if (systemHealthLevel === "CRITICAL") {
+            var c = root.firstAttentionOfSeverity("critical")
+            return c ? c.title : "Critical issue detected"
+        }
+        if (systemHealthLevel === "DEGRADED") {
+            var w = root.firstAttentionOfSeverity("warning")
+            return w ? w.title : "Degraded"
+        }
+        return "All services nominal"
+    }
+    readonly property color systemHealthColor: systemHealthLevel === "HEALTHY" ? C.success
+            : (systemHealthLevel === "DEGRADED" ? C.warn : C.err)
+
+    // Robot status breakdown for the Fleet KPI card.
+    readonly property string fleetStatusSummary: {
+        var navigating = 0, idle = 0, charging = 0, error = 0
+        for (var i = 0; i < displayRobots.length; i++) {
+            var s = displayRobots[i].status
+            if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME" || s === "WORKING") navigating++
+            else if (s === "CHARGING") charging++
+            else if (s === "EMERGENCY" || s === "ERROR") error++
+            else idle++
+        }
+        var parts = []
+        if (error > 0) parts.push(error + " error")
+        if (navigating > 0) parts.push(navigating + " navigating")
+        if (charging > 0) parts.push(charging + " charging")
+        if (idle > 0) parts.push(idle + " idle")
+        return parts.length > 0 ? parts.join(" · ") : "No robots"
     }
 
     function taskColor(state) {
@@ -379,12 +464,12 @@ ApplicationWindow {
                                 width: 8
                                 height: 8
                                 radius: 4
-                                color: ros.rmfOnline ? C.success : C.err
+                                color: root.systemHealthColor
                                 anchors.verticalCenter: parent.verticalCenter
                             }
                             Text {
-                                text: ros.rmfOnline ? "All services nominal" : "RMF connection offline"
-                                color: ros.rmfOnline ? C.success : C.err
+                                text: root.systemHealthDetail
+                                color: root.systemHealthColor
                                 font.pixelSize: 11
                             }
                         }
@@ -619,25 +704,24 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.minimumWidth: 210
-                            title: "System status"
-                            value: ros.rmfOnline ? "ACTIVE" : "OFFLINE"
+                            title: "System health"
+                            value: root.systemHealthLevel
                             valueFontFamily: root.monoFontFamily
-                            detail: ros.rmfOnline ? "Open-RMF is responding" : "Waiting for fleet states"
+                            detail: root.systemHealthDetail
                             iconSource: statusActiveIconUrl
-                            accentColor: ros.rmfOnline ? C.success : C.err
-                            alert: !ros.rmfOnline
+                            accentColor: root.systemHealthColor
+                            alert: root.systemHealthLevel !== "HEALTHY"
                         }
                         MetricCard {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.minimumWidth: 210
-                            title: "Fleet"
-                            value: root.robots.length + (root.robots.length === 1 ? " robot" : " robots")
+                            title: "Robots"
+                            value: root.displayRobots.length > 0
+                                   ? root.countRobotsOnline() + "/" + root.displayRobots.length + " ONLINE"
+                                   : "0 ROBOTS"
                             valueFontFamily: root.monoFontFamily
-                            // Per-robot VDA5050 connection state.
-                            detail: root.displayRobots.length > 0
-                                    ? root.countRobotsOnline() + "/" + root.displayRobots.length + " VDA5050 connected"
-                                    : "No robots discovered"
+                            detail: root.fleetStatusSummary
                             iconSource: fleetRobotIconUrl
                             accentColor: C.cyan
                         }
@@ -659,10 +743,10 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.minimumWidth: 210
-                            title: "Active tasks"
-                            value: root.activeTaskCount + " running"
+                            title: "Tasks"
+                            value: root.runningTaskCount + " ACTIVE"
                             valueFontFamily: root.monoFontFamily
-                            detail: root.tasks.length + " tasks recorded"
+                            detail: root.queuedTaskCount + " queued · " + root.completedTaskCount + " completed"
                             iconText: "✓"
                             accentColor: C.accent
                         }
@@ -917,6 +1001,115 @@ ApplicationWindow {
                                 })
                             }
 
+                            // Exceptions first: what does the operator need to act on right now,
+                            // ahead of routine fleet/task state below.
+                            Rectangle {
+                                objectName: "needsAttentionPanel"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: root.attentionItems.length > 0
+                                        ? Math.min(230, 52 + root.attentionItems.length * 50)
+                                        : 90
+                                radius: 16
+                                color: C.surface
+                                border.color: root.criticalAlertCount > 0 ? "#673044"
+                                              : (root.warningAlertCount > 0 ? "#5A4A26" : C.border)
+                                border.width: 1
+                                clip: true
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    spacing: 0
+
+                                    Item {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 44
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 17
+                                            anchors.rightMargin: 17
+                                            Text {
+                                                text: "NEEDS ATTENTION"
+                                                color: C.text
+                                                font.pixelSize: 13
+                                                font.bold: true
+                                                font.letterSpacing: 0.8
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                visible: root.attentionItems.length > 0
+                                                width: attnCountText.implicitWidth + 14
+                                                height: 20
+                                                radius: 10
+                                                color: root.criticalAlertCount > 0 ? C.err : C.warn
+                                                Text {
+                                                    id: attnCountText
+                                                    anchors.centerIn: parent
+                                                    text: root.attentionItems.length
+                                                    color: "#0B1420"
+                                                    font.bold: true
+                                                    font.pixelSize: 11
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        visible: root.attentionItems.length === 0
+                                        Layout.fillWidth: true
+                                        Layout.leftMargin: 17
+                                        Layout.bottomMargin: 14
+                                        text: "✓ No issues requiring attention"
+                                        color: C.success
+                                        font.pixelSize: 13
+                                    }
+
+                                    ListView {
+                                        visible: root.attentionItems.length > 0
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        model: root.attentionItems
+                                        ScrollIndicator.vertical: ScrollIndicator { }
+                                        delegate: Item {
+                                            width: ListView.view.width
+                                            height: 50
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: 17
+                                                anchors.rightMargin: 17
+                                                spacing: 10
+                                                Rectangle {
+                                                    Layout.preferredWidth: 8
+                                                    Layout.preferredHeight: 8
+                                                    radius: 4
+                                                    color: modelData.severity === "critical" ? C.err : C.warn
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                }
+                                                ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 1
+                                                    Text {
+                                                        text: modelData.title
+                                                        color: C.text
+                                                        font.bold: true
+                                                        font.pixelSize: 13
+                                                        elide: Text.ElideRight
+                                                        Layout.fillWidth: true
+                                                    }
+                                                    Text {
+                                                        text: modelData.detail
+                                                        color: C.textDim
+                                                        font.pixelSize: 11
+                                                        elide: Text.ElideRight
+                                                        Layout.fillWidth: true
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             Rectangle {
                                 objectName: "activeRobotsPanel"
                                 Layout.fillWidth: true
@@ -1137,6 +1330,16 @@ ApplicationWindow {
                                                                 elide: Text.ElideRight
                                                                 width: parent.width - 8
                                                                 horizontalAlignment: Text.AlignHCenter
+                                                            }
+                                                            MouseArea {
+                                                                anchors.fill: parent
+                                                                hoverEnabled: true
+                                                                visible: modelData.status === "PENDING SYNC"
+                                                                cursorShape: Qt.WhatsThisCursor
+                                                                ToolTip.visible: containsMouse
+                                                                ToolTip.delay: 400
+                                                                ToolTip.text: "Robot state is available through VDA5050, but "
+                                                                              + "has not been synchronized with RMF yet."
                                                             }
                                                         }
                                                         Text {
