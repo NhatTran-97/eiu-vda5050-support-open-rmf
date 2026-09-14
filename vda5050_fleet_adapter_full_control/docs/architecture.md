@@ -18,6 +18,7 @@ normal VDA5050 master controller.
 | Stuck-order detection | Replans if an AGV never acknowledges a dispatched order's `orderId` within a timeout |
 | Config validation | Fails fast at startup on bad MQTT settings, duplicate identities, or a nav-graph robot missing from `vda5050.robots` |
 | Lane closures (no-go zones) | Subscribes to `/lane_closure_requests`; matching `fleet_name` calls `FleetUpdateHandle::close_lanes()` / `open_lanes()`, so RMF stops routing through those lanes fleet-wide |
+| Emergency stop (eStop) | Reads `safetyState.eStop`/`fieldViolation` from the AGV's VDA5050 state; a non-`NONE` value decommissions the robot immediately, same path as commission tracking |
 
 ## System architecture
 

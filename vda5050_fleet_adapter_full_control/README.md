@@ -49,3 +49,14 @@ Each robot needs a matching entry under both `rmf_fleet.robots` and
 multi-robot load testing without extra physical robots).
 `scripts/test_dispatch_e2e.py` and `test_pause_resume.py` drive the fleet
 adapter end-to-end against it.
+
+## Recent additions
+
+| Item | Status |
+|---|---|
+| No-go zone lane closures | ✅ Done — `/lane_closure_requests` → `FleetUpdateHandle::close_lanes()`/`open_lanes()` (`fleet_adapter_full_control.cpp`) |
+| RMF-initiated stop pauses, not cancels | ✅ Done — `stop()` pauses; escalates to `cancelOrder` only if resume never arrives (`robot_command_handle.cpp`) |
+| Multi-node order traversability check | ✅ Done — warns if two consecutive order waypoints have no direct lane |
+| mapId mismatch warning | ✅ Done — warns when order `mapId` ≠ AGV's reported `mapId` (`connector.cpp`) |
+| Mock dispenser/ingestor + Delivery task | ✅ Done — 2 mock workcell scripts + Delivery task (pickup → wait → dropoff → wait) |
+| Emergency stop (eStop) | ✅ Done — `safetyState.eStop` decommissions the robot (`robot_command_handle.cpp`) |
