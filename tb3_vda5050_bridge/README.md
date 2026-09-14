@@ -185,6 +185,20 @@ ros2 launch tb3_vda5050_bridge bridge.launch.py
 
 Make sure `vda5050_client_adapter` and Nav2 are running before starting the bridge.
 
+## Testing without hardware
+
+`mock/mock_load_publisher.py` stands in for a load sensor that doesn't exist
+yet — it republishes a fixed `vda5050_msgs/Load` onto
+`/vda5050_client_adapter/load` every second, so `state.loads` reaches the
+fleet adapter and the UI over the real MQTT `state` message, proving the
+pipeline end to end. Swap it for a real sensor node later; nothing
+downstream (adapter, MQTT, fleet adapter, UI) needs to change.
+
+```bash
+ros2 run tb3_vda5050_bridge mock_load_publisher.py \
+    --load-id box-01 --load-type box --weight 20
+```
+
 ## Related
 
 - [Root README — system overview](../README.md)

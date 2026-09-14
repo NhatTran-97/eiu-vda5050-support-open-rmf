@@ -24,7 +24,15 @@ def generate_launch_description():
         parameters=[LaunchConfiguration("bridge_params_file")],
     )
 
+    mock_load_node = Node(
+        package="tb3_vda5050_bridge",
+        executable="mock_load_publisher.py",
+        name="mock_load_publisher",
+        output="screen",
+    )
+
     return LaunchDescription([
         params_file_arg,
         bridge_node,
+        mock_load_node
     ])

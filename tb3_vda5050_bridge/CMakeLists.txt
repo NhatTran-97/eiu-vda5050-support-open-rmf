@@ -79,6 +79,11 @@ install(DIRECTORY config launch docs
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  mock/mock_load_publisher.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
 
