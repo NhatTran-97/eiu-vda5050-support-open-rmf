@@ -10,6 +10,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 
+DISPENSER_STATES_TOPIC = "/dispenser_states"
+INGESTOR_STATES_TOPIC  = "/ingestor_states"
 FLEET_STATES_TOPIC  = "/fleet_states"
 TASK_API_TOPIC      = "/task_api_requests"
 TASK_RESP_TOPIC     = "/task_api_responses"
@@ -102,8 +104,17 @@ class RosBridge(QObject):
         # Map UI request IDs to RMF task IDs.
         self._req_to_rmf: dict[str, str] = {}
 
-  
+        # Latest dispenser/ingestor state by workcell guid.
+        self._workcell_wait: dict[str, dict] = {}
+
+        # Per-robot task id, seeded from the reloaded cache (newest first,
+        # so the first match per robot wins).
         self._robot_last_task_id: dict[str, str] = {}
+        for t in self._tasks:
+            robot = t.get("robot", "—")
+            if (t.get("state") in ("queued", "underway") and robot != "—"
+                    and t.get("rmf_id") and robot not in self._robot_last_task_id):
+                self._robot_last_task_id[robot] = t["rmf_id"]
 
         self._node        = None
         self._task_pub    = None
@@ -134,9 +145,13 @@ class RosBridge(QObject):
     @staticmethod
     def _load_tasks() -> list:
         try:
-            return json.loads(_TASKS_CACHE_PATH.read_text())
+            tasks = json.loads(_TASKS_CACHE_PATH.read_text())
         except Exception:
             return []
+        for t in tasks:
+            for field in ("date", "start", "end", "pickup", "destination", "robot"):
+                t.setdefault(field, "—")
+        return tasks
 
     def _save_tasks(self):
         try:
@@ -192,6 +207,8 @@ class RosBridge(QObject):
             from rmf_fleet_msgs.msg import FleetState, LaneStates, LaneRequest
             from rmf_task_msgs.msg import ApiRequest, ApiResponse, DispatchStates
             from rmf_traffic_msgs.msg import NegotiationStatuses
+            from rmf_dispenser_msgs.msg import DispenserState
+            from rmf_ingestor_msgs.msg import IngestorState
         except Exception as e:
             print(f"[ROS] import error ({e}). GUI runs but without RMF data.")
             return
@@ -237,6 +254,12 @@ class RosBridge(QObject):
             self._node.create_subscription(
                 NegotiationStatuses, NEGOTIATION_STATUSES_TOPIC,
                 self._on_negotiation_statuses, reliable_tl)
+
+            # Workcell wait countdown for delivery tasks.
+            self._node.create_subscription(
+                DispenserState, DISPENSER_STATES_TOPIC, self._on_workcell_state, 10)
+            self._node.create_subscription(
+                IngestorState, INGESTOR_STATES_TOPIC, self._on_workcell_state, 10)
 
             # Publish queued commands on the ROS thread to keep the UI responsive.
             self._command_timer = self._node.create_timer(
@@ -384,10 +407,10 @@ class RosBridge(QObject):
         self._sync_tasks_from_fleet(robot_task_map)
 
     def _mark_task_completed(self, rmf_id: str):
-        """Complete an underway task when its robot drops the task ID."""
+        """Complete a queued/underway task once its robot drops the task ID."""
         with self._task_lock:
             for task in self._tasks:
-                if task.get("rmf_id") == rmf_id and task["state"] == "underway":
+                if task.get("rmf_id") == rmf_id and task["state"] in ("queued", "underway"):
                     task["state"] = "completed"
                     if task.get("end", "—") == "—":
                         task["end"] = datetime.datetime.now().strftime("%I:%M:%S %p")
@@ -445,6 +468,37 @@ class RosBridge(QObject):
         if count != self._active_conflicts:
             self._active_conflicts = count
             self.trafficChanged.emit()
+
+    def _on_workcell_state(self, msg):
+        """Track dispenser/ingestor wait countdown for delivery tasks."""
+        busy = bool(msg.request_guid_queue)
+        self._workcell_wait[msg.guid] = {
+            "busy": busy,
+            "seconds_remaining": float(msg.seconds_remaining) if busy else 0.0,
+        }
+        updated = False
+        with self._task_lock:
+            for task in self._tasks:
+                if task.get("state") != "underway":
+                    continue
+                if msg.guid == task.get("pickup_handler"):
+                    kind = "pickup"
+                elif msg.guid == task.get("dropoff_handler"):
+                    kind = "dropoff"
+                else:
+                    continue
+                if busy:
+                    new_wait = {"kind": kind, "wait_seconds_remaining": self._workcell_wait[msg.guid]["seconds_remaining"]}
+                elif task.get("wait_kind") == kind:
+                    new_wait = {"kind": None, "wait_seconds_remaining": None}
+                else:
+                    continue
+                if task.get("wait_kind") != new_wait["kind"] or task.get("wait_seconds_remaining") != new_wait["wait_seconds_remaining"]:
+                    task["wait_kind"] = new_wait["kind"]
+                    task["wait_seconds_remaining"] = new_wait["wait_seconds_remaining"]
+                    updated = True
+        if updated:
+            self._publish_tasks()
 
     def _sync_tasks_from_fleet(self, robot_task_map: dict):
         """Attach live robot names and finish times to known RMF tasks."""
@@ -646,6 +700,10 @@ class RosBridge(QObject):
                 new_phase = "" if label in ("completed", "failed", "cancelled") else phase_label
                 if task.get("phase", "") != new_phase:
                     task["phase"] = new_phase; updated = True
+                if not new_phase and task.get("wait_kind") is not None:
+                    task["wait_kind"] = None
+                    task["wait_seconds_remaining"] = None
+                    updated = True
 
                 rounds = task.get("rounds", 1)
                 if rounds > 1:
@@ -714,6 +772,9 @@ class RosBridge(QObject):
             "rounds":           1,
             "rounds_remaining": 0,
             "phase":       "",
+            "category":    "delivery",
+            "pickup_handler":  pickup_handler,
+            "dropoff_handler": dropoff_handler,
             "_dispatched_at": time.monotonic(),
         }
         with self._task_lock:
@@ -791,6 +852,7 @@ class RosBridge(QObject):
             "rounds":           int(loops),
             "rounds_remaining": int(loops),
             "phase":       "",
+            "category":    category,
             "_dispatched_at": time.monotonic(),   # Dispatch timeout start
         }
         with self._task_lock:

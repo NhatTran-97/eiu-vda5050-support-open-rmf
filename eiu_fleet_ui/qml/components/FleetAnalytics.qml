@@ -56,6 +56,11 @@ Rectangle {
     readonly property var safety: primaryRobot ? (telemetry[primaryRobot.name] || {}).safety : null
     readonly property bool telemetryStale: primaryRobot
                                    ? Boolean((telemetry[primaryRobot.name] || {}).stale) : false
+    // AGV's reported loads (VDA5050 state.loads).
+    readonly property var robotLoads: primaryRobot
+                                   ? (telemetry[primaryRobot.name] || {}).loads || [] : []
+    readonly property bool deliveryUnderway: !!(displayTask && displayTask.category === "delivery"
+                                                 && displayTaskState === "underway")
     readonly property bool eStopActive: !!(safety && safety.triggered)
     readonly property string eStopLabel: {
         if (!safety) return ""
@@ -365,7 +370,6 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                         }
                         Text {
-                            // Distinguish "robot is stationary" from "data stopped updating".
                             text: !robotOnline ? "WAITING DATA" : (root.telemetryStale ? "STALE" : "LIVE DATA")
                             color: !robotOnline ? C.textDim : (root.telemetryStale ? C.warn : C.success)
                             font.family: fontMono
@@ -816,10 +820,41 @@ Rectangle {
 
                             Text {
                                 Layout.fillWidth: true
-                                visible: root.displayTask && !!root.displayTask.phase
-                                text: root.displayTask ? String(root.displayTask.phase || "").replace(/_/g, " ") : ""
+                                visible: !!(root.displayTask && (root.displayTask.phase || root.displayTask.wait_kind))
+                                text: {
+                                    if (!root.displayTask) return ""
+                                    var label = root.displayTask.phase
+                                                ? String(root.displayTask.phase).replace(/_/g, " ")
+                                                : (root.displayTask.wait_kind || "")
+                                    if (!label) return ""
+                                    // Workcell wait countdown.
+                                    var remaining = root.displayTask.wait_seconds_remaining
+                                    if (remaining !== undefined && remaining !== null)
+                                        label += " · " + Math.ceil(remaining) + "s left"
+                                    return label
+                                }
                                 color: C.textDim
                                 font.pixelSize: 10 * root.uiScale
+                                elide: Text.ElideRight
+                            }
+
+                            Text {
+                                // AGV's reported load (VDA5050 state.loads).
+                                Layout.fillWidth: true
+                                visible: root.deliveryUnderway && root.robotLoads.length > 0
+                                text: {
+                                    if (!root.deliveryUnderway || root.robotLoads.length === 0) return ""
+                                    var parts = []
+                                    for (var i = 0; i < root.robotLoads.length; i++) {
+                                        var l = root.robotLoads[i]
+                                        var label = l.loadType || l.loadId || "load"
+                                        parts.push(label + (l.weight >= 0 ? " · " + l.weight + "kg" : ""))
+                                    }
+                                    return "📦 " + parts.join(", ")
+                                }
+                                color: C.text
+                                font.pixelSize: 10 * root.uiScale
+                                font.bold: true
                                 elide: Text.ElideRight
                             }
                         }

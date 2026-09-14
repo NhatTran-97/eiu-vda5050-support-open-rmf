@@ -128,9 +128,7 @@ ApplicationWindow {
         return n
     }
 
-    // Single source of truth for "what needs an operator's attention" --
-    // the top alert badge, the System Health card, and the Needs Attention
-    // panel all read from this so they can never disagree with each other.
+    // Feeds the alert badge, System Health card, and Needs Attention panel.
     readonly property var attentionItems: {
         var items = []
         if (!ros.rmfOnline)
@@ -196,8 +194,7 @@ ApplicationWindow {
         return n
     }
 
-    // Healthy -> Degraded -> Critical -> Offline, instead of a binary that
-    // can contradict itself (e.g. "OFFLINE" while MQTT/VDA5050 are fine).
+    // Healthy -> Degraded -> Critical -> Offline.
     readonly property string systemHealthLevel: {
         if (!ros.rmfOnline && !mqtt.connected) return "OFFLINE"
         if (root.criticalAlertCount > 0) return "CRITICAL"
@@ -1001,8 +998,6 @@ ApplicationWindow {
                                 })
                             }
 
-                            // Exceptions first: what does the operator need to act on right now,
-                            // ahead of routine fleet/task state below.
                             Rectangle {
                                 objectName: "needsAttentionPanel"
                                 Layout.fillWidth: true

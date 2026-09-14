@@ -11,12 +11,12 @@ cancels, and directly controls robots through the same channels.
 | Area | What it does |
 |---|---|
 | Live navigation map | Occupancy grid + nav-graph overlay, lane direction arrows, blocked-lane highlighting from live RMF traffic state, multi-robot markers with heading/pulse, planned-path overlay, click-to-pick a pose or waypoint |
-| Fleet Command dashboard | KPI cards (system status, fleet + VDA5050-connected count, traffic status, active tasks), RMF/MQTT online indicators, critical/warning alert badges |
+| Fleet Command dashboard | KPI cards (system health: Healthy/Degraded/Critical/Offline, fleet + VDA5050-connected count, traffic status, tasks), RMF/MQTT online indicators, a Needs Attention panel listing every active issue |
 | Active Robots panel | Search/filter, battery, round progress, live telemetry badges (not-localized, no-recent-data, safety/eStop/fatal-error) |
 | Robot Control dialog | Pause/resume, speed-limit override, re-localize (click-on-map or typed pose), direct "go to waypoint" pinned to that one robot |
 | Recent Tasks table | Search/filter, underway-first sort, cancel button, dispatch confirmed synchronously with error feedback and a server-side timeout for a dispatcher that never responds |
-| New Task dialog | Fleet-wide patrol dispatch (category, destination, loop count) — RMF bids it to whichever robot it picks |
-| Fleet Analytics | Battery/task-distribution gauges, current task progress, live distance-since-last-node, eStop/safety status per robot |
+| New Task dialog | Fleet-wide patrol or delivery dispatch (destinations, handlers, loop count) — RMF bids it to whichever robot it picks; draggable |
+| Fleet Analytics | Battery/task-distribution gauges, current task progress, live distance-since-last-node, eStop/safety status per robot, delivery pickup/dropoff wait countdown, AGV-reported load while a delivery is underway |
 | Traffic awareness | Blocked lanes and active negotiation/conflict counts, read from real RMF topics, not inferred |
 | No-go zones | Drag a rectangle on the map; every lane it crosses is closed via RMF's own lane-closure mechanism. Multiple zones at once, click to select, delete to reopen |
 | Resilience | VDA5050 telemetry staleness detection, malformed-MQTT-payload hardening, dispatch/cancel confirmation with timeout |
@@ -152,7 +152,7 @@ sequenceDiagram
 
 | Boundary | Crossed by | Protocol |
 |---|---|---|
-| UI ↔ RMF core | `/fleet_states`, `/task_api_requests`, `/task_api_responses`, `/dispatch_states`, `/lane_states`, `/lane_closure_requests`, `/rmf_traffic/negotiation_statuses` | ROS 2, domain 42 |
+| UI ↔ RMF core | `/fleet_states`, `/task_api_requests`, `/task_api_responses`, `/dispatch_states`, `/lane_states`, `/lane_closure_requests`, `/rmf_traffic/negotiation_statuses`, `/dispenser_states`, `/ingestor_states` | ROS 2, domain 42 |
 | UI ↔ fleet adapter | `<robot>/pause`, `<robot>/resume` (services), `speed_limit.<robot>` (param), `<robot>/init_position` (+ `_result`) | ROS 2, domain 42 |
 | UI ↔ robot | `<interface>/v2/<mfr>/<serial>/state`, `.../connection` | MQTT (Mosquitto) |
 | Fleet adapter ↔ robot | VDA5050 `order`, `state`, `connection`, `instantActions` | MQTT (Mosquitto) |

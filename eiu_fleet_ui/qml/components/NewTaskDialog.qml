@@ -38,12 +38,28 @@ Dialog {
         spacing: 15
 
         Text {
+            id: titleText
             Layout.fillWidth: true
             Layout.topMargin: 18; Layout.leftMargin: 18; Layout.rightMargin: 18
             text: "CREATE NEW MISSION"
             font.pixelSize: 16; font.bold: true; color: C.text
             font.letterSpacing: 1.0
             horizontalAlignment: Text.AlignHCenter
+
+            // Drag to move the dialog.
+            MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.SizeAllCursor
+                property point pressPos: Qt.point(0, 0)
+                onPressed: (mouse) => {
+                    dlg.anchors.centerIn = undefined
+                    pressPos = Qt.point(mouse.x, mouse.y)
+                }
+                onPositionChanged: (mouse) => {
+                    dlg.x += mouse.x - pressPos.x
+                    dlg.y += mouse.y - pressPos.y
+                }
+            }
         }
 
         Text {
