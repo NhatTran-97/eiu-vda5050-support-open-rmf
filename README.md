@@ -14,13 +14,13 @@ adapter + Nav2 stack and talks to that container over MQTT.
 **Hardware**
 
 <p align="center">
-  <img src="assets/img/amr_hardware.png" alt="AMR hardware" width="55%" />
+  <img src="assets/img/amr_hardware.png" alt="AMR hardware" width="95%" />
 </p>
 
 **Software — Nav2 navigation stack**
 
 <p align="center">
-  <img src="assets/img/amr_software.png" alt="AMR software architecture" width="55%" />
+  <img src="assets/img/amr_software.png" alt="AMR software architecture" width="95%" />
 </p>
 
 | Property | Value |
