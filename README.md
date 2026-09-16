@@ -11,12 +11,16 @@ adapter + Nav2 stack and talks to that container over MQTT.
 
 ### AMR (EIU-FABLAB)
 
-<p align="center">
-  <img src="assets/img/amr_hardware.png" alt="AMR hardware" width="70%" />
-</p>
+**Hardware**
 
 <p align="center">
-  <img src="assets/img/amr_software.png" alt="AMR software architecture" width="70%" />
+  <img src="assets/img/amr_hardware.png" alt="AMR hardware" width="55%" />
+</p>
+
+**Software — Nav2 navigation stack**
+
+<p align="center">
+  <img src="assets/img/amr_software.png" alt="AMR software architecture" width="55%" />
 </p>
 
 | Property | Value |
@@ -25,13 +29,20 @@ adapter + Nav2 stack and talks to that container over MQTT.
 | Kinematics | Differential drive |
 | Footprint | 0.6 m × 0.4 m (rectangular body) |
 | Max linear / angular speed | 0.30 m/s / 0.60 rad/s |
+| Compute | SOM-RK3399 — 2× Cortex-A72 + 4× Cortex-A53 (hexa-core) |
+| Perception | LR-1BS 2D LiDAR (270°) + Orbbec DaBai Pro 3D depth camera |
+| Inertial | BNO055 9-axis IMU |
+| Drive | Servo hub motors + SD-21007 servo driver, closed-loop |
+| Networking | TL-SF1005 industrial Ethernet switch + industrial Wi-Fi (teleop/monitoring) |
+| Power | Onboard battery, 29V/14A power distribution board |
+| Navigation stack | Nav2: Theta* planner → Simple Smoother → MPPI controller, global/local costmap |
 | RMF fleet | `amr_fleet` — [`config_amr.yaml`](vda5050_fleet_adapter_full_control/config/config_amr.yaml) |
 | Robots in this repo's demos | 1 (`amr_1`) |
 
 ### TurtleBot3 Burger
 
 <p align="center">
-  <img src="assets/img/turtlebot3.png" alt="TurtleBot3 Burger" width="35%" />
+  <img src="assets/img/turtlebot3.png" alt="TurtleBot3 Burger" width="30%" />
 </p>
 
 | Property | Value |
@@ -60,12 +71,15 @@ adapter + Nav2 stack and talks to that container over MQTT.
 
 ### All demo videos
 
+> Click a thumbnail to watch on YouTube (GitHub doesn't allow embedded/playable
+> video from external sites, only a static preview).
+
 | Fleet | Robot(s) | Description | Video |
 |---|---|---|---|
-| `tb3_fleet` | 1 × TurtleBot3 (real hardware) | Real-robot patrol/delivery over VDA5050 | [Watch](https://www.youtube.com/watch?v=yxOD5KHLECk) |
-| `tb3_fleet` | 1 × TurtleBot3 (simulation) | Same integration in Gazebo | [Watch](https://youtu.be/A1GAbyzlPng?si=dFzA2t3dVjSpfh_C) |
-| `amr_fleet` | 1 × AMR | Single-robot demo on the AMR line | [Watch](https://www.youtube.com/watch?v=6eLXi1PXubU&t=290s) |
-| `tb3_fleet` | 2 × TurtleBot3 | Multi-robot demo — two robots deconflicting via RMF | [Watch](https://www.youtube.com/watch?v=UslfKM7a148) |
+| `tb3_fleet` | 1 × TurtleBot3 (real hardware) | Real-robot patrol/delivery over VDA5050 | [<img src="https://img.youtube.com/vi/yxOD5KHLECk/mqdefault.jpg" width="160" alt="Watch: real TurtleBot3 demo" />](https://www.youtube.com/watch?v=yxOD5KHLECk) |
+| `tb3_fleet` | 1 × TurtleBot3 (simulation) | Same integration in Gazebo | [<img src="https://img.youtube.com/vi/A1GAbyzlPng/mqdefault.jpg" width="160" alt="Watch: simulation demo" />](https://youtu.be/A1GAbyzlPng?si=dFzA2t3dVjSpfh_C) |
+| `amr_fleet` | 1 × AMR | Single-robot demo on the AMR line | [<img src="https://img.youtube.com/vi/6eLXi1PXubU/mqdefault.jpg" width="160" alt="Watch: AMR fleet demo" />](https://www.youtube.com/watch?v=6eLXi1PXubU&t=290s) |
+| `tb3_fleet` | 2 × TurtleBot3 | Multi-robot demo — two robots deconflicting via RMF | [<img src="https://img.youtube.com/vi/UslfKM7a148/mqdefault.jpg" width="160" alt="Watch: TB3 multi-robot demo" />](https://www.youtube.com/watch?v=UslfKM7a148) |
 
 ## Packages
 
