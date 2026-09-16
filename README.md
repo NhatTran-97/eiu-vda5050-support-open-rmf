@@ -64,6 +64,13 @@ adapter + Nav2 stack and talks to that container over MQTT.
 
 <table>
 <tr>
+<td colspan="2" align="center">
+
+**Milestone 2 demos — pending review**
+
+</td>
+</tr>
+<tr>
 <td align="center" width="50%">
 
 **`tb3_fleet`** — 1 × TurtleBot3 (real hardware)
@@ -78,6 +85,13 @@ Real-robot patrol/delivery over VDA5050
 Same integration in Gazebo
 
 [<img src="https://img.youtube.com/vi/A1GAbyzlPng/hqdefault.jpg" width="100%" alt="Watch: simulation demo" />](https://youtu.be/A1GAbyzlPng?si=dFzA2t3dVjSpfh_C)
+
+</td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+
+**Milestone 2 demos — reviewed (round 1)**
 
 </td>
 </tr>
