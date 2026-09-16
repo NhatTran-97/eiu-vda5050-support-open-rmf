@@ -21,32 +21,49 @@ flowchart LR
 
 ## Message Definitions
 
-| Message | VDA5050 Object | Description |
+29 messages total (see `CMakeLists.txt` for the authoritative list). Note:
+`factsheet` is not one of the six VDA5050 messages that crosses a ROS 2 topic
+boundary in this stack — it's built directly from ROS params and serialized
+straight to MQTT JSON (`factsheet_handler.cpp`), so there's no `Factsheet.msg`.
+
+### Top-level protocol messages
+
+| Message | VDA5050 topic | Description |
 |---|---|---|
-| `Action` | Action | Action with id, type, parameters, and blocking type |
-| `ActionParameter` | ActionParameter | Key/value parameter for an action |
-| `ActionState` | ActionState | Action lifecycle status (WAITING / INITIALIZING / RUNNING / PAUSED / FINISHED / FAILED) |
-| `AgvPosition` | AGVPosition | Robot pose (x, y, theta, map frame, `position_initialized` flag) |
-| `BatteryState` | BatteryState | Battery charge (0–100 %), charging flag |
-| `BoundingBoxReference` | BoundingBoxReference | Load bounding box reference point |
-| `ControlPoint` | ControlPoint | Trajectory control point for curved edges |
-| `Edge` | Edge | Route graph edge with actions and trajectory |
-| `EdgeState` | EdgeState | Edge traversal state |
-| `Error` | Error | Error with type, description, level, and references |
-| `ErrorReference` | ErrorReference | Reference element for error context |
-| `Factsheet` | Factsheet | AGV technical specification |
-| `Header` | Header | VDA5050 message header (headerId, timestamp, version, manufacturer, serialNumber) |
-| `Info` | Info | Informational message |
-| `Load` | Load | Load currently carried by the AGV |
-| `LoadDimensions` | LoadDimensions | Load physical dimensions |
-| `Node` | Node | Route graph node with position and actions |
-| `NodePosition` | NodePosition | Node x/y/theta coordinates and map frame |
-| `NodeState` | NodeState | Node traversal state |
-| `Order` | Order | Navigation order: orderId, updateId, nodes, edges |
-| `SafetyState` | SafetyState | E-stop and field violation status |
-| `Trajectory` | Trajectory | Trajectory definition with degree and control points |
-| `TypeSpecification` | TypeSpecification | AGV kinematic class, load capacity, navigation types |
-| `Velocity` | Velocity | Linear and angular velocity |
+| `Order` | order | Navigation order: orderId, updateId, nodes, edges |
+| `InstantActions` | instantActions | Header + a set of actions to execute immediately |
+| `State` | state | Full robot state: order/action progress, position, velocity, battery, safety, errors, operating mode, loads, maps |
+| `Visualization` | visualization | Lightweight, high-frequency position + velocity for live tracking |
+| `Connection` | connection | `connection_state`: ONLINE / OFFLINE / CONNECTIONBROKEN (LWT) |
+
+### Supporting / nested types
+
+| Message | Description |
+|---|---|
+| `Action` | Action with id, type, parameters, and blocking type |
+| `ActionParameter` | Key/value parameter for an action |
+| `ActionState` | Action lifecycle status (WAITING / INITIALIZING / RUNNING / PAUSED / FINISHED / FAILED) |
+| `AgvPosition` | Robot pose (x, y, theta, map frame, `position_initialized` flag) |
+| `BatteryState` | Battery charge (0–100 %), charging flag |
+| `BoundingBoxReference` | Load bounding box reference point |
+| `ControlPoint` | Trajectory control point for curved edges |
+| `Corridor` | Allowed deviation corridor around an edge (left/right width, reference point) |
+| `Edge` | Route graph edge with actions and trajectory |
+| `EdgeState` | Edge traversal state |
+| `Error` | Error with type, description, level, and references |
+| `ErrorReference` | Reference element for error context |
+| `Header` | VDA5050 message header (headerId, timestamp, version, manufacturer, serialNumber) |
+| `Info` | Informational message |
+| `InfoReference` | Reference element for an `Info` entry |
+| `Load` | Load currently carried by the AGV |
+| `LoadDimensions` | Load physical dimensions |
+| `MapInfo` | Map identity/version/status the AGV is currently using |
+| `Node` | Route graph node with position and actions |
+| `NodePosition` | Node x/y/theta coordinates and map frame |
+| `NodeState` | Node traversal state |
+| `SafetyState` | E-stop and field violation status |
+| `Trajectory` | Trajectory definition with degree and control points |
+| `Velocity` | Linear and angular velocity |
 
 ## Build
 
