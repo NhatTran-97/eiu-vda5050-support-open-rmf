@@ -57,29 +57,49 @@ adapter + Nav2 stack and talks to that container over MQTT.
 
 ## Demo
 
-### Real robot (TurtleBot3)
-
-<p align="center">
-  <img src="assets/video/vda5050_support_openrmf.gif" alt="VDA5050 Open-RMF demo on real TurtleBot3" width="80%" />
-</p>
-
-### Simulation
-
-<p align="center">
-  <img src="assets/video/simulation_vda5050-open-rmf-support.gif" alt="VDA5050 Open-RMF demo in simulation" width="80%" />
-</p>
-
 ### All demo videos
 
 > Click a thumbnail to watch on YouTube (GitHub doesn't allow embedded/playable
 > video from external sites, only a static preview).
 
-| Fleet | Robot(s) | Description | Video |
-|---|---|---|---|
-| `tb3_fleet` | 1 × TurtleBot3 (real hardware) | Real-robot patrol/delivery over VDA5050 | [<img src="https://img.youtube.com/vi/yxOD5KHLECk/mqdefault.jpg" width="160" alt="Watch: real TurtleBot3 demo" />](https://www.youtube.com/watch?v=yxOD5KHLECk) |
-| `tb3_fleet` | 1 × TurtleBot3 (simulation) | Same integration in Gazebo | [<img src="https://img.youtube.com/vi/A1GAbyzlPng/mqdefault.jpg" width="160" alt="Watch: simulation demo" />](https://youtu.be/A1GAbyzlPng?si=dFzA2t3dVjSpfh_C) |
-| `amr_fleet` | 1 × AMR | Single-robot demo on the AMR line | [<img src="https://img.youtube.com/vi/6eLXi1PXubU/mqdefault.jpg" width="160" alt="Watch: AMR fleet demo" />](https://www.youtube.com/watch?v=6eLXi1PXubU&t=290s) |
-| `tb3_fleet` | 2 × TurtleBot3 | Multi-robot demo — two robots deconflicting via RMF | [<img src="https://img.youtube.com/vi/UslfKM7a148/mqdefault.jpg" width="160" alt="Watch: TB3 multi-robot demo" />](https://www.youtube.com/watch?v=UslfKM7a148) |
+<table>
+<tr>
+<td align="center" width="50%">
+
+**`tb3_fleet`** — 1 × TurtleBot3 (real hardware)
+Real-robot patrol/delivery over VDA5050
+
+[<img src="https://img.youtube.com/vi/yxOD5KHLECk/hqdefault.jpg" width="100%" alt="Watch: real TurtleBot3 demo" />](https://www.youtube.com/watch?v=yxOD5KHLECk)
+
+</td>
+<td align="center" width="50%">
+
+**`tb3_fleet`** — 1 × TurtleBot3 (simulation)
+Same integration in Gazebo
+
+[<img src="https://img.youtube.com/vi/A1GAbyzlPng/hqdefault.jpg" width="100%" alt="Watch: simulation demo" />](https://youtu.be/A1GAbyzlPng?si=dFzA2t3dVjSpfh_C)
+
+</td>
+</tr>
+<tr>
+<td align="center" width="50%">
+
+**`amr_fleet`** — 1 × AMR
+Single-robot demo on the AMR line
+
+[<img src="https://img.youtube.com/vi/6eLXi1PXubU/hqdefault.jpg" width="100%" alt="Watch: AMR fleet demo" />](https://www.youtube.com/watch?v=6eLXi1PXubU&t=290s)
+
+</td>
+<td align="center" width="50%">
+
+**`tb3_fleet`** — 2 × TurtleBot3
+Multi-robot demo — two robots deconflicting via RMF
+
+[<img src="https://img.youtube.com/vi/UslfKM7a148/hqdefault.jpg" width="100%" alt="Watch: TB3 multi-robot demo" />](https://www.youtube.com/watch?v=UslfKM7a148)
+
+</td>
+</tr>
+</table>
 
 ## Packages
 
@@ -193,7 +213,7 @@ source install/setup.bash
 ros2 launch fleet_bringup fleet_bringup.launch.py
 
 # Dispatch a patrol task (same container, another shell):
-python3 src/vda5050_fleet_adapter_full_control/scripts/dispatch_patrol.py wp6
+python3 src/vda5050_fleet_adapter_full_control/scripts/dispatch_patrol.py charger_1
 ```
 
 `fleet_bringup` starts one `vda5050_fleet_adapter_full_control` process for
