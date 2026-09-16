@@ -91,7 +91,10 @@ Same integration in Gazebo
 <tr>
 <td colspan="2" align="center">
 
-**Milestone 2 demos — reviewed (round 1)**
+**Milestone 2 demos — updated after review round 1**
+Improvements made in response to round 1 feedback — see the
+[Reviewer recommendations](vda5050_fleet_adapter_full_control/README.md#reviewer-recommendations)
+checklist for what was addressed.
 
 </td>
 </tr>
