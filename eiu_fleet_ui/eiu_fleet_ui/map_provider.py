@@ -153,3 +153,9 @@ class MapProvider(QObject):
     @Property(str, notify=mapReady)
     def laneIndexMapJson(self):
         return json.dumps(self._raw_lane_to_edge)
+
+    @Property(str, notify=mapReady)
+    def navGraphPath(self):
+        """Absolute path to the nav_graph.yaml this map was loaded from --
+        default source/target for the in-app graph editor."""
+        return str(self._nav_graph)

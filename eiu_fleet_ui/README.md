@@ -67,10 +67,15 @@ A real-time fleet management dashboard for [Open-RMF](https://github.com/open-rm
 | PySide6 | ≥ 6.4 | `pip install PySide6` or `apt install python3-pyside6` |
 | paho-mqtt | ≥ 1.6 | `pip install paho-mqtt` |
 | PyYAML | any | `pip install pyyaml` |
-| Open-RMF | Jazzy | Running in Docker on domain 42 (see `vda5050_fleet_adapter_full_control`'s README) |
+| Open-RMF | Jazzy | Runs in the same Docker container/process group as this UI — see `fleet_bringup` |
 | MQTT broker | Mosquitto | `localhost:1883` |
 
-> **ROS domain:** The UI subscribes on `ROS_DOMAIN_ID=42` (configurable via env var `EIU_ROS_DOMAIN_ID`). Open-RMF must run on the same domain.
+> **ROS domain:** normally nothing to configure — `eiu_fleet_ui`, Open-RMF core,
+> and the fleet adapter all run in the same container via `fleet_bringup`, so
+> they share whatever `ROS_DOMAIN_ID` that container already has (see
+> `vda5050_fleet_adapter_full_control/docker/run.sh`). `EIU_ROS_DOMAIN_ID`
+> only matters if you run this UI against an Open-RMF instance in a
+> *different* process/container than usual.
 
 ---
 
@@ -88,8 +93,8 @@ source install/setup.bash
 # 3. Run
 ros2 run eiu_fleet_ui eiu_fleet_ui
 
-# Optional: override ROS domain
-EIU_ROS_DOMAIN_ID=42 ros2 run eiu_fleet_ui eiu_fleet_ui
+# Optional: only if Open-RMF runs on a different domain than this shell's default
+EIU_ROS_DOMAIN_ID=10 ros2 run eiu_fleet_ui eiu_fleet_ui
 ```
 
 ### Multiple fleets (heterogeneous robot types)

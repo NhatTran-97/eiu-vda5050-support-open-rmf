@@ -193,11 +193,13 @@ class RosBridge(QObject):
         threading.Thread(target=self._start_impl, args=(on_node_ready,), daemon=True).start()
 
     def _start_impl(self, on_node_ready=None):
-        # Choose the ROS domain from the UI override, environment, or fallback.
-        domain = (os.environ.get("EIU_ROS_DOMAIN_ID")
-                  or os.environ.get("ROS_DOMAIN_ID")
-                  or "42")
-        os.environ["ROS_DOMAIN_ID"] = domain
+        # No default domain to force anymore -- eiu_fleet_ui, Open-RMF, and the
+        # fleet adapter all run in the same process group via fleet_bringup, so
+        # this just inherits whatever ROS_DOMAIN_ID that environment already
+        # has. Only override it if the caller explicitly asks for a different one.
+        override = os.environ.get("EIU_ROS_DOMAIN_ID")
+        if override:
+            os.environ["ROS_DOMAIN_ID"] = override
 
         try:
             import rclpy
@@ -274,7 +276,7 @@ class RosBridge(QObject):
             self._spin_thread = threading.Thread(target=self._spin, daemon=True)
             self._spin_thread.start()
             self._rosReady.emit()   # QTimer.start() must run on the GUI thread
-            print(f"[ROS] bridge online — domain {domain}")
+            print(f"[ROS] bridge online — domain {os.environ.get('ROS_DOMAIN_ID', '(default)')}")
         except Exception as e:
             print(f"[ROS] start error: {e}")
 

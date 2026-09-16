@@ -85,22 +85,28 @@ ApplicationWindow {
                 if (tele && tele.battery_soc != null) {
                     merged = Object.assign({}, merged, { battery: tele.battery_soc * 100 })
                 }
+                // Tracked by RMF: position/battery are real, not placeholders.
+                merged = Object.assign({}, merged, { rmfSynced: true, hasBattery: true })
                 out.push(merged)
                 continue
             }
+            var pendingHasBattery = !!(tele && tele.battery_soc != null)
             out.push({
                 key: cfg.fleetName + "/" + name,
                 name: name,
                 fleet: cfg.fleetName,
                 model: "",
                 status: "PENDING SYNC",
-                battery: (tele && tele.battery_soc != null) ? tele.battery_soc * 100 : 0,
+                battery: pendingHasBattery ? tele.battery_soc * 100 : 0,
                 level: (tele && tele.map_id) ? tele.map_id : "—",
                 task: "",
                 finish: "",
                 updated: "",
                 x: 0, y: 0, yaw: 0,
-                path: []
+                path: [],
+                // Never appeared in /fleet_states: x/y/yaw are placeholders, not real pose.
+                rmfSynced: false,
+                hasBattery: pendingHasBattery
             })
         }
         return out
@@ -218,9 +224,12 @@ ApplicationWindow {
 
     // Robot status breakdown for the Fleet KPI card.
     readonly property string fleetStatusSummary: {
-        var navigating = 0, idle = 0, charging = 0, error = 0
+        var navigating = 0, idle = 0, charging = 0, error = 0, offline = 0
         for (var i = 0; i < displayRobots.length; i++) {
-            var s = displayRobots[i].status
+            var rr = displayRobots[i]
+            // A robot with no VDA5050 connection is offline, whatever RMF last reported.
+            if (!root.robotsOnline[rr.name]) { offline++; continue }
+            var s = rr.status
             if (s === "MOVING" || s === "DOCKING" || s === "GOING_HOME" || s === "WORKING") navigating++
             else if (s === "CHARGING") charging++
             else if (s === "EMERGENCY" || s === "ERROR") error++
@@ -231,6 +240,7 @@ ApplicationWindow {
         if (navigating > 0) parts.push(navigating + " navigating")
         if (charging > 0) parts.push(charging + " charging")
         if (idle > 0) parts.push(idle + " idle")
+        if (offline > 0) parts.push(offline + " offline")
         return parts.length > 0 ? parts.join(" · ") : "No robots"
     }
 
@@ -432,52 +442,15 @@ ApplicationWindow {
 
                 Item { Layout.fillHeight: true }
 
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 98
-                    Layout.leftMargin: 16
-                    Layout.rightMargin: 16
-                    Layout.bottomMargin: 18
-                    radius: 13
-                    color: C.surface
-                    border.color: C.border
-                    border.width: 1
-
-                    Column {
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 8
-
-                        Text {
-                            text: "SYSTEM HEALTH"
-                            color: C.textDim
-                            font.pixelSize: 9
-                            font.bold: true
-                            font.letterSpacing: 1.2
-                        }
-                        Row {
-                            spacing: 8
-                            Rectangle {
-                                width: 8
-                                height: 8
-                                radius: 4
-                                color: root.systemHealthColor
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-                            Text {
-                                text: root.systemHealthDetail
-                                color: root.systemHealthColor
-                                font.pixelSize: 11
-                            }
-                        }
-                        Text {
-                            text: "Fleet UI  ·  v0.2.0"
-                            color: C.textDim
-                            opacity: 0.7
-                            font.family: root.monoFontFamily
-                            font.pixelSize: 11
-                        }
-                    }
+                // System health is already shown in the KPI card and Needs Attention.
+                Text {
+                    Layout.leftMargin: 22
+                    Layout.bottomMargin: 16
+                    text: "Fleet UI  ·  v0.2.0"
+                    color: C.textDim
+                    opacity: 0.6
+                    font.family: root.monoFontFamily
+                    font.pixelSize: 11
                 }
             }
         }
@@ -727,14 +700,17 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             Layout.minimumWidth: 210
                             title: "Traffic status"
-                            value: ros.activeConflicts > 0 ? "CONFLICT"
-                                   : (ros.blockedLanes > 0 ? "CONGESTED" : "NORMAL")
+                            value: !ros.rmfOnline ? "NO DATA"
+                                   : (ros.activeConflicts > 0 ? "CONFLICT"
+                                      : (ros.blockedLanes > 0 ? "CONGESTED" : "NORMAL"))
                             valueFontFamily: root.monoFontFamily
-                            detail: ros.activeConflicts + " conflicts · " + ros.blockedLanes + " blocked lanes"
+                            detail: !ros.rmfOnline ? "RMF connection required"
+                                    : (ros.activeConflicts + " conflicts · " + ros.blockedLanes + " blocked lanes")
                             iconText: "⇄"
-                            accentColor: ros.activeConflicts > 0 ? C.err
-                                         : (ros.blockedLanes > 0 ? C.warn : C.success)
-                            alert: ros.activeConflicts > 0
+                            accentColor: !ros.rmfOnline ? C.textDim
+                                         : (ros.activeConflicts > 0 ? C.err
+                                            : (ros.blockedLanes > 0 ? C.warn : C.success))
+                            alert: ros.rmfOnline && ros.activeConflicts > 0
                         }
                         MetricCard {
                             Layout.fillWidth: true
@@ -822,16 +798,20 @@ ApplicationWindow {
                                         }
                                         Item { Layout.fillWidth: true }
                                         Row {
-                                            spacing: 12
-                                            Row {
-                                                spacing: 5
-                                                Rectangle { width: 7; height: 7; radius: 4; color: C.accent; anchors.verticalCenter: parent.verticalCenter }
-                                                Text { text: "Lanes"; color: C.textDim; font.pixelSize: 10 }
-                                            }
-                                            Row {
-                                                spacing: 5
-                                                Rectangle { width: 7; height: 7; radius: 4; color: C.success; anchors.verticalCenter: parent.verticalCenter }
-                                                Text { text: "Route"; color: C.textDim; font.pixelSize: 10 }
+                                            spacing: 10
+                                            Repeater {
+                                                model: [
+                                                    { label: "Graph",        color: "#f5c400" },
+                                                    { label: "Active route", color: "#00e676" },
+                                                    { label: "Robot",        color: "#2979ff" },
+                                                    { label: "Charger",      color: "#F39C12" },
+                                                    { label: "Blocked",      color: "#F05265" }
+                                                ]
+                                                delegate: Row {
+                                                    spacing: 5
+                                                    Rectangle { width: 7; height: 7; radius: 4; color: modelData.color; anchors.verticalCenter: parent.verticalCenter }
+                                                    Text { text: modelData.label; color: C.textDim; font.pixelSize: 10 }
+                                                }
                                             }
                                         }
                                     }
@@ -1302,9 +1282,12 @@ ApplicationWindow {
                                                     }
                                                     Text {
                                                         Layout.rightMargin: 14 * fleetPanel.contentScale
-                                                        text: Number(modelData.battery).toFixed(0) + "%"
-                                                              + (robotRow.tele && robotRow.tele.charging ? " ⚡" : "")
-                                                        color: Number(modelData.battery) < 20 ? C.err : C.success
+                                                        text: modelData.hasBattery
+                                                              ? Number(modelData.battery).toFixed(0) + "%"
+                                                                + (robotRow.tele && robotRow.tele.charging ? " ⚡" : "")
+                                                              : "—%"
+                                                        color: !modelData.hasBattery ? C.textDim
+                                                               : (Number(modelData.battery) < 20 ? C.err : C.success)
                                                         font.family: root.monoFontFamily
                                                         font.pixelSize: 20 * fleetPanel.contentScale
                                                         font.bold: true
@@ -1387,15 +1370,18 @@ ApplicationWindow {
                                         }
 
                                         Text {
+                                            // PENDING SYNC robots still count as rows -- gate on the filtered list.
                                             anchors.centerIn: parent
-                                            visible: root.robots.length === 0
+                                            visible: fleetPanel.filteredDisplayRobots.length === 0
+                                                     && fleetPanel.robotSearchText === ""
                                             text: ros.rmfOnline ? "No robots in this fleet" : "Waiting for /fleet_states"
                                             color: C.textDim
                                             font.pixelSize: 13 * fleetPanel.contentScale
                                         }
                                         Text {
                                             anchors.centerIn: parent
-                                            visible: root.robots.length > 0 && fleetPanel.filteredDisplayRobots.length === 0
+                                            visible: fleetPanel.filteredDisplayRobots.length === 0
+                                                     && fleetPanel.robotSearchText !== ""
                                             text: "No robots match “" + fleetPanel.robotSearchText + "”"
                                             color: C.textDim
                                             font.pixelSize: 13 * fleetPanel.contentScale
@@ -1408,8 +1394,9 @@ ApplicationWindow {
                                 id: recentTasksPanel
                                 objectName: "recentTasksPanel"
                                 Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                Layout.preferredHeight: 300
+                                // Don't stretch an empty table into a tall blank panel.
+                                Layout.fillHeight: root.tasks.length > 0
+                                Layout.preferredHeight: 280
                                 radius: 16
                                 color: C.surface
                                 border.color: C.border
@@ -1690,16 +1677,38 @@ ApplicationWindow {
                                         Column {
                                             anchors.centerIn: parent
                                             visible: recentTasksPanel.filteredTasks.length === 0
-                                            spacing: 5
+                                            spacing: 10
                                             Text {
                                                 anchors.horizontalCenter: parent.horizontalCenter
                                                 text: root.tasks.length === 0 ? "NO ACTIVE MISSIONS" : "NO MATCHING TASKS"
                                                 color: C.textDim; font.pixelSize: 12; font.bold: true
                                             }
                                             Text {
+                                                visible: root.tasks.length > 0
                                                 anchors.horizontalCenter: parent.horizontalCenter
-                                                text: root.tasks.length === 0 ? "Create a task to get started" : "Try clearing the search or filter"
+                                                text: "Try clearing the search or filter"
                                                 color: C.textDim; opacity: 0.65; font.pixelSize: 10
+                                            }
+                                            Button {
+                                                visible: root.tasks.length === 0
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: "+  CREATE NEW TASK"
+                                                implicitHeight: 34
+                                                leftPadding: 15
+                                                rightPadding: 15
+                                                contentItem: Text {
+                                                    text: parent.text
+                                                    color: "white"
+                                                    font.pixelSize: 11
+                                                    font.bold: true
+                                                    horizontalAlignment: Text.AlignHCenter
+                                                    verticalAlignment: Text.AlignVCenter
+                                                }
+                                                background: Rectangle {
+                                                    radius: 9
+                                                    color: parent.down ? C.accentDark : C.accent
+                                                }
+                                                onClicked: taskDialog.open()
                                             }
                                         }
                                     }

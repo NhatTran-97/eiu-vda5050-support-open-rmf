@@ -23,8 +23,9 @@ class Colors(QObject):
     @Property(str, constant=True)
     def text(self):       return "#F1F6FA"
 
+    # For readability on high-DPI screens.
     @Property(str, constant=True)
-    def textDim(self):    return "#7FA4C0"
+    def textDim(self):    return "#93B7D2"
 
     # Hint text color between primary and muted text.
     @Property(str, constant=True)

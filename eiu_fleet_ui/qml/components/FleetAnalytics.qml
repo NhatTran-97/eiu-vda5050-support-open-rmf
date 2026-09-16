@@ -42,6 +42,10 @@ Rectangle {
     readonly property int selectedRobotIndex: robotNames.indexOf(selectedRobotName)
 
     readonly property var primaryRobot: selectedRobot()
+    // PENDING SYNC placeholders default x/y/yaw/battery to 0 -- these gate "--" display.
+    readonly property bool hasTele: primaryRobot ? !!(telemetry[primaryRobot.name]) : false
+    readonly property bool hasPose: !!(primaryRobot && primaryRobot.rmfSynced)
+    readonly property bool hasBatteryReading: !!(primaryRobot && primaryRobot.hasBattery)
     readonly property real battery: primaryRobot ? Number(primaryRobot.battery || 0) : 0
     readonly property real posX: primaryRobot ? Number(primaryRobot.x || 0) : 0
     readonly property real posY: primaryRobot ? Number(primaryRobot.y || 0) : 0
@@ -72,8 +76,9 @@ Rectangle {
     readonly property string robotStatus: primaryRobot ? primaryRobot.status : "OFFLINE"
     readonly property bool robotOnline: primaryRobot
                                         ? Boolean(robotsOnline[primaryRobot.name]) : false
-    readonly property color batteryColor: battery < 20 ? C.err
-                                          : (battery < 50 ? C.warn : C.success)
+    readonly property color batteryColor: !hasBatteryReading ? C.textDim
+                                          : (battery < 20 ? C.err
+                                             : (battery < 50 ? C.warn : C.success))
     readonly property int completedCount: countTaskState("completed")
     readonly property int underwayCount: countTaskState("underway")
     readonly property int queuedCount: countTaskState("queued")
@@ -606,7 +611,7 @@ Rectangle {
                                 spacing: -2
                                 Text {
                                     anchors.horizontalCenter: parent.horizontalCenter
-                                    text: root.primaryRobot ? root.battery.toFixed(0) + "%" : "—"
+                                    text: root.hasBatteryReading ? root.battery.toFixed(0) + "%" : "—"
                                     color: root.batteryColor
                                     font.family: fontMono
                                     font.pixelSize: 21 * root.uiScale
@@ -631,13 +636,13 @@ Rectangle {
                             rowSpacing: 5
 
                             Text { text: "POSITION X"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
-                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.posX.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.hasPose ? root.posX.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "POSITION Y"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
-                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.posY.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.hasPose ? root.posY.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "HEADING"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
-                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.headingDegrees(root.yaw).toFixed(0) + "°" : "—"; color: C.cyan; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.hasPose ? root.headingDegrees(root.yaw).toFixed(0) + "°" : "—"; color: C.cyan; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "SPEED"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
-                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.speed.toFixed(2) + " m/s" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.hasTele ? root.speed.toFixed(2) + " m/s" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text {
                                 text: "SINCE LAST NODE"
                                 color: C.textDim
@@ -656,20 +661,20 @@ Rectangle {
                                                   + "is progress on the current leg, not the total trip distance."
                                 }
                             }
-                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.distanceSinceLastNode.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
+                            Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.hasTele ? root.distanceSinceLastNode.toFixed(2) + " m" : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "LEVEL"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
                             Text { Layout.fillWidth: true; elide: Text.ElideRight; text: root.primaryRobot ? root.primaryRobot.level : "—"; color: C.text; font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true }
                             Text { text: "MODE"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
                             Text {
                                 Layout.fillWidth: true; elide: Text.ElideRight
-                                text: root.primaryRobot ? root.operatingMode : "—"
+                                text: root.hasTele ? root.operatingMode : "—"
                                 color: root.operatingMode === "MANUAL" ? C.warn : C.text
                                 font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true
                             }
                             Text { text: "SAFETY"; color: C.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
                             Text {
                                 Layout.fillWidth: true; elide: Text.ElideRight
-                                text: !root.primaryRobot ? "—" : (root.eStopActive ? "⚠ " + root.eStopLabel : "OK")
+                                text: !root.hasTele ? "—" : (root.eStopActive ? "⚠ " + root.eStopLabel : "OK")
                                 color: root.eStopActive ? C.err : C.success
                                 font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true
                             }
@@ -865,7 +870,8 @@ Rectangle {
             // Task counts grouped by state.
             Rectangle {
                 Layout.fillWidth: true
-                Layout.fillHeight: true
+                // Don't stretch an empty chart into a tall blank panel.
+                Layout.fillHeight: root.taskTotal > 0
                 Layout.preferredWidth: 360
                 implicitHeight: distributionColumn.implicitHeight + 24
                 radius: 10

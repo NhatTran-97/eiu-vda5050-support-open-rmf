@@ -136,6 +136,7 @@ def _suppress_rcutils_spam():
 
 from .colors import Colors
 from .config import FleetSettings, load_fleet_config
+from .graph_editor import GraphEditor
 from .map_provider import MapProvider
 from .mqtt_client import MqttClient
 from .ros_bridge import RosBridge
@@ -163,6 +164,7 @@ def build_engine(app: QApplication):
     control    = RosControl(fleet_cfg)
     ws_tasks   = TaskEventServer(fleet_cfg.websocket_uri)
     ws_tasks.taskStateUpdate.connect(ros.apply_task_state_update)
+    graph_ed   = GraphEditor()
 
     # Expose backend objects to QML.
     engine = QQmlApplicationEngine()
@@ -174,6 +176,7 @@ def build_engine(app: QApplication):
     ctx.setContextProperty("ros",     ros)       # Fleet state and dispatch
     ctx.setContextProperty("control", control)   # Direct robot control
     ctx.setContextProperty("wsTasks", ws_tasks)  # Task state events
+    ctx.setContextProperty("graphEd", graph_ed)  # nav_graph.yaml editor
     ctx.setContextProperty("fontSans", font_sans)
     ctx.setContextProperty("fontMono", font_mono)
     ctx.setContextProperty(
@@ -211,9 +214,13 @@ def build_engine(app: QApplication):
     qml_file = _resource_dir("qml") / "main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))
 
-    # Keep backend objects alive for the lifetime of the QML engine.
+    # Keep backend objects alive for the lifetime of the QML engine -- a
+    # context property with no surviving Python reference gets garbage
+    # collected out from under QML (it then reads back as null), which is
+    # exactly what happened to graph_ed before it was added here.
     backends = SimpleNamespace(colors=colors, settings=settings, map_prov=map_prov,
-                               mqtt=mqtt, ros=ros, control=control, ws_tasks=ws_tasks)
+                               mqtt=mqtt, ros=ros, control=control, ws_tasks=ws_tasks,
+                               graph_ed=graph_ed)
     return engine, backends
 
 

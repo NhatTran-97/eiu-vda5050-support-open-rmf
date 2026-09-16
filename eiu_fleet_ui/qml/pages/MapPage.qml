@@ -1,4 +1,5 @@
 import QtQuick
+import "../components"
 
 // Show the map, waypoints, lanes, robots, and zoom controls.
 Rectangle {
@@ -101,6 +102,57 @@ Rectangle {
         }
         return best
     }
+
+    // ── nav_graph.yaml editor (see graph_editor.py) ─────────────────────────
+    readonly property bool graphEditMode: {
+        try { return graphEd.active } catch (e) { return false }
+    }
+    readonly property var graphVertices: {
+        try { return JSON.parse(graphEd.verticesJson) } catch (e) { return [] }
+    }
+    readonly property var graphLanes: {
+        try { return JSON.parse(graphEd.lanesJson) } catch (e) { return [] }
+    }
+    onGraphVerticesChanged: laneCanvas.requestPaint()
+    onGraphLanesChanged: laneCanvas.requestPaint()
+
+    property int _laneFromIndex: -1        // first endpoint picked for a new lane
+    property var _pendingVertexPos: null   // world {x,y} awaiting the name dialog
+    property int selectedGraphVertex: -1
+    property var selectedGraphLane: null   // {from, to}
+
+    function nearestGraphVertex(wx, wy) {
+        var best = -1, bestDist = 0.6
+        for (var i = 0; i < root.graphVertices.length; i++) {
+            var v = root.graphVertices[i]
+            var d = Math.hypot(v.x - wx, v.y - wy)
+            if (d < bestDist) { bestDist = d; best = v.index }
+        }
+        return best
+    }
+
+    // Nearest graph lane whose segment passes within range of this point.
+    function nearestGraphLane(wx, wy) {
+        var best = null, bestDist = 0.35
+        for (var i = 0; i < root.graphLanes.length; i++) {
+            var l = root.graphLanes[i]
+            var v1 = root.graphVertices[l.from], v2 = root.graphVertices[l.to]
+            if (!v1 || !v2) continue
+            var d = pointToSegmentDist(wx, wy, v1.x, v1.y, v2.x, v2.y)
+            if (d < bestDist) { bestDist = d; best = l }
+        }
+        return best
+    }
+
+    function pointToSegmentDist(px, py, ax, ay, bx, by) {
+        var dx = bx - ax, dy = by - ay
+        var len2 = dx * dx + dy * dy
+        var t = len2 > 0 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0
+        var cx = ax + t * dx, cy = ay + t * dy
+        return Math.hypot(px - cx, py - cy)
+    }
+
+    function cancelLanePick() { root._laneFromIndex = -1 }
 
     // Find an RMF waypoint by name.
     function waypointByName(name) {
@@ -412,6 +464,60 @@ Rectangle {
                         }
                     }
 
+                    // Draw the graph editor's working copy (cyan, on top of the live graph).
+                    if (root.graphEditMode) {
+                        ctx2d.setLineDash([])
+                        for (var gi = 0; gi < root.graphLanes.length; gi++) {
+                            var gl = root.graphLanes[gi]
+                            var gv1 = root.graphVertices[gl.from], gv2 = root.graphVertices[gl.to]
+                            if (!gv1 || !gv2) continue
+                            var gp1 = root.worldToScreen(gv1.x, gv1.y)
+                            var gp2 = root.worldToScreen(gv2.x, gv2.y)
+                            var isSelLane = root.selectedGraphLane
+                                && ((root.selectedGraphLane.from === gl.from && root.selectedGraphLane.to === gl.to)
+                                    || (root.selectedGraphLane.from === gl.to && root.selectedGraphLane.to === gl.from))
+                            ctx2d.strokeStyle = isSelLane ? "#ffffff" : "#00D9FF"
+                            ctx2d.lineWidth = (isSelLane ? 5 : 3) / uiScale
+                            ctx2d.globalAlpha = 0.9
+                            ctx2d.beginPath()
+                            ctx2d.moveTo(gp1.x, gp1.y)
+                            ctx2d.lineTo(gp2.x, gp2.y)
+                            ctx2d.stroke()
+                            var gdir = Math.atan2(gp2.y - gp1.y, gp2.x - gp1.x)
+                            ctx2d.fillStyle = "#00D9FF"
+                            if (gl.bidir) {
+                                fillTriangle(gp1.x + (gp2.x-gp1.x)*0.33, gp1.y + (gp2.y-gp1.y)*0.33, gdir, 6 / uiScale)
+                                fillTriangle(gp1.x + (gp2.x-gp1.x)*0.67, gp1.y + (gp2.y-gp1.y)*0.67, gdir + Math.PI, 6 / uiScale)
+                            } else {
+                                fillTriangle((gp1.x+gp2.x)/2, (gp1.y+gp2.y)/2, gdir, 6 / uiScale)
+                            }
+                        }
+
+                        // Lane being connected: highlight the first endpoint.
+                        if (root._laneFromIndex >= 0 && root.graphVertices[root._laneFromIndex]) {
+                            var fv = root.graphVertices[root._laneFromIndex]
+                            var fp = root.worldToScreen(fv.x, fv.y)
+                            ctx2d.strokeStyle = "#00D9FF"; ctx2d.globalAlpha = 0.9; ctx2d.lineWidth = 2 / uiScale
+                            ctx2d.beginPath(); ctx2d.arc(fp.x, fp.y, 16 / uiScale, 0, Math.PI*2); ctx2d.stroke()
+                        }
+
+                        for (var vi2 = 0; vi2 < root.graphVertices.length; vi2++) {
+                            var gv = root.graphVertices[vi2]
+                            var vp = root.worldToScreen(gv.x, gv.y)
+                            var selected = gv.index === root.selectedGraphVertex
+                            ctx2d.globalAlpha = 1.0
+                            ctx2d.fillStyle = gv.is_charger ? "#F39C12" : "#00D9FF"
+                            ctx2d.beginPath(); ctx2d.arc(vp.x, vp.y, 8 / uiScale, 0, Math.PI*2); ctx2d.fill()
+                            ctx2d.strokeStyle = selected ? "#ffffff" : "#04202b"
+                            ctx2d.lineWidth = (selected ? 3 : 1.5) / uiScale
+                            ctx2d.stroke()
+                            ctx2d.fillStyle = "#ffffff"
+                            ctx2d.font = (12 / uiScale) + "px sans-serif"
+                            ctx2d.textAlign = "center"
+                            ctx2d.fillText(gv.name || ("#" + gv.index), vp.x, vp.y - 14 / uiScale)
+                        }
+                    }
+
                     // Draw a planned path for each robot.
                     for (var ri = 0; ri < root.mapRobots.length; ri++) {
                         var rob = root.mapRobots[ri]
@@ -574,6 +680,9 @@ Rectangle {
                         color: "#ffffff"
                     }
                     Text {
+                        // Label only chargers/target/picked when zoomed out -- full labels clutter a large graph.
+                        visible: mapContent.scale >= 1.3 || parent.picked || parent.isTaskTarget
+                                 || modelData.charger || modelData.parking
                         // Move labels that overlap their default position.
                         x: root.labelOffsets[index] ? root.labelOffsets[index].x : -width / 2
                         y: root.labelOffsets[index] ? root.labelOffsets[index].y : -30 * root.labelScale
@@ -685,16 +794,57 @@ Rectangle {
         }
         onDoubleClicked: if (root.pickMode === "") root.resetView()
         onClicked: (mouse) => {
-            if (root.pickMode !== "") return
             var op = overlay.mapFromItem(interactionArea, mouse.x, mouse.y)
             var wp = root.screenToWorld(op.x, op.y)
+
+            if (root.pickMode === "graph_vertex") {
+                root._pendingVertexPos = wp
+                graphVertexDialog.editIndex = -1
+                graphVertexDialog.open()
+                return
+            }
+            if (root.pickMode === "graph_lane") {
+                var vi = root.nearestGraphVertex(wp.x, wp.y)
+                if (vi < 0) return
+                if (root._laneFromIndex < 0) {
+                    root._laneFromIndex = vi
+                } else if (vi !== root._laneFromIndex) {
+                    graphLaneDialog.fromIndex = root._laneFromIndex
+                    graphLaneDialog.toIndex = vi
+                    graphLaneDialog.fromName = root.graphVertices[root._laneFromIndex].name || ("#" + root._laneFromIndex)
+                    graphLaneDialog.toName = root.graphVertices[vi].name || ("#" + vi)
+                    graphLaneDialog.open()
+                    root._laneFromIndex = -1
+                }
+                return
+            }
+
+            if (root.pickMode !== "") return
+
+            if (root.graphEditMode) {
+                var gv = root.nearestGraphVertex(wp.x, wp.y)
+                if (gv >= 0) {
+                    root.selectedGraphVertex = gv
+                    root.selectedGraphLane = null
+                    return
+                }
+                var gl = root.nearestGraphLane(wp.x, wp.y)
+                if (gl) {
+                    root.selectedGraphLane = gl
+                    root.selectedGraphVertex = -1
+                    return
+                }
+                root.selectedGraphVertex = -1
+                root.selectedGraphLane = null
+            }
+
             var hit = root.zoneAt(wp.x, wp.y)
             root.selectedZoneId = hit ? hit.id : -1
         }
 
         property var pickStart: null
         onPressed: (mouse) => {
-            if (root.pickMode === "") return
+            if (root.pickMode === "" || root.pickMode === "graph_vertex" || root.pickMode === "graph_lane") return
             var op = overlay.mapFromItem(interactionArea, mouse.x, mouse.y)
             pickStart = root.screenToWorld(op.x, op.y)
             if (root.pickMode === "zone")
@@ -760,6 +910,12 @@ Rectangle {
                       ? "Click a waypoint pin to select it"
                       : root.pickMode === "zone"
                       ? "Click and drag to close the lanes inside a zone"
+                      : root.pickMode === "graph_vertex"
+                      ? "Click the map to place a new waypoint"
+                      : root.pickMode === "graph_lane"
+                      ? (root._laneFromIndex < 0
+                         ? "Click the first waypoint of the new lane"
+                         : "Click the second waypoint to connect it")
                       : "Click and drag to set position + heading"
                 color: C.text
                 font.pixelSize: 12
@@ -778,6 +934,7 @@ Rectangle {
                         root.pickMode = ""
                         root.pickPoint = null
                         root.zoneRect = null
+                        root._laneFromIndex = -1
                         root.pickCancelled()
                     }
                 }
@@ -847,6 +1004,323 @@ Rectangle {
                 onClicked: root.deleteZone(root.selectedZoneId)
             }
         }
+    }
+
+    // ── nav_graph.yaml editor controls ──────────────────────────────────────
+    property string graphStatusText: ""
+    Connections {
+        target: graphEd
+        function onSaveResult(ok, message) { statusTimer.show(message) }
+        function onLoadResult(ok, message) { statusTimer.show(message) }
+    }
+    Timer {
+        id: statusTimer
+        interval: 4000; repeat: false
+        function show(msg) { root.graphStatusText = msg; restart() }
+        onTriggered: root.graphStatusText = ""
+    }
+
+    Row {
+        anchors.left: parent.left
+        anchors.top:  parent.top
+        anchors.margins: 10
+        anchors.topMargin: 46
+        spacing: 6
+        z: 10
+
+        Rectangle {
+            width: editGraphRow.implicitWidth + 16; height: 30; radius: 6
+            color: root.graphEditMode ? C.accent : (editGraphMa.containsMouse ? C.surfaceRaised : C.surface)
+            border.color: C.border; border.width: 1
+            opacity: 0.95
+            Row {
+                id: editGraphRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "🛠"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    text: "EDIT GRAPH"
+                    color: root.graphEditMode ? "#ffffff" : C.text
+                    font.pixelSize: 11; font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            MouseArea {
+                id: editGraphMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (root.graphEditMode) {
+                        graphEd.stopEditing()
+                        root.pickMode = ""; root._laneFromIndex = -1
+                        root.selectedGraphVertex = -1; root.selectedGraphLane = null
+                    } else {
+                        graphEd.loadFromFile(mapProv.navGraphPath, "")
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            visible: root.graphEditMode
+            width: newGraphRow.implicitWidth + 16; height: 30; radius: 6
+            color: newGraphMa.containsMouse ? C.surfaceRaised : C.surface
+            border.color: C.border; border.width: 1
+            opacity: 0.95
+            Row {
+                id: newGraphRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "＋"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "NEW"; color: C.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+            }
+            MouseArea {
+                id: newGraphMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: graphEd.newGraph("")
+            }
+        }
+
+        Rectangle {
+            visible: root.graphEditMode
+            width: reloadGraphRow.implicitWidth + 16; height: 30; radius: 6
+            color: reloadGraphMa.containsMouse ? C.surfaceRaised : C.surface
+            border.color: C.border; border.width: 1
+            opacity: 0.95
+            Row {
+                id: reloadGraphRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "↺"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "RELOAD"; color: C.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+            }
+            MouseArea {
+                id: reloadGraphMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                // Discard every unsaved edit this session and reload the file from
+                // disk -- the file itself is only touched by SAVE AS, so this is a
+                // clean "undo everything, back to default" as long as you haven't saved.
+                onClicked: {
+                    root.pickMode = ""; root._laneFromIndex = -1
+                    root.selectedGraphVertex = -1; root.selectedGraphLane = null
+                    graphEd.loadFromFile(graphEd.sourcePath || mapProv.navGraphPath, "")
+                }
+            }
+        }
+
+        Rectangle {
+            visible: root.graphEditMode
+            width: addVertexRow.implicitWidth + 16; height: 30; radius: 6
+            color: root.pickMode === "graph_vertex" ? C.accent : (addVertexMa.containsMouse ? C.surfaceRaised : C.surface)
+            border.color: C.border; border.width: 1
+            opacity: 0.95
+            Row {
+                id: addVertexRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "📍"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    text: "WAYPOINT"
+                    color: root.pickMode === "graph_vertex" ? "#ffffff" : C.text
+                    font.pixelSize: 11; font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            MouseArea {
+                id: addVertexMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    root._laneFromIndex = -1
+                    root.pickMode = (root.pickMode === "graph_vertex") ? "" : "graph_vertex"
+                }
+            }
+        }
+
+        Rectangle {
+            visible: root.graphEditMode
+            width: addLaneRow.implicitWidth + 16; height: 30; radius: 6
+            color: root.pickMode === "graph_lane" ? C.accent : (addLaneMa.containsMouse ? C.surfaceRaised : C.surface)
+            border.color: C.border; border.width: 1
+            opacity: 0.95
+            Row {
+                id: addLaneRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "↔"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    text: "LANE"
+                    color: root.pickMode === "graph_lane" ? "#ffffff" : C.text
+                    font.pixelSize: 11; font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            MouseArea {
+                id: addLaneMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    root._laneFromIndex = -1
+                    root.pickMode = (root.pickMode === "graph_lane") ? "" : "graph_lane"
+                }
+            }
+        }
+
+        Rectangle {
+            visible: root.graphEditMode
+            width: saveGraphRow.implicitWidth + 16; height: 30; radius: 6
+            color: saveGraphMa.containsMouse ? C.surfaceRaised : C.surface
+            border.color: C.border; border.width: 1
+            opacity: 0.95
+            Row {
+                id: saveGraphRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "💾"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "SAVE AS"; color: C.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+            }
+            MouseArea {
+                id: saveGraphMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    graphSaveDialog.defaultPath = mapProv.navGraphPath.replace(/\.yaml$/, "_edited.yaml")
+                    graphSaveDialog.open()
+                }
+            }
+        }
+
+        Rectangle {
+            visible: root.graphEditMode && (root.selectedGraphVertex >= 0 || root.selectedGraphLane !== null)
+            width: graphDeleteRow.implicitWidth + 16; height: 30; radius: 6
+            color: graphDeleteMa.containsMouse ? Qt.darker(C.err, 1.15) : C.err
+            opacity: 0.95
+            Row {
+                id: graphDeleteRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "🗑"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                Text {
+                    text: root.selectedGraphVertex >= 0 ? "DELETE WAYPOINT" : "DELETE LANE"
+                    color: "#ffffff"; font.pixelSize: 11; font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+            MouseArea {
+                id: graphDeleteMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (root.selectedGraphVertex >= 0) {
+                        graphEd.removeVertex(root.selectedGraphVertex)
+                        root.selectedGraphVertex = -1
+                    } else if (root.selectedGraphLane) {
+                        graphEd.removeLane(root.selectedGraphLane.from, root.selectedGraphLane.to)
+                        root.selectedGraphLane = null
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            visible: root.graphEditMode && root.selectedGraphVertex >= 0
+            width: renameRow.implicitWidth + 16; height: 30; radius: 6
+            color: renameMa.containsMouse ? C.surfaceRaised : C.surface
+            border.color: C.border; border.width: 1
+            opacity: 0.95
+            Row {
+                id: renameRow
+                anchors.centerIn: parent
+                spacing: 6
+                Text { text: "✏"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "RENAME"; color: C.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+            }
+            MouseArea {
+                id: renameMa
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    graphVertexDialog.editIndex = root.selectedGraphVertex
+                    graphVertexDialog.open()
+                }
+            }
+        }
+    }
+
+    // Graph editor status line (load/save feedback).
+    Text {
+        visible: root.graphStatusText !== ""
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        anchors.margins: 10
+        z: 10
+        text: root.graphStatusText
+        color: C.text
+        font.pixelSize: 11
+        style: Text.Outline; styleColor: C.bg
+    }
+
+    GraphPromptDialog {
+        id: graphVertexDialog
+        anchors.centerIn: parent
+        mode: "vertex"
+        property int editIndex: -1
+        onOpened: {
+            if (editIndex >= 0 && root.graphVertices[editIndex]) {
+                var v = root.graphVertices[editIndex]
+                nameFieldPrefill(v.name, v.is_charger)
+            }
+        }
+        function nameFieldPrefill(n, c) {
+            // Dialog resets its own fields onOpened before this runs, so set after.
+            Qt.callLater(function() {
+                if (contentItem && contentItem.children) {
+                    // Fields are private to GraphPromptDialog; use its own API instead.
+                }
+            })
+        }
+        onVertexConfirmed: (name, isCharger) => {
+            if (editIndex >= 0) {
+                graphEd.renameVertex(editIndex, name)
+                graphEd.setVertexCharger(editIndex, isCharger)
+            } else if (root._pendingVertexPos) {
+                graphEd.addVertex(root._pendingVertexPos.x, root._pendingVertexPos.y, name, isCharger)
+            }
+            root._pendingVertexPos = null
+            editIndex = -1
+            root.pickMode = ""
+        }
+        onRejected: { root._pendingVertexPos = null; editIndex = -1 }
+    }
+
+    GraphPromptDialog {
+        id: graphLaneDialog
+        anchors.centerIn: parent
+        mode: "lane"
+        property int fromIndex: -1
+        property int toIndex: -1
+        onLaneConfirmed: (bidirectional) => {
+            if (fromIndex >= 0 && toIndex >= 0)
+                graphEd.addLane(fromIndex, toIndex, bidirectional)
+            fromIndex = -1; toIndex = -1
+        }
+    }
+
+    GraphPromptDialog {
+        id: graphSaveDialog
+        anchors.centerIn: parent
+        mode: "save"
+        onSaveConfirmed: (path) => graphEd.saveAs(path)
     }
 
     // Zoom and reset controls.
