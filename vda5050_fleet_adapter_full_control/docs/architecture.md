@@ -19,6 +19,7 @@ normal VDA5050 master controller.
 | Config validation | Fails fast at startup on bad MQTT settings, duplicate identities, or a nav-graph robot missing from `vda5050.robots` |
 | Lane closures (no-go zones) | Subscribes to `/lane_closure_requests`; matching `fleet_name` calls `FleetUpdateHandle::close_lanes()` / `open_lanes()`, so RMF stops routing through those lanes fleet-wide |
 | Emergency stop (eStop) | Reads `safetyState.eStop`/`fieldViolation` from the AGV's VDA5050 state; a non-`NONE` value decommissions the robot immediately, same path as commission tracking |
+| Heterogeneous fleets | `EasyFullControl::FleetConfiguration` shares one `profile`/`limits` per fleet, so different robot types (footprint/kinematics) run as separate config files and separate fleet adapter processes, one RMF fleet name each — see [README.md](../README.md#multiple-robot-types-heterogeneous-fleets) |
 
 ## System architecture
 

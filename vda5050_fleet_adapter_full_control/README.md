@@ -5,21 +5,8 @@ the robot and RMF's FullControl (`RobotCommandHandle`) interface to RMF, so
 a planned multi-waypoint route goes out as one multi-node order instead of
 one per waypoint.
 
-See [docs/architecture.md](docs/architecture.md) for diagrams, sequence
-flows, and the full config reference.
-
-## Features
-
-- Multi-node orders — a planned route goes out as one VDA5050 order, not one destination per waypoint.
-- Task execution: patrol/delivery/go-to-place (`follow_new_path`), `dock`, and arbitrary `PerformAction` instant actions.
-- Commission tracking — a robot is only offered new tasks while its VDA5050 state is fresh *and* has a usable pose.
-- Factsheet awareness — reads the AGV's declared speed/array-length/order-interval limits and per-action blocking type; warns before exceeding them.
-- Operator interface — per-robot pause, resume, speed-limit override, and re-localize (`init_position`), exposed as ROS services/param/topic.
-- No-go zone lane closures — `/lane_closure_requests` closes/opens lanes fleet-wide via `FleetUpdateHandle`.
-- Emergency stop — `safetyState.eStop`/`fieldViolation` decommissions the robot immediately.
-- Stuck-order detection and replan if an AGV never acknowledges a dispatched order.
-- Multiple heterogeneous fleets (different robot types/footprints) via separate config files and processes — see below.
-- Config validation at startup: bad MQTT settings, duplicate robot identities, or a nav-graph robot missing from `vda5050.robots` all fail fast instead of at runtime.
+See [docs/architecture.md](docs/architecture.md#features) for the full
+features table, diagrams, sequence flows, and config reference.
 
 ## Prerequisites
 
@@ -96,17 +83,17 @@ adapter end-to-end against it.
 
 | Recommendation | Status |
 |---|---|
-| Request and consume the factsheet | ✅ Done — `factsheet_handler.cpp` reads capabilities and limits from the AGV's factsheet |
-| Drive per-action blocking from the factsheet | ✅ Done — `blocking_type_for()` reads the blocking type from `agvActions`; hardcoded values are only a fallback (`connector.cpp`) |
-| Demonstrate multi-robot | ✅ Done — `tb3_fleet` (`config_tb3.yaml`) runs two robots (`tb3_1`, `tb3_2`); `amr_fleet` (`config_amr.yaml`) runs single-robot (`amr_1`) |
-| Act on connection loss | ✅ Done — `apply_commission()` calls `RobotUpdateHandle::set_commission()`/`decommission()` when VDA5050 state goes stale (`robot_command_handle.cpp`) |
-| Pause and resume instead of cancel | ✅ Done — an RMF-initiated stop pauses first; only escalates to `cancelOrder` if no resume arrives before the deadline (`robot_command_handle.cpp`) |
-| Add initPosition for re-localization | ✅ Done — `~/<robot>/init_position` service + UI re-localize control (`operator_interface.cpp`) |
-| Add validation as the inputs arrive | ✅ Done — startup config validation, plus a runtime check that two consecutive order waypoints have a graph lane between them |
-| Model physical actions with mock dispenser and ingestor workcells | ✅ Done — 2 mock workcell scripts + a Delivery task (pickup → wait → dropoff → wait) |
-| Try multi-node orders from the /fleet_states path | ✅ Done — `follow_new_path()` sends the whole planned route as one VDA5050 order, not one destination at a time |
-| Explore the full_control branch | ✅ Done — built directly on `RobotCommandHandle`/`FleetUpdateHandle` (full control), not `EasyFullControl` |
-| Test against a third-party VDA5050 client | ⬜ Not done — only tested against this project's own client (`vda5050_client_adapter`) and mocks |
+| Request and consume the factsheet | ✅ Done — [`factsheet_handler.cpp`](src/vda5050/factsheet_handler.cpp) reads capabilities and limits from the AGV's factsheet |
+| Drive per-action blocking from the factsheet | ✅ Done — [`blocking_type_for()`](src/rmf/connector.cpp#L697) reads the blocking type from `agvActions`; hardcoded values are only a fallback |
+| Demonstrate multi-robot | ✅ Done — `tb3_fleet` ([`config_tb3.yaml`](config/config_tb3.yaml)) runs two robots (`tb3_1`, `tb3_2`); `amr_fleet` ([`config_amr.yaml`](config/config_amr.yaml)) runs single-robot (`amr_1`) |
+| Act on connection loss | ✅ Done — [`apply_commission()`](src/rmf/robot_command_handle.cpp#L849) calls `RobotUpdateHandle::set_commission()`/`decommission()` when VDA5050 state goes stale |
+| Pause and resume instead of cancel | ✅ Done — an RMF-initiated stop pauses first; only escalates to `cancelOrder` if no resume arrives before the deadline ([`robot_command_handle.cpp`](src/rmf/robot_command_handle.cpp)) |
+| Add initPosition for re-localization | ✅ Done — `~/<robot>/init_position` service + UI re-localize control ([`on_init_position()`](src/core/operator_interface.cpp#L175)) |
+| Add validation as the inputs arrive | ✅ Done — startup config validation ([`config.cpp`](src/core/config.cpp)), plus a runtime [`has_lane()`](src/rmf/robot_command_handle.cpp#L47) check that two consecutive order waypoints have a graph lane between them |
+| Model physical actions with mock dispenser and ingestor workcells | ✅ Done — [`mock_dispenser.py`](scripts/mock_dispenser.py) + [`mock_ingestor.py`](scripts/mock_ingestor.py) + a Delivery task (pickup → wait → dropoff → wait) |
+| Try multi-node orders from the /fleet_states path | ✅ Done — [`follow_new_path()`](src/rmf/robot_command_handle.cpp#L151) sends the whole planned route as one VDA5050 order, not one destination at a time |
+| Explore the full_control branch | ✅ Done — built directly on [`RobotCommandHandle`](include/vda5050_fleet_adapter_full_control/rmf/robot_command_handle.hpp#L24)/`FleetUpdateHandle` (full control), not `EasyFullControl` |
+| Test against a third-party VDA5050 client | ⬜ Not done — only tested against this project's own client ([`vda5050_client_adapter`](../vda5050_client_adapter/README.md)) and mocks |
 
 ## Other capabilities
 
@@ -114,7 +101,7 @@ Not from the review above, added along the way:
 
 | Item | Status |
 |---|---|
-| No-go zone lane closures | ✅ Done — `/lane_closure_requests` → `FleetUpdateHandle::close_lanes()`/`open_lanes()` (`fleet_adapter_full_control.cpp`) |
-| mapId mismatch warning | ✅ Done — warns when order `mapId` ≠ AGV's reported `mapId` (`connector.cpp`) |
-| Emergency stop (eStop) | ✅ Done — `safetyState.eStop` decommissions the robot (`robot_command_handle.cpp`) |
-| Speed limit override | ✅ Done — per-robot `speed_limit.<robot>` ROS parameter, applied live (`operator_interface.cpp`) |
+| No-go zone lane closures | ✅ Done — `/lane_closure_requests` → [`close_lanes()`/`open_lanes()`](src/core/fleet_adapter_full_control.cpp#L130) |
+| mapId mismatch warning | ✅ Done — [`warn_if_map_mismatch()`](src/rmf/connector.cpp#L681) warns when order `mapId` ≠ AGV's reported `mapId` |
+| Emergency stop (eStop) | ✅ Done — [`safetyState.eStop`/`field_violation`](src/rmf/robot_command_handle.cpp#L477) decommissions the robot |
+| Speed limit override | ✅ Done — per-robot `speed_limit.<robot>` ROS parameter, applied live ([`speed_limit_parameter()`](src/core/operator_interface.cpp#L33)) |
