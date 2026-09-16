@@ -32,7 +32,7 @@ struct RobotConfig
     rmf::Transform transform;
 };
 
-// Parse the VDA5050 config block, using defaults for optional fields and throwing on invalid values.
+// Parse VDA5050 settings, defaulting optional fields and rejecting invalid values.
 class Config
 {
 public:

@@ -29,7 +29,7 @@ std::vector<nlohmann::json> get_array(const nlohmann::json &j, const char *key)
     return out;
 }
 
-// state.velocity and visualization.velocity share one schema.
+// Parse the velocity vector shared by state and visualization messages.
 std::optional<Velocity> parse_velocity(const nlohmann::json &raw)
 {
     if (!raw.contains("velocity") || !raw["velocity"].is_object())

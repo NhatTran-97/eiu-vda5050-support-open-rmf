@@ -127,7 +127,13 @@ hold: its VDA5050 `state` arrived within `state_timeout_s`, and that state
 carries a usable pose. Either one dropping decommissions it immediately;
 both must return before it's offered work again.
 
-## Configuration (`config.yaml`)
+## Configuration (`config_tb3.yaml` / `config_amr.yaml`)
+
+One `rmf_fleet:` block applies its `profile`/`limits` to every robot listed
+under it, so each robot type gets its own config file and its own fleet
+adapter process (`config_tb3.yaml` → `tb3_fleet`, `config_amr.yaml` →
+`amr_fleet`) — see [README.md](../README.md#multiple-robot-types-heterogeneous-fleets).
+The keys below apply to either file.
 
 | Key | Default | Effect |
 |---|---|---|

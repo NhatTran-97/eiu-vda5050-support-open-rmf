@@ -8,7 +8,7 @@
 
 namespace vda5050_fleet_adapter_full_control::vda5050 {
 
-// Waypoint pose in the robot map frame identified by `map_id`.
+// Waypoint pose in robot map coordinates.
 struct RobotPose
 {
     double x = 0.0;
@@ -24,7 +24,7 @@ struct RouteWaypoint
     std::optional<double> speed_limit;
 };
 
-// Build a validated VDA5050 route order with alternating node/edge IDs and an optional released horizon.
+// Build a route order with alternating node and edge IDs and a released horizon.
 nlohmann::json build_route_order(int header_id, const std::string &order_id,
                                 const std::string &manufacturer, const std::string &serial,
                                 const std::string &base_node_id, const RobotPose &base,

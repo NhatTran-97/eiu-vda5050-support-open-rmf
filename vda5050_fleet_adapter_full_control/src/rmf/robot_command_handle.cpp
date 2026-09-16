@@ -525,7 +525,6 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                 _dock_action_id.clear();
                 if (dock_failed)
                 {
-                    // Do not report success when the request failed.
                     _dock_finished = nullptr;
                 }
                 else

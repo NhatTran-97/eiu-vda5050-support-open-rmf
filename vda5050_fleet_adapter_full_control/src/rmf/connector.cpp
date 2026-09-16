@@ -709,7 +709,6 @@ CommandStatus Connector::publish_raw(const std::string &topic, const std::string
 {
     if (!_mqtt_client.publish(topic, payload))
     {
-        // Detailed transport failures are reported through on_error().
         RCLCPP_WARN(_logger, "[VDA5050] publish failed, dropping message to %s", topic.c_str());
         return CommandStatus::transport_failed;
     }

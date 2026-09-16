@@ -101,7 +101,7 @@ public:
         std::string order_id;
     };
 
-    // Release this many route points; nullopt releases the full route and the remainder stays in the horizon.
+    // Release the requested route points; nullopt releases the full route.
     NavigateResult navigate_route(const std::string &name,
                                   const std::vector<RoutePoint> &route,
                                   const std::string &map_id,
@@ -139,10 +139,12 @@ public:
 
     // State received from the AGV.
     std::optional<RobotData> get_data(const std::string &name);
+    // Whether the tracked order reached its final node and settled its actions.
     bool is_command_completed(const std::string &name);
 
     // Detect an order the AGV has not acknowledged within the timeout.
     bool is_order_stuck(const std::string &name, double timeout_s = 15.0) const;
+    // Last reported status of an instant action.
     std::optional<std::string> get_action_state(const std::string &name,
                                                 const std::string &action_id);
     // Status and resultDescription of `action_id` as last reported by the AGV.
@@ -150,6 +152,7 @@ public:
         const std::string &name, const std::string &action_id);
     // Best-known map for `name`, without requiring the AGV to be localized.
     std::optional<std::string> get_known_map(const std::string &name);
+    // Whether the robot is connected and has recent state.
     bool is_online(const std::string &name, double state_timeout_s = 10.0);
 
 private:

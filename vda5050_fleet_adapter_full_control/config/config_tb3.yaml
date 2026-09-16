@@ -1,22 +1,30 @@
-# Fleet and VDA5050 settings for the adapter.
+# Fleet and VDA5050 settings for the TB3 fleet adapter instance.
+# See config_amr.yaml for the AMR fleet (different footprint/kinematics —
+# each robot type needs its own fleet adapter instance, see README).
 
 rmf_fleet:
   name: "tb3_fleet"
   limits:
-    linear: [0.5, 0.75]      # [v_max, a_max] m/s, m/s^2
-    angular: [0.6, 2.0]      # [w_max, alpha_max] rad/s, rad/s^2
-  profile:                    # robot footprint (circle radius, m)
-    footprint: 0.3
-    vicinity: 0.5
+  
+    linear: [0.22, 1.0]      # [v_max, a_max] m/s, m/s^2
+    angular: [1.0, 3.2]      # [w_max, alpha_max] rad/s, rad/s^2
+
+  profile:
+    footprint: 0.15   # bán kính (radius, m) hình tròn xấp xỉ thân robot
+    vicinity: 0.30    # bán kính vùng "riêng tư"
   reversible: true
+
+
   battery_system:
-    voltage: 12.0
-    capacity: 24.0
-    charging_current: 5.0
+    voltage: 11.1        # V -- stock 3S Li-Po
+    capacity: 1.8         # Ah -- stock 1800mAh Li-Po
+    charging_current: 1.0 # A -- rough estimate, 
+
   mechanical_system:
-    mass: 20.0
-    moment_of_inertia: 10.0
+    mass: 1.0              # kg -- stock TB3 Burger weight
+    moment_of_inertia: 0.005 # kg*m^2 -- rough estimate, not measured
     friction_coefficient: 0.22
+
   ambient_system: {power: 20.0}
   tool_system: {power: 0.0}
   recharge_threshold: 0.10
@@ -24,35 +32,47 @@ rmf_fleet:
   publish_fleet_state: 10.0
 
   account_for_battery_drain: false
+
   task_capabilities:
-    loop: true
-    delivery: true
-  actions: ["dock"]
+    loop: true # Patrol Tassk
+    delivery: true # Delivery Task
+  #actions: ["dock"]
 
   finishing_request: "park"   # Post-task action: park, charge, or nothing
-  # Park robots at their charger waypoint after a task.
 
   robots:
     tb3_1:
       charger: "charger_2"
+      responsive_wait: false
 
+    tb3_2:
+      charger: "charger_1"
       responsive_wait: false
 
 # VDA5050 and MQTT settings used by the adapter.
 vda5050:
   # Match the AGV's MQTT interface, manufacturer, and serial number.
-  interface_name: "TB3"
+  interface_name: "AMR"
   update_rate_hz: 10.0
   mqtt:
-    host: "localhost"     
+    host: "192.168.10.97"
     port: 1883
     username: null
     password: null
+
   robots:
-    tb3_1:                 
+    tb3_1:
       manufacturer: "ROBOTIS"
       serial: "0001"
-      transform:             
-        rotation: 0.0        
+      transform:
+        rotation: 0.0
+        scale: 1.0
+        translation: [0.0, 0.0]
+
+    tb3_2:
+      manufacturer: "ROBOTIS"
+      serial: "0002"
+      transform:
+        rotation: 0.0
         scale: 1.0
         translation: [0.0, 0.0]

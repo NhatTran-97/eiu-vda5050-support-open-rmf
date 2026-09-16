@@ -5,7 +5,7 @@ set -euo pipefail
 IMAGE="rmf_jazzy_vda"
 CONTAINER="rmf_jazzy_vda_dev"
 WS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"   
-DOMAIN=42  
+DOMAIN=10
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo ">> building image $IMAGE ..."

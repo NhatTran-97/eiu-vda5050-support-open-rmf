@@ -5,8 +5,21 @@ the robot and RMF's FullControl (`RobotCommandHandle`) interface to RMF, so
 a planned multi-waypoint route goes out as one multi-node order instead of
 one per waypoint.
 
-See [docs/architecture.md](docs/architecture.md) for features, diagrams,
-and the full config reference.
+See [docs/architecture.md](docs/architecture.md) for diagrams, sequence
+flows, and the full config reference.
+
+## Features
+
+- Multi-node orders — a planned route goes out as one VDA5050 order, not one destination per waypoint.
+- Task execution: patrol/delivery/go-to-place (`follow_new_path`), `dock`, and arbitrary `PerformAction` instant actions.
+- Commission tracking — a robot is only offered new tasks while its VDA5050 state is fresh *and* has a usable pose.
+- Factsheet awareness — reads the AGV's declared speed/array-length/order-interval limits and per-action blocking type; warns before exceeding them.
+- Operator interface — per-robot pause, resume, speed-limit override, and re-localize (`init_position`), exposed as ROS services/param/topic.
+- No-go zone lane closures — `/lane_closure_requests` closes/opens lanes fleet-wide via `FleetUpdateHandle`.
+- Emergency stop — `safetyState.eStop`/`fieldViolation` decommissions the robot immediately.
+- Stuck-order detection and replan if an AGV never acknowledges a dispatched order.
+- Multiple heterogeneous fleets (different robot types/footprints) via separate config files and processes — see below.
+- Config validation at startup: bad MQTT settings, duplicate robot identities, or a nav-graph robot missing from `vda5050.robots` all fail fast instead of at runtime.
 
 ## Prerequisites
 
@@ -31,13 +44,42 @@ Override the config or nav graph:
 
 ```bash
 ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py \
-    config_file:=/abs/config.yaml nav_graph:=/abs/nav_graph.yaml
+    config_file:=/abs/config_tb3.yaml nav_graph:=/abs/nav_graph.yaml
 ```
+
+### Multiple robot types (heterogeneous fleets)
+
+`EasyFullControl::FleetConfiguration` applies a single shared `profile`
+(footprint/vicinity) and `limits` to every robot in a fleet, so robots with
+different footprints/kinematics must NOT share one `rmf_fleet:` block. Give
+each robot type its own config file and run one fleet adapter process per
+type, each with a unique ROS 2 node name:
+
+```bash
+# Terminal 1 — TB3 fleet
+ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py \
+    config_file:=config/config_tb3.yaml node_name:=vda5050_fleet_adapter_tb3
+
+# Terminal 2 — AMR fleet
+ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py \
+    config_file:=config/config_amr.yaml node_name:=vda5050_fleet_adapter_amr
+```
+
+Or launch both at once:
+
+```bash
+ros2 launch vda5050_fleet_adapter_full_control fleet_adapters.launch.py
+```
+
+`config/config_tb3.yaml` is the TB3 fleet (`tb3_fleet`); `config/config_amr.yaml`
+is the AMR fleet (`amr_fleet`) — replace the `TODO` placeholder
+profile/limits/mechanical_system values in the latter with the real AMR
+specs before running against hardware.
 
 ## Configuration
 
-`config/config.yaml` holds both the RMF fleet definition (`rmf_fleet:`) and
-the VDA5050/MQTT settings (`vda5050:`) — key reference is in
+Each fleet config file holds both the RMF fleet definition (`rmf_fleet:`)
+and the VDA5050/MQTT settings (`vda5050:`) — key reference is in
 [docs/architecture.md](docs/architecture.md#configuration-configyaml).
 Each robot needs a matching entry under both `rmf_fleet.robots` and
 `vda5050.robots`, with the same manufacturer/serial the robot's own
@@ -56,7 +98,7 @@ adapter end-to-end against it.
 |---|---|
 | Request and consume the factsheet | ✅ Done — `factsheet_handler.cpp` reads capabilities and limits from the AGV's factsheet |
 | Drive per-action blocking from the factsheet | ✅ Done — `blocking_type_for()` reads the blocking type from `agvActions`; hardcoded values are only a fallback (`connector.cpp`) |
-| Demonstrate multi-robot | ⬜ Not done — needs a second robot identity/config and a demo run |
+| Demonstrate multi-robot | ✅ Done — `tb3_fleet` (`config_tb3.yaml`) runs two robots (`tb3_1`, `tb3_2`); `amr_fleet` (`config_amr.yaml`) runs single-robot (`amr_1`) |
 | Act on connection loss | ✅ Done — `apply_commission()` calls `RobotUpdateHandle::set_commission()`/`decommission()` when VDA5050 state goes stale (`robot_command_handle.cpp`) |
 | Pause and resume instead of cancel | ✅ Done — an RMF-initiated stop pauses first; only escalates to `cancelOrder` if no resume arrives before the deadline (`robot_command_handle.cpp`) |
 | Add initPosition for re-localization | ✅ Done — `~/<robot>/init_position` service + UI re-localize control (`operator_interface.cpp`) |
