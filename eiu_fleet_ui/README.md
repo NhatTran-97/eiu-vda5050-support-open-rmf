@@ -2,7 +2,9 @@
 
 A real-time fleet management dashboard for [Open-RMF](https://github.com/open-rmf/rmf) built with **PySide6 + QML**. Monitors robot status, visualizes the navigation map, and dispatches / cancels tasks across one or more robot fleets — all from a single desktop window.
 
-![EIU Fleet UI logo](icons/eiu.png)
+<p align="center">
+  <img src="icons/eiu.png" alt="EIU Fleet UI logo" />
+</p>
 
 ![Dashboard overview](../assets/img/dashboard.png)
 
