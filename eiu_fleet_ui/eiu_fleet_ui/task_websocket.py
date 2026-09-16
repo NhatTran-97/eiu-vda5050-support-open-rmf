@@ -52,7 +52,6 @@ class TaskEventServer(QObject):
         self.connectedChanged.emit()
 
     def _on_disconnected(self, client):
-        # Ignore disconnect errors while Qt objects are being destroyed.
         if not shiboken6.isValid(self):
             return
         if client in self._clients:

@@ -9,7 +9,6 @@ from PySide6.QtCore import QObject, Signal, Slot, Property
 
 from .config import FleetConfig
 
-ADAPTER_NODE = "vda5050_fleet_adapter_full_control"
 SPEED_LIMIT_PREFIX = "speed_limit."
 NO_SPEED_LIMIT = 0.0
 
@@ -47,7 +46,7 @@ class RosControl(QObject):
 
         self._node = node
         for robot in self._config.robots:
-            prefix = f"/{ADAPTER_NODE}/{robot.name}"
+            prefix = f"/{robot.adapter_node}/{robot.name}"
             self._pause_clients[robot.name] = node.create_client(Trigger, f"{prefix}/pause")
             self._resume_clients[robot.name] = node.create_client(Trigger, f"{prefix}/resume")
             self._init_pos_pubs[robot.name] = node.create_publisher(
@@ -56,7 +55,7 @@ class RosControl(QObject):
             self._init_pos_result_subs[robot.name] = node.create_subscription(
                 String, f"{prefix}/init_position_result",
                 lambda msg, name=robot.name: self._on_init_position_result(name, msg), 1)
-            self._param_clients[robot.name] = AsyncParameterClient(node, ADAPTER_NODE)
+            self._param_clients[robot.name] = AsyncParameterClient(node, robot.adapter_node)
 
         node.create_timer(0.05, self._drain_commands)
         self._refresh_speed_limits()

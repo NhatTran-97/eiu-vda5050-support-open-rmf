@@ -14,6 +14,12 @@ setup(
         *[
             (os.path.join('share', package_name, dirpath),
              [os.path.join(dirpath, f) for f in filenames])
+            for dirpath, _, filenames in os.walk('launch')
+            if filenames
+        ],
+        *[
+            (os.path.join('share', package_name, dirpath),
+             [os.path.join(dirpath, f) for f in filenames])
             for dirpath, _, filenames in os.walk('qml')
             if filenames
         ],

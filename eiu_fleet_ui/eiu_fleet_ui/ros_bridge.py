@@ -93,8 +93,10 @@ class RosBridge(QObject):
         self._tasks_json   = json.dumps(self._tasks)
         self._planned_dest = ""
         self._waypoints    = []       # Navigation graph waypoints
-        self._fleet_name   = ""
-        self._blocked_lanes    = 0    # Closed lane count for this fleet
+        self._fleet_names  = set()    # Every real RMF fleet name loaded (multi-fleet aware)
+        self._robot_fleet  = {}       # robot name -> its own RMF fleet name
+        self._closed_lanes_by_fleet = {}  # fleet name -> its own closed_lanes list
+        self._blocked_lanes    = 0    # Closed lane count (union across fleets)
         self._closed_lane_indices_json = "[]"  # Raw closed lane indices for the map
         self._active_conflicts = 0    # Active RMF negotiations
 
@@ -135,12 +137,16 @@ class RosBridge(QObject):
         self._rosReady.connect(self._watchdog.start)
 
     def set_waypoints(self, wp_list: list):
-        """Receive the waypoint list from MapProvider, for use by _nearest_wp_name."""
+        """Store waypoints for nearest-waypoint lookup."""
         self._waypoints = wp_list
 
-    def set_fleet_name(self, name: str):
-        """LaneStates is published per-fleet; only count this fleet's own closures."""
-        self._fleet_name = name
+    def set_fleet_names(self, names: list):
+        """Track fleet names for lane closure requests and state updates."""
+        self._fleet_names = set(names)
+
+    def set_robot_fleets(self, mapping: dict):
+        """Store each robot's RMF fleet for targeted dispatch."""
+        self._robot_fleet = dict(mapping)
 
     @staticmethod
     def _load_tasks() -> list:
@@ -183,13 +189,7 @@ class RosBridge(QObject):
     # Start and stop the ROS connection.
 
     def start(self, on_node_ready=None):
-        """Create ROS entities on a background thread.
-
-        Node/publisher/subscription creation does DDS discovery against
-        whatever's already on the graph -- against a busy graph (Nav2, RMF
-        core, adapter, ...) that's easily 1-3s. Running it inline would block
-        the Qt event loop before the first frame is even painted.
-        """
+        """Create ROS entities in a background thread to keep QML responsive."""
         threading.Thread(target=self._start_impl, args=(on_node_ready,), daemon=True).start()
 
     def _start_impl(self, on_node_ready=None):
@@ -307,23 +307,20 @@ class RosBridge(QObject):
                     close_lanes, open_lanes = self._lane_command_queue.get_nowait()
                 except queue.Empty:
                     break
-                try:
-                    msg = self._lane_request_type()
-                    msg.fleet_name = self._fleet_name
-                    msg.close_lanes = close_lanes
-                    msg.open_lanes = open_lanes
-                    self._lane_request_pub.publish(msg)
-                except Exception as e:
-                    print(f"[ROS] lane request publish failed: {e}")
+                # Publish each lane request to every fleet on the map.
+                for fleet_name in (self._fleet_names or {""}):
+                    try:
+                        msg = self._lane_request_type()
+                        msg.fleet_name = fleet_name
+                        msg.close_lanes = close_lanes
+                        msg.open_lanes = open_lanes
+                        self._lane_request_pub.publish(msg)
+                    except Exception as e:
+                        print(f"[ROS] lane request publish failed (fleet={fleet_name}): {e}")
 
     @Slot()
     def shutdown(self):
-        """Detach ROS entities and tear them down off the GUI thread.
-
-        destroy_node() undoes the same DDS discovery start() paid for, so it
-        costs about as much (~1s against a busy graph). Doing that inline in
-        aboutToQuit would delay the window closing by that much.
-        """
+        """Release ROS entities in a background thread."""
         if not self._ok and self._node is None:
             return
         self._ok = False
@@ -454,12 +451,14 @@ class RosBridge(QObject):
                 self._publish_tasks()
 
     def _on_lane_states(self, msg):
-        if self._fleet_name and msg.fleet_name != self._fleet_name:
+        if self._fleet_names and msg.fleet_name not in self._fleet_names:
             return
-        indices = list(msg.closed_lanes)
-        indices_json = json.dumps(indices)
-        if len(indices) != self._blocked_lanes or indices_json != self._closed_lane_indices_json:
-            self._blocked_lanes = len(indices)
+        # Show the union of lane closures reported by all fleets.
+        self._closed_lanes_by_fleet[msg.fleet_name] = list(msg.closed_lanes)
+        union = sorted({i for lanes in self._closed_lanes_by_fleet.values() for i in lanes})
+        indices_json = json.dumps(union)
+        if len(union) != self._blocked_lanes or indices_json != self._closed_lane_indices_json:
+            self._blocked_lanes = len(union)
             self._closed_lane_indices_json = indices_json
             self.trafficChanged.emit()
 
@@ -523,7 +522,7 @@ class RosBridge(QObject):
     # Handle RMF task API responses.
 
     def _on_task_response(self, msg):
-        """Receive responses from the Jazzy dispatcher: pick up rmf_task_id and state updates."""
+        """Apply dispatcher responses and task state updates."""
         try:
             data = json.loads(msg.json_msg)
         except Exception:
@@ -531,7 +530,7 @@ class RosBridge(QObject):
 
         msg_type = data.get("type", "")
 
-        # Accept both direct Jazzy responses and the older wrapped format.
+        # Read both direct and wrapped RMF responses.
         if not msg_type and isinstance(data.get("state"), dict):
             state = data["state"]
             booking = state.get("booking", {})
@@ -621,8 +620,7 @@ class RosBridge(QObject):
                 if task is None:
                     continue
 
-                # DispatchState codes: queued=1, selected=2, dispatched=3, failed=4, cancelled=5.
-                # Dispatched snapshots may be stale, so they do not overwrite the task state.
+                # Ignore dispatched snapshots; newer task state may already exist.
                 label = None
                 if state.status in (1, 2):
                     label = "queued"
@@ -724,12 +722,12 @@ class RosBridge(QObject):
 
     @Slot(str, str, int)
     def dispatch(self, category: str, place: str, loops: int):
-        """Fleet-wide dispatch -- RMF bids the task to whichever robot it picks."""
+        """Submit a task for RMF to assign within the fleet."""
         self._dispatch(category, place, loops, "")
 
     @Slot(str, str, int, str)
     def dispatchToRobot(self, category: str, place: str, loops: int, robot: str):
-        """Pinned to one robot via RMF's robot_task_request, bypassing bidding."""
+        """Submit a task directly to the selected robot."""
         self._dispatch(category, place, loops, robot)
 
     @Slot(str, str, str, str)
@@ -830,7 +828,7 @@ class RosBridge(QObject):
         }
         # Send the task to the selected robot.
         envelope = ({"type": "robot_task_request", "robot": robot,
-                     "fleet": self._fleet_name, "request": task_request}
+                     "fleet": self._robot_fleet.get(robot, ""), "request": task_request}
                     if robot else
                     {"type": "dispatch_task_request", "request": task_request})
         request_json = json.dumps(envelope)

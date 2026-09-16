@@ -63,7 +63,7 @@ class MqttClient(QObject):
 
     @Slot()
     def connect_broker(self):
-        """Called from main.py once QML has finished loading."""
+        """Start the broker connection and MQTT worker."""
         host, port = self._config.broker_host, self._config.broker_port
         try:
             if not self._flush_timer.isActive():
@@ -116,7 +116,6 @@ class MqttClient(QObject):
         except Exception:
             return
 
-        # Drop malformed messages so the MQTT worker keeps running.
         try:
             if msg.topic == robot.topic(LEAF_CONNECTION):
                 online = data.get("connectionState", "") == "ONLINE"
@@ -134,7 +133,7 @@ class MqttClient(QObject):
             print(f"[MQTT] malformed payload on {msg.topic}: {e}")
 
     def _flush(self):
-        """Move the latest maps onto the Qt thread and notify QML, once each."""
+        """Publish pending connection and telemetry changes to QML."""
         now = time.monotonic()
         with self._lock:
             online_payload = json.dumps(self._online) if self._online_dirty else None

@@ -7,9 +7,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
-# No GPU device in the dev container (no /dev/dri) -- go straight to software
-# rendering instead of letting Qt probe GLX/DRI and fail first. Must be set
-# before any Qt module loads. Override with QT_QUICK_BACKEND=rhi on real GPU.
+# Select the Qt Quick backend before importing Qt.
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
@@ -73,10 +71,7 @@ def ui_scale_for(width: int, height: int) -> float:
 
 
 def apply_ui_scale() -> None:
-    """Set QT_SCALE_FACTOR from EIU_UI_SCALE ("auto" or a number). Off by default --
-    "auto" spawns a throwaway process to read the screen before QApplication exists,
-    which is slow enough under load to show as a black screen on startup.
-    """
+    """Set the UI scale from EIU_UI_SCALE; auto probes the screen size."""
     if "QT_SCALE_FACTOR" in os.environ:
         return
     requested = os.environ.get("EIU_UI_SCALE", "").strip().lower()
@@ -163,7 +158,8 @@ def build_engine(app: QApplication):
     map_prov   = MapProvider(fleet_cfg)
     mqtt       = MqttClient(fleet_cfg)
     ros        = RosBridge()
-    ros.set_fleet_name(fleet_cfg.fleet_name)
+    ros.set_fleet_names(list(fleet_cfg.fleet_names))
+    ros.set_robot_fleets({r.name: r.fleet_name for r in fleet_cfg.robots})
     control    = RosControl(fleet_cfg)
     ws_tasks   = TaskEventServer(fleet_cfg.websocket_uri)
     ws_tasks.taskStateUpdate.connect(ros.apply_task_state_update)
@@ -188,6 +184,19 @@ def build_engine(app: QApplication):
 
     # Logos used by the metric cards.
     icons_dir = _resource_dir("icons")
+
+    # Choose each robot's map icon by manufacturer, with a generic fallback.
+    _MANUFACTURER_ICON = {
+        "ROBOTIS": icons_dir / "tb3_logo.png",
+    }
+    ctx.setContextProperty(
+        "robotIconUrls",
+        {
+            r.name: QUrl.fromLocalFile(str(
+                _MANUFACTURER_ICON.get(r.manufacturer, logo_dir / "robot.png")))
+            for r in fleet_cfg.robots
+        },
+    )
     ctx.setContextProperty(
         "statusActiveIconUrl",
         QUrl.fromLocalFile(str(icons_dir / "active.png")),
@@ -234,9 +243,7 @@ def main():
     app.aboutToQuit.connect(mqtt.disconnect_broker)
     app.aboutToQuit.connect(ros.shutdown)   # Shut down ROS on exit
 
-    # Qt's event loop only checks for signals between events, so a lone Ctrl+C
-    # can sit unnoticed until the next one arrives. This wakeup timer gives
-    # Python a chance to see it and quit on the first press.
+    # Wake Python periodically so SIGINT is handled during the Qt event loop.
     signal.signal(signal.SIGINT, lambda *_: app.quit())
     _sigint_wakeup = QTimer()
     _sigint_wakeup.start(200)

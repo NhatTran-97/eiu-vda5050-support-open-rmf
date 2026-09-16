@@ -16,7 +16,12 @@ Rectangle {
     property var  telemetry:   ({})
     property string plannedDest: ""
     property url robotIconSource: ""
+    property var robotIconUrls: ({})   // robot name -> icon url; falls back to robotIconSource
     property real robotMarkerSize: 46
+
+    function iconForRobot(name) {
+        return (robotIconUrls && robotIconUrls[name]) ? robotIconUrls[name] : robotIconSource
+    }
 
     // Scale labels with the map panel size.
     readonly property real labelScale: Math.max(0.75, Math.min(1.35, width / 900))
@@ -97,15 +102,13 @@ Rectangle {
         return best
     }
 
-    // Find an RMF waypoint by nodeId.
+    // Find an RMF waypoint by name.
     function waypointByName(name) {
         for (var i = 0; i < waypoints.length; i++) {
             if (waypoints[i].name === name) return waypoints[i]
         }
         return null
     }
-
-    // Use /fleet_states poses in the map's RMF coordinate frame.
 
     property real minScale: 0.4
     property real maxScale: 8.0
@@ -116,13 +119,11 @@ Rectangle {
     property int selectedZoneId: -1
     property int _nextZoneId: 1
 
-    // closedZones is local UI state and doesn't survive a restart, but RMF's
-    // own closed-lane list does -- resync so a lane closed by any past
-    // session still gets a marker (and a delete button) here.
     readonly property var liveClosedRaw: {
         try { return JSON.parse(ros.closedLaneIndicesJson) } catch (e) { return [] }
     }
 
+    // Match zone markers to RMF's current raw lane closures.
     function syncZonesFromLive() {
         var covered = {}
         for (var i = 0; i < root.closedZones.length; i++) {
@@ -162,6 +163,7 @@ Rectangle {
             && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
     }
 
+    // Include lane endpoints and boundary crossings when testing a zone.
     function segmentIntersectsRect(x1, y1, x2, y2, rx1, ry1, rx2, ry2) {
         var minX = Math.min(rx1, rx2), maxX = Math.max(rx1, rx2)
         var minY = Math.min(ry1, ry2), maxY = Math.max(ry1, ry2)
@@ -174,10 +176,7 @@ Rectangle {
             || segmentsIntersect(x1, y1, x2, y2, minX, maxY, minX, minY)
     }
 
-    // Close the lanes the just-drawn rectangle overlaps, as one zone.
-    // laneIndices holds real graph lane indices (root.edges[i].raw), not the
-    // deduplicated edge index -- RMF's close_lanes() indexes each direction
-    // of a lane separately.
+    // Close every raw lane index intersecting the drawn zone.
     function finishZoneDraw() {
         if (!root.zoneRect) return
         var r = root.zoneRect
@@ -228,9 +227,7 @@ Rectangle {
         geometryPaintTimer.restart()
     }
 
-    // Only node_states.released affects the drawn route; telemetry itself also
-    // carries speed/battery/distance which change far more often and would
-    // otherwise repaint the whole canvas on every tick for no visual change.
+    // Repaint routes only when their released-node state changes.
     readonly property string releasedSignature: {
         var names = Object.keys(telemetry).sort()
         var sig = ""
@@ -388,8 +385,7 @@ Rectangle {
                         if (!w1 || !w2) continue
                         var p1 = root.worldToScreen(w1.x, w1.y)
                         var p2 = root.worldToScreen(w2.x, w2.y)
-                        // main.qml already translates raw closed-lane indices to
-                        // deduplicated edge indices via laneIndexMap -- compare i directly.
+                        // Blocked indices refer to deduplicated edges.
                         var blocked = root.blockedEdgeIndices.indexOf(i) >= 0
 
                         ctx2d.strokeStyle = blocked ? "#F05265" : "#f5c400"
@@ -635,7 +631,7 @@ Rectangle {
                         height: root.robotMarkerSize
                         x: -width / 2
                         y: -height / 2
-                        source: root.robotIconSource
+                        source: root.iconForRobot(modelData.name)
                         fillMode: Image.PreserveAspectFit
                         smooth: true
                         mipmap: true

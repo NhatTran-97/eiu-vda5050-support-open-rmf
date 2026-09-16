@@ -972,6 +972,12 @@ ApplicationWindow {
                                 value: robotIconUrl
                                 when: mapLoader.status === Loader.Ready
                             }
+                            Binding {
+                                target: mapLoader.item
+                                property: "robotIconUrls"
+                                value: robotIconUrls
+                                when: mapLoader.status === Loader.Ready
+                            }
                         }
 
                         // Live robot list.

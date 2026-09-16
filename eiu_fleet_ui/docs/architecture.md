@@ -131,6 +131,25 @@ sequenceDiagram
     end
 ```
 
+`loops > 1` builds a round-trip route instead of a single leg: `dispatch()`
+finds the robot's nearest waypoint via `/fleet_states` and requests
+`[current_wp, destination]` with `rounds = loops`, so each round is real
+travel rather than a no-op at the destination.
+
+### Task cancellation
+
+```mermaid
+sequenceDiagram
+    participant Q as QML (Tasks table)
+    participant RB as RosBridge
+    participant RMF as RMF dispatcher
+
+    Q->>RB: cancel_task(rmf_id)
+    RB->>RB: task.state = "cancelled" (optimistic)
+    RB->>RMF: ApiRequest (cancel_task_request)
+    RMF-->>RB: task_state_update (confirms cancelled)
+```
+
 ### Live telemetry (two independent sources)
 
 ```mermaid

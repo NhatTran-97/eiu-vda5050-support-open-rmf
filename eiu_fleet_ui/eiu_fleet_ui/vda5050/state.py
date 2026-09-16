@@ -78,7 +78,7 @@ def _first_fatal_error(errors: list) -> str:
 
 
 def parse_velocity(raw: dict) -> float:
-    """state.velocity and visualization.velocity share one schema."""
+    """Return planar speed from a VDA5050 velocity vector."""
     v = raw.get("velocity")
     if not isinstance(v, dict):
         return 0.0
@@ -86,6 +86,7 @@ def parse_velocity(raw: dict) -> float:
 
 
 def parse_state(raw: dict) -> RobotState:
+    """Convert a VDA5050 state payload into UI telemetry."""
     s = RobotState()
 
     pos = raw.get("agvPosition")

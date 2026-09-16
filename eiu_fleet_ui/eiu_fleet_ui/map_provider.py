@@ -99,10 +99,7 @@ class MapProvider(QObject):
                 "parking": bool(props.get("is_parking_spot", False)),
             })
 
-        # RMF's graph (and close_lanes/lane_states) index each direction of a
-        # lane separately, but the UI draws one line per corridor -- "raw"
-        # keeps the 1-2 real graph indices behind each deduplicated lane so
-        # closing/highlighting an edge can act on all of them.
+        # Group both lane directions for drawing; retain raw RMF indices for closures.
         lanes_raw = level.get("lanes", [])
         all_pairs = {(int(ln[0]), int(ln[1])) for ln in lanes_raw}
         seen: dict[tuple[int, int], int] = {}
