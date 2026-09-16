@@ -131,8 +131,7 @@ void BridgeNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg)
   last_odom_y_ = odom_y;
   last_odom_position_valid_ = true;
 
-  // Live progress on the current leg, so the adapter's periodic state publish
-  // reports real-time distance instead of a value frozen since the last node.
+  // Stream odometry distance for the current route leg.
   std_msgs::msg::Float64 dist_msg;
   dist_msg.data = odom_distance_tracker_.current();
   distance_since_last_node_pub_->publish(dist_msg);
@@ -159,14 +158,14 @@ void BridgeNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStampe
   last_amcl_pose_at_ = std::chrono::steady_clock::now();
   robot_pose_confident_ = finite && covariance_ok;
 
-  // A non-finite reading leaves robot_pose_confident_ false without touching the last known-good pose.
+  // Reject non-finite poses while retaining the last valid coordinates.
   if (finite) {
     robot_x_   = x;
     robot_y_   = y;
     robot_yaw_ = yaw;
   }
 
-  // Baseline for robot_pose_valid()'s stale-but-stationary check.
+  // Record odometry at the last confident AMCL pose.
   if (robot_pose_confident_ && last_odom_position_valid_) 
   {
     odom_x_at_last_amcl_pose_ = last_odom_x_;
@@ -196,7 +195,7 @@ bool BridgeNode::robot_pose_valid() const
         std::chrono::duration<double>(amcl_pose_timeout_sec_))) {
     return true;
   }
-  // Past the timeout, trust the pose if the robot hasn't driven since the last confirmation.
+  // Accept an older AMCL pose when odometry shows the robot stayed still.
   if (!has_driven_since_last_amcl_pose_) {
     return true;
   }
@@ -257,10 +256,7 @@ void BridgeNode::on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg)
   battery_state_pub_->publish(batt);
 }
 
-// A non-navigation velocity topic reporting "unmasked" means twist_mux is currently
-// forwarding it instead of navigation -- i.e. a human has taken over. ("current priority"
-// in this same diagnostic tracks the lock subsystem, not velocity-topic arbitration --
-// it stays 0 regardless, so it can't be used for this.)
+// An unmasked non-navigation velocity source means manual control is active.
 void BridgeNode::on_diagnostics(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg)
 {
   static const std::string prefix = "velocity topics.";
@@ -416,11 +412,7 @@ void BridgeNode::on_action_execute(const vda5050_msgs::msg::Action::SharedPtr ms
 // Send operator's x/y/theta (from action) to AMCL for initial pose; fails while Nav2 is driving.
 void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
 {
-  // Only a live Nav2 goal blocks re-localizing -- that is the case the guard exists for, since
-  // moving the believed position mid-goal sends the robot down a path computed for elsewhere.
-  // Order-session state must NOT gate this: an order whose navigation was interrupted (process
-  // restart, Nav2 unavailable, a goal that never resolved) stays "in progress" forever with
-  // nothing driving it, and re-localizing is exactly how an operator recovers from that.
+  // Re-localize only when no Nav2 goal is driving from the current pose.
   if (current_goal_handle_) {
       RCLCPP_WARN(get_logger(),"initPosition (id=%s) rejected: robot is executing a navigation goal",
                                     action.action_id.c_str());
@@ -447,7 +439,7 @@ void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
   tf2::Quaternion q;
   q.setRPY(0.0, 0.0, theta);
   pose.pose.pose.orientation = tf2::toMsg(q);
-  // Same covariance rviz2's "2D Pose Estimate" tool and Nav2's own defaults use for a manually-supplied initial pose.
+  // Use Nav2's default covariance for a manually supplied initial pose.
   pose.pose.covariance[6 * 0 + 0] = 0.25;
   pose.pose.covariance[6 * 1 + 1] = 0.25;
   pose.pose.covariance[6 * 5 + 5] = 0.06853891945200942;
@@ -455,7 +447,7 @@ void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
   initial_pose_pub_->publish(pose);
   RCLCPP_INFO(get_logger(), "initPosition (id=%s): published initial pose (%.2f, %.2f, %.2f rad) to %s", action.action_id.c_str(), x, y, theta, initial_pose_topic_.c_str());
 
-  // Any order still tracked was planned from the pose just invalidated -- drop it.
+  // Drop the route planned from the previous pose.
   if (order_session_.has_order()) {
     const auto dropped_order_id = order_session_.order_id();
     const auto dropped_cursor = order_session_.current_node_index();
@@ -662,7 +654,7 @@ void BridgeNode::send_navigation_goal(const NavigationTarget& target)
         return;
       }
 
-      // Published on accept, not send: a rejected goal must not leave this edge without a completion.
+      // Mark edge entry only after Nav2 accepts the goal.
       if (incoming_edge.has_value()) {
         edge_entered_pub_->publish(*incoming_edge);
       }
@@ -698,7 +690,7 @@ void BridgeNode::send_navigation_goal(const NavigationTarget& target)
         return;
       }
 
-      // Retries the same node via arm_nav2_retry() until nav2_dispatch_timeout_sec_ is exhausted.
+      // Retry this node until the Nav2 dispatch timeout.
       RCLCPP_WARN(get_logger(),"Navigation to %s failed (code=%d) — will retry", node_id.c_str(), static_cast<int>(result.code));
       state_machine_.on_dispatching();
       publish_bridge_status();

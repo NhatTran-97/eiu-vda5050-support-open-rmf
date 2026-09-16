@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a VDA5050 Load onto the real pipeline, standing in for a sensor
-that doesn't exist yet -- proves ~/load -> state.loads -> MQTT works end to
-end. Swap this for a real sensor node later; nothing downstream changes."""
+"""Publish a VDA5050 Load, standing in for a load sensor."""
 import argparse
 import sys
 

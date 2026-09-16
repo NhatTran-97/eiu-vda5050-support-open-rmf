@@ -3,8 +3,7 @@
 
 namespace tb3_vda5050_bridge {
 
-// Accumulates real distance driven from consecutive odometry positions, for
-// VDA5050's distanceSinceLastNode -- a straight line between two nodes under-reports it on any leg that isn't a straight line.
+// Accumulate odometry distance for VDA5050 distanceSinceLastNode.
 class OdomDistanceTracker
 {
 public:
@@ -14,7 +13,7 @@ public:
   // Return the accumulated distance and reset it to zero.
   double take();
 
-  // Peek at the accumulated distance without resetting it -- for streaming a  live "distance so far this leg" reading between node_reached events.
+  // Read current leg distance without resetting the accumulator.
   double current() const;
 
 private:

@@ -14,25 +14,8 @@
 namespace vda5050_adapter {
 
 /**
- * @brief Manages VDA5050 action lifecycle: execution, blocking semantics, pause/resume/cancel.
- *
- * Tracks actions from order routes and instantActions, manages their state transitions
- * (WAITING → INITIALIZING → RUNNING → FINISHED|FAILED, with PAUSED reachable from
- * INITIALIZING/RUNNING), and enforces blocking constraints (NONE/SOFT/HARD).
- *
- * Blocking types:
- *   - NONE:  Runs concurrently with other actions; does not block driving.
- *   - SOFT:  Driving stops; NONE actions may run in parallel; other SOFT/HARD wait.
- *   - HARD:  Pauses all other actions; runs alone; resumes others when finished.
- *
- * Key responsibilities:
- *  - Ingest and queue node/edge/instant actions with their trigger conditions
- *  - Manage action lifecycle state transitions and validate transitions
- *  - Enforce blocking semantics: HARD exclusive, SOFT stop-driving, NONE parallel
- *  - Dispatch callbacks (execute, pause, resume, cancel) to robot driver
- *  - Handle pause/resume/cancel requests on all active actions
- *  - Timeout HARD actions waiting too long for pause confirmation
- *  - Thread-safe: all public methods callable from any thread
+ * @brief Track order and instant actions, enforcing NONE/SOFT/HARD blocking.
+ * Public methods synchronize action state across threads.
  */
 class ActionManager {
 public:

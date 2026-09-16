@@ -45,7 +45,7 @@ void OrderSession::start(const vda5050_msgs::msg::Order& order, std::size_t resu
   ++generation_;
 }
 
-// Merge updated order (order) into current: reject if order_update_id not strictly greater, protect current node, merge nodes/edges.
+// Merge a newer order update without changing traversed nodes.
 bool OrderSession::update(const vda5050_msgs::msg::Order& order) {
   if (order.order_update_id <= current_order_.order_update_id) {
     return false;
@@ -129,7 +129,7 @@ bool OrderSession::next_node_requires_pose_to_complete() const {
   return node.released && !node.node_position_set;
 }
 
-// Complete navigation to node_index (node_index) if index matches cursor; emit edge_completed/node_reached events, advance cursor.
+// Advance the cursor and emit traversal events for the reached node.
 std::vector<TraversalEvent> OrderSession::complete_navigation(std::size_t node_index) {
   std::vector<TraversalEvent> events;
 
@@ -166,7 +166,7 @@ vda5050_msgs::msg::NodeState OrderSession::make_node_state(const vda5050_msgs::m
   return state;
 }
 
-// Find edge in order (order) that precedes node (node) by sequence_id; return nullopt if no predecessor or not found.
+// Find the incoming edge for a node by sequence ID.
 std::optional<vda5050_msgs::msg::Edge> OrderSession::find_incoming_edge(
   const vda5050_msgs::msg::Order& order,
   const vda5050_msgs::msg::Node& node)

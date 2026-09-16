@@ -49,20 +49,8 @@ struct MqttMessage {
 };
 
 /**
- * @brief Async MQTT client wrapping Eclipse Paho C++ library for VDA5050 communication.
- *
- * Manages MQTT connection lifecycle, subscribes to inbound topics (order, instantActions),
- * publishes outbound messages (state, connection, visualization, factsheet), and handles
- * reconnection with exponential back-off. Callbacks are invoked on message arrival and
- * connection state changes. Thread-safe: publish queue and subscription callbacks are
- * synchronized.
- *
- * Key features:
- *  - Automatic reconnect with exponential back-off (configurable delays)
- *  - Per-topic message callbacks with QoS and topic filter support
- *  - Thread-safe async publish queue
- *  - Last-Will-and-Testament (LWT) support for VDA5050 CONNECTIONBROKEN on disconnect
- *  - Retains published messages as configured
+ * @brief Publish and subscribe to VDA5050 topics through async MQTT.
+ * Reconnect with back-off and synchronize callbacks and queued publishes.
  */
 class MqttClient {
 public:

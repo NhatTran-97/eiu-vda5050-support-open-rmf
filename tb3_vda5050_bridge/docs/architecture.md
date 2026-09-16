@@ -39,10 +39,12 @@ flowchart TB
         Node["BridgeNode\nROS orchestration only"]
         Session["OrderSession\norder cursor + traversal planning"]
         SM["BridgeStateMachine\nmode + invariants"]
+        Dist["OdomDistanceTracker\nreal driven distance"]
     end
 
     Node --> Session
     Node --> SM
+    Node --> Dist
     Node -->|pub/sub| Adapter["vda5050_client_adapter topics"]
     Node -->|send/cancel goal| Nav2["NavigateToPose"]
     Node -->|read odom, battery| Robot["TB3 telemetry"]
@@ -76,6 +78,13 @@ Responsibilities:
 - Centralize bridge mode transitions
 - Derive `driving` and `paused` flags from mode
 - Prevent contradictory states like `driving=true` and `paused=true`
+
+### `OdomDistanceTracker`
+
+Responsibilities:
+
+- Accumulate real driven distance from consecutive `/odom` positions (not straight-line distance to the target)
+- Reset each time a node is reached; also streamed live via `~/distance_since_last_node` between nodes
 
 ---
 
@@ -259,6 +268,23 @@ stays in `DISPATCHING` and arms a 2 s retry timer that re-attempts the dispatch.
 goes out as soon as Nav2 appears. The timer is cancelled once a goal is sent, the order
 completes, or it is cancelled. This makes robot-side startup order irrelevant.
 
+### A failed navigation is retried, not given up on immediately
+
+Nav2 reporting a goal as failed (obstacle, transient AMCL/planner hiccup) re-attempts the
+same node on the same 2 s timer / `nav2_dispatch_timeout_sec` budget as the "Nav2 not ready
+yet" case above, instead of stalling the order on the first hiccup. Only once that budget
+is exhausted does the order actually fail (`navigationError`, order cleared and persisted
+as terminal).
+
+### Restart doesn't replay a finished order
+
+Order progress (`order_id`, node cursor, terminal flag) is persisted to disk
+(`order_state_path`) and checked before acting on what looks like a new order, so a
+`transient_local` order retained by a still-running publisher (e.g. a UI panel, a separate
+systemd unit from bringup) can't make a restarted bridge re-drive a route it already
+completed or that was cancelled. An order still genuinely in progress resumes at its last
+cursor instead of restarting from node 0.
+
 ---
 
 ## 7. ROS Interface
@@ -271,7 +297,9 @@ Default: `/vda5050_client_adapter`
 | Topic | Type | Purpose |
 |---|---|---|
 | `${odom_topic}` | `nav_msgs/Odometry` | Publish `AgvPosition` and `Velocity` |
+| `${amcl_pose_topic}` | `geometry_msgs/PoseWithCovarianceStamped` | AMCL localization pose (staleness/trust checks, §7b) |
 | `${battery_topic}` | `sensor_msgs/BatteryState` | Publish VDA5050 battery state |
+| `/diagnostics` | `diagnostic_msgs/DiagnosticArray` | `twist_mux` arbitration, for manual-override detection (§7b) |
 | `${adapter_ns}/order` | `vda5050_msgs/Order` | Active order from adapter |
 | `${adapter_ns}/action_cancel` | `std_msgs/String` | `pause:*`, `resume:*`, `cancel:*` |
 | `${adapter_ns}/action_execute` | `vda5050_msgs/Action` | Robot-side action execution request |
@@ -314,22 +342,10 @@ not the current order, is driving right now. `SEMIAUTOMATIC` / `SERVICE` /
 
 ## 8. Parameters
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `adapter_ns` | `string` | `"/vda5050_client_adapter"` | Adapter topic prefix |
-| `odom_topic` | `string` | `"/odom"` | Odometry input topic |
-| `battery_topic` | `string` | `"/battery_state"` | Battery input topic |
-| `nav2_action_name` | `string` | `"navigate_to_pose"` | Nav2 action server name |
-| `map_id` | `string` | `"map"` | Default map frame |
-| `position_covariance_threshold` | `double` | `0.5` | Marks `AgvPosition.position_initialized` |
-| `order_state_path` | `string` | `$HOME/.ros/tb3_vda5050_bridge_order_state.txt` | Where order progress is persisted across restarts |
-| `nav2_dispatch_timeout_sec` | `double` | `120.0` | Max time to keep retrying a node dispatch before failing the order |
-| `initial_pose_topic` | `string` | `"/initialpose"` | Where `initPosition` publishes AMCL's new initial pose |
-| `supported_action_types` | `string[]` | `[]` | VDA5050 action types this bridge actually implements |
-| `amcl_pose_timeout_sec` | `double` | `10.0` | Max age of the last AMCL pose before it stops being trusted |
-| `speed_limit_topic` | `string` | `"/speed_limit"` | Nav2's built-in speed-override input |
-
-Config file: [`config/bridge_params.yaml`](../config/bridge_params.yaml)
+Full parameter table (defaults, types, descriptions) lives in
+[README.md § Configuration](../README.md#configuration) — kept in one place
+to avoid the two drifting apart. Config file:
+[`config/bridge_params.yaml`](../config/bridge_params.yaml)
 
 ---
 
@@ -337,6 +353,7 @@ Config file: [`config/bridge_params.yaml`](../config/bridge_params.yaml)
 
 1. [`include/tb3_vda5050_bridge/bridge_state_machine.hpp`](../include/tb3_vda5050_bridge/bridge_state_machine.hpp)
 2. [`include/tb3_vda5050_bridge/order_session.hpp`](../include/tb3_vda5050_bridge/order_session.hpp)
-3. [`include/tb3_vda5050_bridge/bridge_node.hpp`](../include/tb3_vda5050_bridge/bridge_node.hpp)
-4. [`src/order_session.cpp`](../src/order_session.cpp)
-5. [`src/bridge_node.cpp`](../src/bridge_node.cpp)
+3. [`include/tb3_vda5050_bridge/odom_distance_tracker.hpp`](../include/tb3_vda5050_bridge/odom_distance_tracker.hpp)
+4. [`include/tb3_vda5050_bridge/bridge_node.hpp`](../include/tb3_vda5050_bridge/bridge_node.hpp)
+5. [`src/order_session.cpp`](../src/order_session.cpp)
+6. [`src/bridge_node.cpp`](../src/bridge_node.cpp)

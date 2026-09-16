@@ -16,7 +16,7 @@ OrderManager::OrderManager() = default;
 // Callback registration
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Register callback (cb) to invoke when an order is accepted; passes order_id, order_update_id, and remaining route.
+// Register a callback for accepted orders and remaining routes.
 void OrderManager::set_order_accepted_callback(OrderAcceptedCallback cb)
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -41,7 +41,7 @@ void OrderManager::set_new_base_request_callback(NewBaseRequestCallback cb)
 // Process incoming order
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Validate and apply incoming order (order): new order or update to current. Returns acceptance result with rejection reason if invalid.
+// Validate and apply a new order or update.
 OrderAcceptResult OrderManager::process_order(const vda5050::Order& order)
 {
   std::unique_lock<std::mutex> lock(mutex_);
@@ -102,7 +102,7 @@ OrderAcceptResult OrderManager::process_order(const vda5050::Order& order)
 // Cancel
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Cancel the active order (order_id); if order_id is non-empty, only cancel if it matches current order. Invokes cancelled callback.
+// Cancel the active order, optionally matching its ID.
 void OrderManager::cancel_order(const std::string& order_id)
 {
   std::unique_lock<std::mutex> lock(mutex_);
@@ -147,7 +147,7 @@ bool OrderManager::is_stale_edge(const std::string& edge_id) const {
   return std::find(stale_edge_ids_.begin(), stale_edge_ids_.end(), edge_id) != stale_edge_ids_.end();
 }
 
-// Notify that node (evt) was physically reached: validate order, pop remaining base node, trigger newBaseRequest if needed.
+// Advance released route progress when the reported node matches.
 bool OrderManager::node_reached(const NodeReachedEvent& evt) {
   std::unique_lock<std::mutex> lock(mutex_);
 
@@ -159,7 +159,7 @@ bool OrderManager::node_reached(const NodeReachedEvent& evt) {
   const auto& expected_node = remaining_base_nodes_.front();
   if (expected_node.node_id != evt.node_id ||
       expected_node.sequence_id != evt.sequence_id) {
-    // A late report for a node this order has never known about is a stale echo of an order just replaced, not a real progress bug -- absorb it.
+    // Ignore late feedback from the replaced order.
     if (is_stale_node(evt.node_id)) {
       return true;
     }
@@ -203,7 +203,7 @@ bool OrderManager::edge_entered(const std::string& edge_id,  uint32_t sequence_i
 
   const auto& expected_edge = remaining_base_edges_.front();
   if (expected_edge.edge_id != edge_id || expected_edge.sequence_id != sequence_id) {
-    // Same reasoning as node_reached above: a report for an edge this order never had is a stale echo of an order just replaced, not a real bug.
+    // Ignore late edge feedback from the replaced order.
     if (is_stale_edge(edge_id)) {
       return true;
     }
@@ -429,11 +429,10 @@ OrderManager::validate_update(const vda5050::Order& update) const
   return {true, ""};
 }
 
-// Apply new order (order): set order_id/update_id/zone_set_id, partition nodes/edges into base/horizon, reset progress.
+// Split a new order into released base and unreleased horizon.
 void OrderManager::apply_order(const vda5050::Order& order)
 {
-  // Snapshot what the order being replaced still knew about -- a late
-  // node_reached/edge_entered for one of these is a stale echo, not a bug.
+  // Retain replaced-order IDs to recognize late navigation feedback.
   stale_node_ids_.clear();
   stale_edge_ids_.clear();
   for (const auto& n : remaining_base_nodes_) stale_node_ids_.push_back(n.node_id);
@@ -449,9 +448,7 @@ void OrderManager::apply_order(const vda5050::Order& order)
   new_base_request_        = false;
   distance_since_last_node_ = 0.0;
 
-  // Reset per-order: RMF derives route progress from this (see
-  // robot_command_handle.cpp), and a value left over from the previous
-  // order can overshoot the new route, causing a false "already done".
+  // Start distance tracking from zero for the new order.
   last_node_sequence_id_ = 0;
 
   remaining_base_nodes_.clear();

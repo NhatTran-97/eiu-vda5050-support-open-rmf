@@ -11,7 +11,7 @@
     # ── VDA5050 AGV identity ────────────────────────────────────────────────
     # MQTT topic structure: {interface_name}/v2/{manufacturer}/{serial_number}/{topic}
     vda5050:
-      interface_name: "TB3"       # VDA5050 interface name
+      interface_name: "AMR"       # VDA5050 interface name
       manufacturer:   "ROBOTIS"        # Manufacturer identifier
       serial_number:  "0001"       # AGV serial number
 

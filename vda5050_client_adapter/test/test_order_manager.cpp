@@ -1,18 +1,5 @@
 /**
- * @file test_order_manager.cpp
- * @brief Unit tests for vda5050_adapter::OrderManager.
- *
- * Coverage:
- *  - New order acceptance (base + horizon split)
- *  - Order update / stitching (from base node, from last-traversed)
- *  - Stale / invalid update rejection
- *  - node_reached / edge_completed feedback
- *  - new_base_request trigger logic
- *  - distance_since_last_node tracking
- *  - cancel_order (matching, empty, mismatched ID)
- *  - Replacement order (allowed regardless of remaining route; blocked only
- *    if it doesn't start from the robot's actual last-traversed node)
- *  - State-query consistency after mutations
+ * @brief Verify order validation, updates, route progress, and cancellation.
  */
 
 #include <gtest/gtest.h>

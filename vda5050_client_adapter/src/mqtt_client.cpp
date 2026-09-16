@@ -242,7 +242,7 @@ void MqttClient::disconnect(int timeout_ms)
   connected_.store(false);
 }
 
-// Publish message (payload) to topic (topic) with QoS (qos) and retained flag (retained); return true if queued, false if not connected or failed.
+// Queue a publish with the requested QoS and retain flag.
 bool MqttClient::publish(const std::string& topic,
                          const std::string& payload,
                          int                qos,
@@ -264,7 +264,7 @@ bool MqttClient::publish(const std::string& topic,
   }
 }
 
-// Subscribe to topic filter (topic_filter) with QoS (qos) and register message callback (callback); resubscribe if already connected.
+// Register a filtered subscription and its message callback.
 void MqttClient::subscribe(const std::string& topic_filter, int qos, MessageCallback    callback)
 {
   {

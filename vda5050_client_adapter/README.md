@@ -2,69 +2,16 @@
 
 ROS 2 adapter node that connects a VDA5050 master control (or Open-RMF fleet adapter) to the robot driver stack. Receives `order` and `instantActions` over MQTT, exposes them as ROS 2 topics, and publishes robot `state`, `visualization`, `connection`, and `factsheet` back to MQTT.
 
-## Overview
+> See [docs/architecture.md](docs/architecture.md) for module design, the state machine, and sequence diagrams.
 
-The adapter sits between the MQTT world (VDA5050 JSON) and the ROS 2 world (`vda5050_msgs` topics). It implements all six VDA5050 v2.1.0 topics, a full order stitch/update protocol, NONE/SOFT/HARD action blocking semantics, and built-in instant actions (startPause, stopPause, cancelOrder, stateRequest). The robot driver only needs to handle ROS 2 topics — all VDA5050 protocol complexity is contained here.
+## Features
 
-## System Context
-
-```mermaid
-flowchart LR
-    subgraph pc ["Ground-station PC"]
-        mc("Open-RMF / Master Control")
-        broker[("MQTT Broker\nMosquitto")]
-        mc <-->|"VDA5050 JSON"| broker
-    end
-
-    subgraph robot ["TurtleBot3"]
-        ca("vda5050_client_adapter\n← THIS PACKAGE")
-        br("tb3_vda5050_bridge\nrobot driver")
-        broker <-->|"VDA5050 JSON"| ca
-        ca <-->|"ROS 2 vda5050_msgs"| br
-    end
-```
-
-## Architecture
-
-```mermaid
-flowchart TB
-    subgraph Adapter["vda5050_client_adapter"]
-        Node["VDA5050Node\nROS / MQTT wiring · state publish"]
-        SM["AdapterStateMachine\ntop-level mode · pause/resume/cancel confirmations"]
-        OM["OrderManager\norder stitch · base/horizon · newBaseRequest"]
-        AM["ActionManager\nNONE/SOFT/HARD blocking · pause/resume/cancel"]
-        MQTT["MqttClient\npaho async · reconnect · QoS · retained"]
-        Types["vda5050_types.hpp\ninternal domain model"]
-        JSON["json_converter.hpp\nJSON ↔ internal (VDA5050 v2.1.0)"]
-        ROS["ros_converters.hpp\nROS 2 msgs ↔ internal"]
-    end
-
-    Node --> SM & OM & AM & MQTT & JSON & ROS
-    SM --> OM & AM
-    JSON & ROS & OM & AM --> Types
-```
-
-### State machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> INITIALIZING
-    INITIALIZING --> CONNECTING : node setup complete
-    CONNECTING --> IDLE : MQTT connected
-    IDLE --> ORDER_ACTIVE : order accepted
-    ORDER_ACTIVE --> ACTION_BLOCKED : SOFT/HARD action active
-    ACTION_BLOCKED --> ORDER_ACTIVE : blocking action cleared
-    ORDER_ACTIVE --> PAUSE_PENDING : startPause
-    PAUSE_PENDING --> PAUSED : robot confirms paused
-    PAUSED --> RESUME_PENDING : stopPause
-    RESUME_PENDING --> ORDER_ACTIVE : robot confirms resumed
-    ORDER_ACTIVE --> CANCELLING : cancelOrder
-    CANCELLING --> IDLE : order inactive + robot stopped
-    ORDER_ACTIVE --> IDLE : route fully consumed
-    IDLE --> FAULTED : fatal error
-    ORDER_ACTIVE --> FAULTED : fatal error
-    FAULTED --> IDLE : error cleared
-```
+- Implements all six VDA5050 v2.1.0 MQTT topics (`order`, `instantActions`, `state`, `visualization`, `connection`, `factsheet`).
+- Full order stitch/update protocol (base/horizon tracking, `newBaseRequest`) and order replacement with stale-echo absorption.
+- NONE/SOFT/HARD action blocking semantics; built-in instant actions (`startPause`, `stopPause`, `cancelOrder`, `stateRequest`).
+- `state` publishes on a timer **and** immediately on a fresh position update (throttled), so Master Control sees live movement instead of a once-per-timer jump.
+- Robot driver only needs to speak plain ROS 2 topics — all VDA5050 protocol complexity is contained here.
+- 116 unit tests covering the state machine, order manager, action manager, and JSON/ROS converters.
 
 ## Package Structure
 
@@ -78,50 +25,37 @@ stateDiagram-v2
 | `include/.../vda5050_types.hpp` | Internal domain model — no external dependencies |
 | `include/.../json_converter.hpp` | JSON ↔ internal model (VDA5050 v2.1.0 schema compliant) |
 | `include/.../ros_converters.hpp` | ROS 2 messages ↔ internal model (bidirectional) |
-| `config/vda5050_params.yaml` | MQTT broker, VDA5050 identity, topic prefix, timing |
+| `config/vda5050_params.yaml` | MQTT broker, VDA5050 identity, factsheet, timing |
 | `docker/` · `docker-compose.yml` | Build environment and compose stack for the robot side |
-
-## Data Flow
-
-**Downlink (Master Control → Robot)**
-
-```
-MQTT .../order → VDA5050Node → OrderManager (stitch validate)
-  → AdapterStateMachine → ~/order (ROS 2) → robot driver
-```
-
-**Uplink (Robot → Master Control)**
-
-```
-~/agv_position · ~/battery_state · ~/driving · ~/node_reached · …
-  → VDA5050Node → state assembly → MQTT .../state · .../visualization
-```
 
 ## ROS Interface
 
-> Topic prefix is parameterized by `adapter_ns` (default: `/vda5050_client_adapter`).
+> All topics are relative to this node's own name (`~/...`), matched 1:1 by `tb3_vda5050_bridge`'s `adapter_ns`-prefixed topics on the other side.
 
-### Subscribed
-
-| Topic | Type | Purpose |
-|---|---|---|
-| `${odom_topic}` | `nav_msgs/Odometry` | Robot position and velocity |
-| `${battery_topic}` | `sensor_msgs/BatteryState` | Battery charge |
-| `${adapter_ns}/agv_position` | `vda5050_msgs/AgvPosition` | Position from bridge |
-| `${adapter_ns}/driving` | `std_msgs/Bool` | Motion state. `transient_local`, depth 1, to match the bridge's latched publisher — gets the current value immediately even if this node (re)started after the bridge |
-| `${adapter_ns}/paused` | `std_msgs/Bool` | Pause state. `transient_local`, depth 1 — same as `driving` above |
-| `${adapter_ns}/node_reached` | `vda5050_msgs/NodeState` | Traversal feedback |
-| `${adapter_ns}/edge_entered` | `vda5050_msgs/EdgeState` | Edge feedback |
-| `${adapter_ns}/edge_completed` | `vda5050_msgs/EdgeState` | Edge feedback |
-| `${adapter_ns}/action_state_feedback` | `vda5050_msgs/ActionState` | Action progress |
-
-### Published
+### Subscribed (robot driver → adapter)
 
 | Topic | Type | Purpose |
 |---|---|---|
-| `${adapter_ns}/order` | `vda5050_msgs/Order` | Validated order to robot driver |
-| `${adapter_ns}/action_execute` | `vda5050_msgs/Action` | External action request |
-| `${adapter_ns}/action_cancel` | `std_msgs/String` | pause / resume / cancel signal |
+| `~/agv_position` | `vda5050_msgs/AgvPosition` | Position |
+| `~/velocity` | `vda5050_msgs/Velocity` | Velocity |
+| `~/battery_state` | `vda5050_msgs/BatteryState` | Battery charge |
+| `~/safety_state` | `vda5050_msgs/SafetyState` | eStop / protective field state |
+| `~/driving` / `~/paused` | `std_msgs/Bool` | Motion state. `transient_local`, depth 1 — gets the retained value immediately even if this node (re)started after the bridge |
+| `~/operating_mode` | `std_msgs/String` | `AUTOMATIC`/`MANUAL`, from the bridge's manual-override detection |
+| `~/load` | `vda5050_msgs/Load` | Carried load, for `state.loads` |
+| `~/node_reached` / `~/edge_entered` / `~/edge_completed` | `vda5050_msgs/NodeState` / `EdgeState` | Traversal feedback |
+| `~/action_state_feedback` | `vda5050_msgs/ActionState` | Action progress |
+| `~/error` | `vda5050_msgs/Error` | Bridge/navigation errors |
+| `~/order_dropped` | `std_msgs/String` | Bridge gave up on an order outside `cancelOrder` — adapter clears its own tracking to match |
+| `~/distance_since_last_node` | `std_msgs/Float64` | Real driven distance, streamed live for `state.distanceSinceLastNode` |
+
+### Published (adapter → robot driver)
+
+| Topic | Type | Purpose |
+|---|---|---|
+| `~/order` | `vda5050_msgs/Order` | Validated order to robot driver. `transient_local` — a (re)starting bridge gets the current order immediately |
+| `~/action_execute` | `vda5050_msgs/Action` | External action request |
+| `~/action_cancel` | `std_msgs/String` | `pause:*` / `resume:*` / `cancel:*` signal |
 
 ## Configuration
 
@@ -130,11 +64,16 @@ Config file: [`config/vda5050_params.yaml`](config/vda5050_params.yaml)
 | Parameter | Default | Description |
 |---|---|---|
 | `mqtt.broker_url` | `tcp://localhost:1883` | MQTT broker address |
+| `mqtt.client_id` | `vda5050_client_adapter` | Must be unique per AGV connected to the broker — a duplicate disconnects the other one |
+| `mqtt.username` / `mqtt.password` | `""` | Broker auth, if required |
 | `vda5050.interface_name` | `TB3` | Must match fleet adapter |
 | `vda5050.manufacturer` | `ROBOTIS` | Must match fleet adapter |
 | `vda5050.serial_number` | `0001` | Must match fleet adapter |
-| `vda5050.position_publish_min_interval` | `1.0` | Min seconds between `state` publishes triggered by a fresh position update; keeps Master Control's view of the robot's position live instead of only advancing once per `state_publish_interval`. Matched to `visualization_interval` since `state` is far more expensive to build per publish |
+| `vda5050.state_publish_interval` | `30.0` | Timer interval (sec) for `state` publishes |
+| `vda5050.visualization_interval` | `1.0` | Timer interval (sec) for `visualization` publishes |
+| `vda5050.position_publish_min_interval` | `1.0` | Min seconds between extra `state` publishes triggered by a fresh position update |
 | `vda5050.hard_action_pause_timeout` | `30.0` | Max seconds a HARD-blocking action waits for another action to confirm it paused before it's failed instead of waiting forever |
+| `factsheet.type_specification.*`, `factsheet.physical_parameters.*`, `factsheet.supported_action_types` | — | AGV type, kinematics, load capacity, speed/accel/dimensions, and supported VDA5050 actions — published once as the retained `factsheet` message. See the yaml file for the full field list. |
 
 ## Build & Run
 
@@ -157,7 +96,7 @@ breaks offline/air-gapped builds.
 ## Testing
 
 ```bash
-# 115 unit tests (all pass)
+# 116 unit tests (all pass)
 colcon test --packages-select vda5050_client_adapter
 colcon test-result --verbose
 ```
@@ -165,7 +104,7 @@ colcon test-result --verbose
 | Suite | Tests | Coverage |
 |---|---|---|
 | `test_adapter_state_machine` | 4 | Mode transitions, confirmations, fault/shutdown, pending-action supersede |
-| `test_order_manager` | 31 | Accept, stitch, newBaseRequest, cancel, reject, zone_set_id clear, edge_entered ordering |
+| `test_order_manager` | 36 | Accept, stitch, newBaseRequest, cancel, reject, zone_set_id clear, edge_entered ordering, order replacement, stale-echo absorption |
 | `test_action_manager` | 30 | NONE/SOFT/HARD blocking, pause/resume/cancel, status transition guard, HARD-wait timeout |
 | `test_converters` | 46 | JSON round-trips, schema compliance, ROS↔internal |
 

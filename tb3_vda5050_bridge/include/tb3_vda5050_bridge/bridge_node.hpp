@@ -42,17 +42,7 @@
 namespace tb3_vda5050_bridge {
 
 /**
- * @brief Bridge between VDA5050 adapter (ROS2) and TurtleBot3 (Nav2).
- *
- * Converts VDA5050 orders into Nav2 navigation goals and publishes robot telemetry back
- * to the adapter. Manages order traversal, state transitions, and goal lifecycle.
- *
- * Key responsibilities:
- *  - Subscribe to adapter topics (order, actions, cancellations)
- *  - Publish robot state (position, velocity, battery, navigation events)
- *  - Manage Nav2 goal dispatch and result handling with token-based staleness guard
- *  - Track order progress and persist state across restarts
- *  - Handle AMCL pose confidence and odometry-based distance accumulation
+ * @brief Convert VDA5050 orders into Nav2 goals and report TB3 state to the adapter.
  */
 class BridgeNode : public rclcpp::Node
 {
@@ -159,7 +149,7 @@ private:
   void on_action_cancel(const std_msgs::msg::String::SharedPtr msg);
   // Process action (msg): handle initPosition, report success/failure, no-op unsupported types.
   void on_action_execute(const vda5050_msgs::msg::Action::SharedPtr msg);
-  // Send operator's x/y/theta (from action) to AMCL for initial pose; fails if order active.
+  // Send an initPosition action to AMCL when no Nav2 goal is active.
   void init_position(const vda5050_msgs::msg::Action& action);
 
   // Caps Nav2's speed at max_speed (m/s); max_speed < 0 lifts any previous cap.

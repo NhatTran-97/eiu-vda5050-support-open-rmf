@@ -22,7 +22,7 @@ std::string find_action_parameter(const vda5050::Action& action, const std::stri
   return "";
 }
 
-// Build unique error identity (error) from error_type + sorted error_references for dedup. Format: "errorType|key=value|..."
+// Build a stable identity from error type and sorted references.
 std::string error_identity(const vda5050::Error& error)
 {
   std::vector<std::pair<std::string, std::string>> refs;
@@ -232,7 +232,7 @@ void VDA5050Node::teardown_mqtt() {
 // ROS2 interface setup
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Create ROS2 publishers/subscribers for robot interfaces (order, actions, agv state, navigation feedback); set up timers.
+// Set up robot ROS interfaces and periodic timers.
 void VDA5050Node::setup_ros_interfaces() {
   // ── Publishers to robot ──────────────────────────────────────────────────
   // transient_local: the bridge always gets the latest order even if it subscribes late or restarts.
@@ -396,12 +396,11 @@ void VDA5050Node::on_order_message(const MqttMessage& msg) {
   }
 
   clear_errors_by_type("orderError");
-  // A freshly accepted order clears any lingering navigationError/noOrderToCancel from a prior order, since neither has another natural expiry point.
+  // Clear order-scoped errors after accepting a new order.
   clear_errors_by_type("navigationError");
   clear_errors_by_type("noOrderToCancel");
 
-  // A new accepted order resolves any cancelOrder still pending, since a cancel immediately
-  // followed by a replacement order would otherwise never see the !driving && !order_active state it's waiting for.
+  // Resolve a pending cancel superseded by this order.
   const auto superseded_cancel = state_machine_->take_pending_cancel();
   if (!superseded_cancel.empty()) {
     action_manager_->set_action_finished(
@@ -435,7 +434,7 @@ void VDA5050Node::on_instant_actions_message(const MqttMessage& msg) {
   RCLCPP_INFO(get_logger(), "InstantActions received: count=%zu",
               ia.actions.size());
 
-  // snapshot_mutex_ must not be held here: execute callbacks (e.g. stateRequest) re-acquire  it via publish_state()/build_state_snapshot(), which would deadlock.
+  // Execute callbacks without snapshot_mutex_; they may publish state.
   action_manager_->process_instant_actions(ia);
   sync_action_blocking();
 
@@ -479,7 +478,7 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
       action_manager_->set_action_finished(replaced_cancel, "Superseded by newer cancelOrder");
     }
     clear_errors_by_type("noOrderToCancel");
-    // Navigation control is unconditional: the driver must be told to stop regardless of whether any node/edge action happens to be active.
+    // Send navigation control independently of action state.
     on_action_cancel(action.action_id);
     action_manager_->cancel_all(action.action_id);
     order_manager_->cancel_order(order_id);
@@ -500,7 +499,6 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
     if (!replaced_pending.empty()) {
       action_manager_->set_action_finished(replaced_pending, "Superseded by newer startPause");
     }
-    // Navigation control is unconditional: the driver must be told to pause regardless of whether any node/edge action happens to be active.
     on_action_pause(action.action_id);
     action_manager_->pause_all(action.action_id);
     action_manager_->set_action_running(action.action_id);
@@ -519,7 +517,6 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
     if (!replaced_pending.empty()) {
       action_manager_->set_action_finished(replaced_pending, "Superseded by newer stopPause");
     }
-    // Navigation control is unconditional: the driver must be told to resume regardless of whether any node/edge action happens to be active.
     on_action_resume(action.action_id);
     action_manager_->resume_all(action.action_id);
     action_manager_->set_action_running(action.action_id);
@@ -541,7 +538,7 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
     return true;
   }
 
-  // Any other action type (e.g. "initPosition") is delegated to the robot driver: returning false makes the caller forward it via ~/action_execute.
+  // Delegate other action types to the robot driver.
   return false;
 }
 
@@ -559,7 +556,7 @@ void VDA5050Node::publish_state() {
   mqtt_client_->publish(make_topic("state"), j.dump(), 0, false);
 }
 
-// Publish connection state (conn_state) to MQTT connection topic with QoS 1 retained; always publishes if client exists.
+// Publish retained connection state to MQTT.
 void VDA5050Node::publish_connection(vda5050::ConnectionState conn_state) {
   vda5050::Connection conn;
   conn.header           = make_header("connection");
@@ -583,7 +580,7 @@ void VDA5050Node::publish_visualization() {
   mqtt_client_->publish(make_topic("visualization"), j.dump(), 0, false);
 }
 
-// Publish factsheet to MQTT factsheet topic with QoS 0 retained; called on MQTT connect for discovery by Master Control.
+// Publish the retained factsheet for master-control discovery.
 void VDA5050Node::publish_factsheet() 
 {
   if (!mqtt_client_ || !mqtt_client_->is_connected()) return;
@@ -978,7 +975,7 @@ void VDA5050Node::on_order_cancelled(const std::string& order_id)
 // ActionManager callbacks
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ActionManager callback: action (action) ready to execute. Try instant actions first, else publish to robot driver.
+// Execute a ready instant action or forward it to the robot driver.
 void VDA5050Node::on_action_execute(const vda5050::Action& action)
 {
   RCLCPP_INFO(get_logger(), "Execute action: type=%s id=%s",
@@ -1001,7 +998,7 @@ void VDA5050Node::on_action_pause(const std::string& action_id)
   action_cancel_pub_->publish(msg);
 }
 
-// ActionManager callback: resume action (action_id). Publish resume signal to robot driver via action_cancel topic.
+// Forward an action-resume signal to the robot driver.
 void VDA5050Node::on_action_resume(const std::string& action_id)
 {
   RCLCPP_INFO(get_logger(), "Resume action: %s", action_id.c_str());
@@ -1010,7 +1007,7 @@ void VDA5050Node::on_action_resume(const std::string& action_id)
   action_cancel_pub_->publish(msg);
 }
 
-// ActionManager callback: cancel action (action_id). Publish cancel signal to robot driver via action_cancel topic.
+// Forward an action-cancel signal to the robot driver.
 void VDA5050Node::on_action_cancel(const std::string& action_id)
 {
   RCLCPP_INFO(get_logger(), "Cancel action: %s", action_id.c_str());
@@ -1057,7 +1054,7 @@ void VDA5050Node::replace_adapter_error(const vda5050::Error& error)
   state_machine_->on_fatal_error_changed(has_fatal_error);
 }
 
-// Upsert driver error (error) into list (merge by identity, skip adapter-owned error types); recompute fatal status.
+// Merge driver errors by identity and update fatal status.
 void VDA5050Node::upsert_driver_error(const vda5050::Error& error)
 {
   bool has_fatal_error = false;
@@ -1168,7 +1165,7 @@ vda5050::State VDA5050Node::build_state_snapshot() const
 // Header factory
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Build VDA5050 header for message topic (topic): increment per-topic header_id, set timestamp/version/manufacturer/serial.
+// Build a VDA5050 header with the next per-topic ID.
 vda5050::Header VDA5050Node::make_header(const std::string& topic) const
  {
   std::lock_guard<std::mutex> lock(hdr_mutex_);

@@ -41,17 +41,7 @@ struct DispatchPlan {
 };
 
 /**
- * @brief Manages VDA5050 order state: traversal cursor, node/edge sequencing, and plan generation.
- *
- * Stores and updates the active order, tracks progress through nodes/edges, and generates
- * dispatch plans (navigate, wait, or complete). Handles order updates by merging new content
- * while protecting already-traversed nodes and dropping orphaned horizon entries.
- *
- * Key responsibilities:
- *  - Store order state and cursor position across dispatches
- *  - Validate and merge order updates by sequence_id
- *  - Generate dispatch plans: navigate to next node, wait for release, or complete
- *  - Track generation counter to invalidate stale callbacks
+ * @brief Track an order cursor, merge updates, and plan the next route step.
  */
 class OrderSession {
 public:

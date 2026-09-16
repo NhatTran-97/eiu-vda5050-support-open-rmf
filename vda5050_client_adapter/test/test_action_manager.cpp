@@ -1,18 +1,5 @@
 /**
- * @file test_action_manager.cpp
- * @brief Unit tests for vda5050_adapter::ActionManager.
- *
- * Coverage:
- *  - Order actions triggered by node/edge events
- *  - Instant actions dispatched immediately
- *  - NONE / SOFT / HARD blocking semantics
- *  - pause_all / resume_all (with exclude_id)
- *  - cancel_all (with exclude_id)
- *  - sync_order_actions (add new, remove stale, preserve active)
- *  - reset_for_new_order (keeps only running instant actions)
- *  - Edge actions cancelled when edge is left before completion
- *  - Feedback: set_action_running/finished/failed/paused
- *  - State queries: action_states, has_active_actions, is_hard_blocked, is_soft_blocked
+ * @brief Verify action triggers, blocking, feedback, and cancellation.
  */
 
 #include <gtest/gtest.h>

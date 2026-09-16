@@ -20,17 +20,7 @@ struct BridgeStatus {
 };
 
 /**
- * @brief Manages bridge mode transitions and driving/paused state derivation.
- *
- * Centralizes all state transitions (IDLE, DISPATCHING, NAVIGATING, WAITING_FOR_RELEASE,
- * PAUSED, FAULTED) and derives the driving/paused flags from the current mode to prevent
- * contradictory states. Intentionally narrow in scope: owns only mode transitions, not
- * order lifecycle or action blocking (delegated to OrderSession and other managers).
- *
- * Key responsibilities:
- *  - Manage 6-mode state machine (IDLE, DISPATCHING, NAVIGATING, WAITING_FOR_RELEASE, PAUSED, FAULTED)
- *  - Derive driving/paused flags from mode for publication
- *  - Guard against contradictory state combinations
+ * @brief Derive driving and paused status from bridge mode transitions.
  */
 class BridgeStateMachine {
 public:

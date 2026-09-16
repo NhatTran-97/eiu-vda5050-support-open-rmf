@@ -28,19 +28,8 @@ struct NodeReachedEvent
 };
 
 /**
- * @brief Manages VDA5050 order state: validation, stitching, base/horizon tracking, newBaseRequest.
- *
- * Validates incoming orders, manages order updates, tracks base (released, to-be-driven) and
- * horizon (unreleased, may change) segments, and signals when to request new base segments.
- * Handles stitch validation (update continuity), rejects stale orders, and fires callbacks
- * on state changes. Thread-safe via std::mutex.
- *
- * Key responsibilities:
- *  - Validate order acceptance per VDA5050 spec and internal invariants
- *  - Stitch order updates while protecting already-traversed nodes
- *  - Track base/horizon and emit newBaseRequest when base depletes below threshold
- *  - Report navigation events (node_reached, edge_entered, edge_completed)
- *  - Fire callbacks on order acceptance/cancellation and base request signals
+ * @brief Validate orders, stitch updates, and track released base and horizon.
+ * Request a new base when released route points run low.
  */
 class OrderManager
 {
@@ -170,8 +159,7 @@ private:
   std::vector<vda5050::Edge>  horizon_edges_;
   std::vector<vda5050::Edge>  active_edges_;  ///< Edges currently being traversed (entered but not completed)
 
-  // Node/edge ids the previously active order still knew about, snapshotted
-  // right before apply_order() clears it -- see is_stale_node/is_stale_edge.
+  // Replaced-order IDs used to recognize late navigation feedback.
   std::vector<std::string> stale_node_ids_;
   std::vector<std::string> stale_edge_ids_;
 

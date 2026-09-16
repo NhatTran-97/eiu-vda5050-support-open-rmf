@@ -798,10 +798,7 @@ struct adl_serializer<vda5050::MaxStringLens> {
   }
 };
 
-// NOTE: VDA5050 §9.4 uses dot-notation as literal JSON key names inside maxArrayLens,
-// e.g. the key is the string "order.nodes", NOT a nested object.
-// The VDA_TO_OPT / VDA_FROM_OPT macros stringify to #key, so we must use the exact
-// identifier that matches the desired JSON key — we write it manually here.
+// VDA5050 maxArrayLens uses literal dotted keys such as "order.nodes".
 template<>
 struct adl_serializer<vda5050::MaxArrayLens> {
   static void to_json(json& j, const vda5050::MaxArrayLens& m) {
