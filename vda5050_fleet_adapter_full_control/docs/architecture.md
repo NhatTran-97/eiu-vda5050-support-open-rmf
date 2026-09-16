@@ -4,22 +4,8 @@ Bridges Open-RMF to a VDA5050 fleet over MQTT. RMF sees a normal fleet
 adapter (`RobotCommandHandle`, `RobotUpdateHandle`); the robots see a
 normal VDA5050 master controller.
 
-## Features
-
-| Area | What it does |
-|---|---|
-| Multi-robot fleet | One process per fleet, one `Connector` state slot + one `RobotCommandHandle` per robot; rejects a duplicate manufacturer/serial pair at startup |
-| Task execution | `follow_new_path` (patrol/delivery/go_to_place), `dock` (parking/charging spots), `PerformAction` (arbitrary instant actions) |
-| Task capabilities | Advertised per fleet from config: patrol, delivery, clean, plus any named instant action (e.g. `dock`) |
-| Commission tracking | A robot is only offered new tasks while its VDA5050 state is fresh *and* has a usable pose — either going stale decommissions it |
-| Horizon release | Optional `honor_waypoint_timing`: releases route waypoints to the AGV only as their scheduled time approaches, instead of the whole order at once |
-| Operator interface | ROS services/param/topic per robot: pause, resume, speed-limit override, re-localize (`init_position`) |
-| Factsheet awareness | Reads the AGV's declared speed/array-length/order-interval limits and warns before exceeding them |
-| Stuck-order detection | Replans if an AGV never acknowledges a dispatched order's `orderId` within a timeout |
-| Config validation | Fails fast at startup on bad MQTT settings, duplicate identities, or a nav-graph robot missing from `vda5050.robots` |
-| Lane closures (no-go zones) | Subscribes to `/lane_closure_requests`; matching `fleet_name` calls `FleetUpdateHandle::close_lanes()` / `open_lanes()`, so RMF stops routing through those lanes fleet-wide |
-| Emergency stop (eStop) | Reads `safetyState.eStop`/`fieldViolation` from the AGV's VDA5050 state; a non-`NONE` value decommissions the robot immediately, same path as commission tracking |
-| Heterogeneous fleets | `EasyFullControl::FleetConfiguration` shares one `profile`/`limits` per fleet, so different robot types (footprint/kinematics) run as separate config files and separate fleet adapter processes, one RMF fleet name each — see [README.md](../README.md#multiple-robot-types-heterogeneous-fleets) |
+See [README.md § Features](../README.md#features) for the full features
+list — kept in one place to avoid the two drifting apart.
 
 ## System architecture
 
