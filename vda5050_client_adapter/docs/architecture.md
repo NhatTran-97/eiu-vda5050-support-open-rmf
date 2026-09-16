@@ -79,14 +79,17 @@ flowchart TB
         Node --> Action
         Node --> Json
         Node --> Ros
-        SM --> Order
-        SM --> Action
         Json --> Types
         Ros --> Types
         Order --> Types
         Action --> Types
     end
 ```
+
+`SM`, `Order`, and `Action` are siblings coordinated by `Node` — `AdapterStateMachine`
+does not call into `OrderManager`/`ActionManager` itself (no such reference exists in
+`adapter_state_machine.cpp`); `VDA5050Node` reads/drives all three independently
+(e.g. `take_pending_cancel()` on `SM` when `OrderManager` accepts a new order).
 
 ---
 
@@ -111,7 +114,14 @@ stateDiagram-v2
     ORDER_ACTIVE --> FAULTED: fatal error
     PAUSED --> FAULTED: fatal error
     FAULTED --> IDLE: fatal error cleared
+    [*] --> SHUTTING_DOWN: node shutdown requested (any state)
+    SHUTTING_DOWN --> [*]
 ```
+
+`recompute_mode_locked()` checks `shutting_down_` first, before every other
+flag — so `SHUTTING_DOWN` overrides whatever mode the adapter was in the
+moment `start_shutdown()` is called (node destructor), not just a mode
+reachable from a specific state.
 
 `AdapterStateMachine` is intentionally narrow:
 - It owns top-level adapter mode, MQTT connectivity, effective driving suppression, fatal-error mode, and built-in pause/resume/cancel confirmations.
