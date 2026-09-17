@@ -27,7 +27,7 @@ adapter + Nav2 stack and talks to that container over MQTT.
   <img src="assets/img/amr_software.png" alt="AMR software architecture" width="95%" />
 </p>
 
-<table width="100%" style="width:100%">
+<table width="100%" style="width:100%; table-layout:fixed">
 <tr><th width="30%">Property</th><th>Value</th></tr>
 <tr><td>Manufacturer</td><td><code>EIU-FABLAB</code></td></tr>
 <tr><td>Kinematics</td><td>Differential drive</td></tr>
@@ -50,7 +50,7 @@ adapter + Nav2 stack and talks to that container over MQTT.
   <img src="assets/img/turtlebot3.png" alt="TurtleBot3 Burger" width="30%" />
 </p>
 
-<table width="100%" style="width:100%">
+<table width="100%" style="width:100%; table-layout:fixed">
 <tr><th width="30%">Property</th><th>Value</th></tr>
 <tr><td>Manufacturer</td><td><code>ROBOTIS</code></td></tr>
 <tr><td>Kinematics</td><td>Differential drive</td></tr>
@@ -126,8 +126,8 @@ Multi-robot demo — two robots deconflicting via RMF
 
 ## Packages
 
-<table width="100%" style="width:100%">
-<tr><th>Package</th><th>Layer</th><th>Description</th></tr>
+<table width="100%" style="width:100%; table-layout:fixed">
+<tr><th width="22%">Package</th><th width="13%">Layer</th><th>Description</th></tr>
 <tr><td><code>eiu_fleet_ui</code></td><td>Dashboard</td><td style="text-align: justify">PySide6 + QML desktop app. Monitors robot status, dispatches/cancels tasks, draws no-go zones, and gives direct per-robot control (pause/resume/speed/re-localize). Supports multiple fleet adapters at once.</td></tr>
 <tr><td><code>vda5050_fleet_adapter_full_control</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>RobotCommandHandle</code>/<code>FleetUpdateHandle</code> (full control, not EasyFullControl) — sends a planned multi-waypoint route as one VDA5050 order. Different robot types (TB3/AMR) run as separate config files and processes.</td></tr>
 <tr><td><code>fleet_bringup</code></td><td>Ground-station bringup</td><td style="text-align: justify">One launch file for the whole ground-station side: <code>rmf_traffic_schedule</code>, <code>rmf_task_dispatcher</code>, the fleet adapter, mock dispenser/ingestor, and <code>eiu_fleet_ui</code> — all in one process group.</td></tr>
