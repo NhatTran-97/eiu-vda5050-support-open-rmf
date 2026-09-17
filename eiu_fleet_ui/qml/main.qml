@@ -32,6 +32,16 @@ ApplicationWindow {
     }
     property var robots: []
     property var tasks: []
+    // Waypoint names that are any robot's current underway-task destination.
+    readonly property var activeDestinations: {
+        var set = {}
+        for (var i = 0; i < tasks.length; i++) {
+            var t = tasks[i]
+            if (t.state === "underway" && t.destination)
+                set[t.destination] = true
+        }
+        return set
+    }
     // VDA5050 connection state by robot name.
     property var robotsOnline: ({})
     // VDA5050 telemetry by robot name.
@@ -39,6 +49,14 @@ ApplicationWindow {
     // Applied speed limit by robot name; zero means no limit.
     property var speedLimits: ({})
     readonly property string monoFontFamily: fontMono
+
+    // Shared by Fleet Robots, the map, and the telemetry panel -- pick one anywhere, all follow.
+    property string selectedRobotName: ""
+    function selectRobot(name) {
+        root.selectedRobotName = name
+        if (fleetAnalytics)
+            fleetAnalytics.selectedRobotName = name
+    }
 
     function countTasksByState(state) {
         var count = 0
@@ -61,6 +79,20 @@ ApplicationWindow {
         return total / displayRobots.length
     }
     readonly property real kpiHeight: Math.max(116, Math.min(142, width / 15))
+
+    // Ticks "last seen" text forward between backend telemetry updates.
+    property real nowTick: Date.now()
+    Timer { interval: 1000; running: true; repeat: true; onTriggered: root.nowTick = Date.now() }
+
+    function formatAgo(epochSec) {
+        if (!epochSec) return ""
+        var diff = Math.max(0, root.nowTick / 1000 - epochSec)
+        if (diff < 60) return Math.floor(diff) + "s ago"
+        if (diff < 3600) return Math.floor(diff / 60) + "m " + Math.floor(diff % 60) + "s ago"
+        if (diff < 86400) return Math.floor(diff / 3600) + "h " + Math.floor((diff % 3600) / 60) + "m ago"
+        return Math.floor(diff / 86400) + "d ago"
+    }
+
     function reloadRobots() { root.robots = JSON.parse(ros.robotsJson) }
     function reloadTasks()  { root.tasks = JSON.parse(ros.tasksJson) }
     function reloadRobotsOnline() { root.robotsOnline = JSON.parse(mqtt.robotsOnlineJson) }
@@ -135,40 +167,44 @@ ApplicationWindow {
     }
 
     // Feeds the alert badge, System Health card, and Needs Attention panel.
+    // `robot` (empty for fleet-wide items) lets the panel jump to that robot's controls.
     readonly property var attentionItems: {
         var items = []
         if (!ros.rmfOnline)
-            items.push({ severity: "critical", title: "RMF connection lost",
+            items.push({ severity: "critical", robot: "", title: "RMF connection lost",
                          detail: "Fleet traffic coordination unavailable" })
         if (!mqtt.connected)
-            items.push({ severity: "critical", title: "MQTT broker disconnected",
+            items.push({ severity: "critical", robot: "", title: "MQTT broker disconnected",
                          detail: "No VDA5050 telemetry from any robot" })
         if (ros.activeConflicts > 0)
-            items.push({ severity: "critical", title: ros.activeConflicts + " traffic conflict(s)",
+            items.push({ severity: "critical", robot: "", title: ros.activeConflicts + " traffic conflict(s)",
                          detail: "RMF is negotiating a route conflict" })
         if (ros.blockedLanes > 0)
-            items.push({ severity: "warning", title: ros.blockedLanes + " lane(s) blocked",
+            items.push({ severity: "warning", robot: "", title: ros.blockedLanes + " lane(s) blocked",
                          detail: "A no-go zone is closing part of the map" })
         for (var i = 0; i < root.displayRobots.length; i++) {
             var r = root.displayRobots[i]
             var t = root.telemetryFor(r.name)
             if (!root.robotsOnline[r.name])
-                items.push({ severity: "critical", title: r.name + " VDA5050 offline",
-                             detail: "No recent telemetry from the robot" })
+                // One robot down degrades the fleet; losing the last one is critical.
+                items.push({ severity: root.countRobotsOnline() === 0 ? "critical" : "warning",
+                             robot: r.name, title: r.name + " VDA5050 offline",
+                             detail: (t && t.last_rx) ? "No VDA5050 state received · Last seen " + root.formatAgo(t.last_rx)
+                                     : "No VDA5050 state ever received" })
             if (t && t.safety && t.safety.triggered)
-                items.push({ severity: "critical", title: r.name + " emergency stop",
+                items.push({ severity: "critical", robot: r.name, title: r.name + " emergency stop",
                              detail: (t.safety.e_stop && t.safety.e_stop !== "NONE")
                                      ? t.safety.e_stop : "Field violation" })
             if (t && t.fatal_error)
-                items.push({ severity: "critical", title: r.name + " fatal error", detail: t.fatal_error })
+                items.push({ severity: "critical", robot: r.name, title: r.name + " fatal error", detail: t.fatal_error })
             if (Number(r.battery) > 0 && Number(r.battery) < 20)
-                items.push({ severity: "warning", title: r.name + " battery low",
+                items.push({ severity: "warning", robot: r.name, title: r.name + " battery low",
                              detail: Number(r.battery).toFixed(0) + "% remaining" })
             if (t && t.position_initialized === false)
-                items.push({ severity: "warning", title: r.name + " not localized",
+                items.push({ severity: "warning", robot: r.name, title: r.name + " not localized",
                              detail: "No usable pose for route planning" })
             if (t && t.stale === true)
-                items.push({ severity: "warning", title: r.name + " telemetry stale",
+                items.push({ severity: "warning", robot: r.name, title: r.name + " telemetry stale",
                              detail: "No recent VDA5050 state update" })
         }
         var failedTasks = 0
@@ -176,7 +212,7 @@ ApplicationWindow {
             if (root.tasks[j].state === "failed") failedTasks++
         }
         if (failedTasks > 0)
-            items.push({ severity: "warning", title: failedTasks + " task(s) failed",
+            items.push({ severity: "warning", robot: "", title: failedTasks + " task(s) failed",
                          detail: "See Recent Tasks for details" })
         return items
     }
@@ -210,12 +246,15 @@ ApplicationWindow {
     readonly property string systemHealthDetail: {
         if (systemHealthLevel === "OFFLINE") return "No connection to fleet"
         if (systemHealthLevel === "CRITICAL") {
-            var c = root.firstAttentionOfSeverity("critical")
-            return c ? c.title : "Critical issue detected"
+            var crit = root.attentionItems.filter(function(i) { return i.severity === "critical" })
+            if (crit.length === 0) return "Critical issue detected"
+            // A single item's own title is clearer; several get a count -- see Needs Attention for detail.
+            return crit.length === 1 ? crit[0].title : crit.length + " critical issues — see Needs Attention"
         }
         if (systemHealthLevel === "DEGRADED") {
-            var w = root.firstAttentionOfSeverity("warning")
-            return w ? w.title : "Degraded"
+            var warn = root.attentionItems.filter(function(i) { return i.severity === "warning" })
+            if (warn.length === 0) return "Degraded"
+            return warn.length === 1 ? warn[0].title : warn.length + " warnings — see Needs Attention"
         }
         return "All services nominal"
     }
@@ -272,6 +311,9 @@ ApplicationWindow {
         reloadRobotsOnline()
         reloadTelemetry()
         reloadSpeedLimits()
+        // Children complete first, so FleetAnalytics has already auto-selected a robot.
+        if (fleetAnalytics.selectedRobotName)
+            root.selectedRobotName = fleetAnalytics.selectedRobotName
     }
 
     Connections {
@@ -905,6 +947,14 @@ ApplicationWindow {
                                             robotsOnline: root.robotsOnline
                                             waypoints: root.waypoints
                                             telemetry: root.telemetry
+                                            nowTick: root.nowTick
+                                        }
+                                        // Mirror FleetAnalytics's own combo-box/auto-select choice upward.
+                                        Connections {
+                                            target: fleetAnalytics
+                                            function onSelectedRobotNameChanged() {
+                                                root.selectedRobotName = fleetAnalytics.selectedRobotName
+                                            }
                                         }
                                     }
                                 }
@@ -945,6 +995,28 @@ ApplicationWindow {
                                 property: "plannedDest"
                                 value: ros.plannedDest
                                 when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
+                                property: "activeDestinations"
+                                value: root.activeDestinations
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
+                                property: "robotsOnline"
+                                value: root.robotsOnline
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Binding {
+                                target: mapLoader.item
+                                property: "selectedRobotName"
+                                value: root.selectedRobotName
+                                when: mapLoader.status === Loader.Ready
+                            }
+                            Connections {
+                                target: mapLoader.item
+                                function onRobotPicked(name) { root.selectRobot(name) }
                             }
                             Binding {
                                 target: mapLoader.item
@@ -1052,8 +1124,28 @@ ApplicationWindow {
                                         model: root.attentionItems
                                         ScrollIndicator.vertical: ScrollIndicator { }
                                         delegate: Item {
+                                            id: attnRow
                                             width: ListView.view.width
                                             height: 50
+                                            // Robot-specific items can be focused (row body) or diagnosed (chevron).
+                                            readonly property bool clickable: modelData.robot !== ""
+
+                                            Rectangle {
+                                                anchors.fill: parent
+                                                radius: 8
+                                                color: (attnRow.clickable && attnHover.hovered) ? C.surfaceAlt : "transparent"
+                                                Behavior on color { ColorAnimation { duration: 150 } }
+                                            }
+                                            HoverHandler { id: attnHover; enabled: attnRow.clickable }
+
+                                            // Declared first so the chevron's own MouseArea below sits on top.
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                enabled: attnRow.clickable
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: root.selectRobot(modelData.robot)
+                                            }
+
                                             RowLayout {
                                                 anchors.fill: parent
                                                 anchors.leftMargin: 17
@@ -1085,6 +1177,31 @@ ApplicationWindow {
                                                         Layout.fillWidth: true
                                                     }
                                                 }
+                                                // Separate hit target: opens diagnostics instead of just focusing.
+                                                Item {
+                                                    visible: attnRow.clickable
+                                                    Layout.preferredWidth: 26
+                                                    Layout.preferredHeight: 26
+                                                    Layout.alignment: Qt.AlignVCenter
+
+                                                    Text {
+                                                        anchors.centerIn: parent
+                                                        text: "›"
+                                                        color: chevronHover.hovered ? C.text : C.textDim
+                                                        font.pixelSize: 18
+                                                        Behavior on color { ColorAnimation { duration: 150 } }
+                                                    }
+                                                    HoverHandler { id: chevronHover }
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            controlDialog.robotName = modelData.robot
+                                                            controlDialog.currentSpeedLimit = root.speedLimits[modelData.robot] || 0
+                                                            controlDialog.open()
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1114,7 +1231,7 @@ ApplicationWindow {
                                             anchors.leftMargin: 17
                                             anchors.rightMargin: 17
                                             Text {
-                                                text: "ACTIVE ROBOTS"
+                                                text: "FLEET ROBOTS"
                                                 color: C.text
                                                 font.pixelSize: 13 * fleetPanel.contentScale
                                                 font.bold: true
@@ -1170,9 +1287,22 @@ ApplicationWindow {
                                             delegate: Rectangle {
                                                 id: robotRow
                                                 width: ListView.view.width
-                                                height: 110 * fleetPanel.contentScale
+                                                // How many lines a row needs varies (task/warnings/freshness
+                                                // are each conditional) -- size to content, not a fixed guess.
+                                                height: Math.max(72 * fleetPanel.contentScale,
+                                                                 nameColumn.implicitHeight + 20 * fleetPanel.contentScale)
                                                 radius: 10
-                                                color: index % 2 === 0 ? C.surfaceAlt : "transparent"
+                                                readonly property bool selected: modelData.name === root.selectedRobotName
+                                                color: selected ? Qt.rgba(0.125, 0.89, 0.94, 0.10)
+                                                       : (index % 2 === 0 ? C.surfaceAlt : "transparent")
+                                                border.color: C.cyanBright
+                                                border.width: selected ? 1.5 : 0
+
+                                                // Shared with the map and the telemetry panel.
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    onClicked: root.selectRobot(modelData.name)
+                                                }
 
                                                 // Latest VDA5050 telemetry for this robot.
                                                 readonly property var tele: root.telemetryFor(modelData.name)
@@ -1188,6 +1318,10 @@ ApplicationWindow {
                                                 // Warn when the adapter has no pose usable for route planning.
                                                 readonly property bool notLocalized: tele && tele.position_initialized === false
                                                 readonly property bool stale: tele && tele.stale === true
+                                                readonly property string lastSeenText: {
+                                                    var _ = root.nowTick
+                                                    return (tele && tele.last_rx) ? root.formatAgo(tele.last_rx) : ""
+                                                }
                                                 // Robot is under manual control through twist_mux.
                                                 readonly property bool manualMode: tele && tele.operating_mode === "MANUAL"
 
@@ -1215,6 +1349,8 @@ ApplicationWindow {
                                                     anchors.fill: parent
                                                     anchors.leftMargin: 10
                                                     anchors.rightMargin: 10
+                                                    anchors.topMargin: 10 * fleetPanel.contentScale
+                                                    anchors.bottomMargin: 10 * fleetPanel.contentScale
                                                     spacing: 10
 
                                                     Rectangle {
@@ -1244,16 +1380,25 @@ ApplicationWindow {
                                                         }
                                                     }
                                                     ColumnLayout {
+                                                        id: nameColumn
                                                         Layout.fillWidth: true
                                                         spacing: 3
                                                         Text { text: modelData.name; color: C.text; font.pixelSize: 22 * fleetPanel.contentScale; font.bold: true; elide: Text.ElideRight; Layout.fillWidth: true }
                                                         Text {
                                                             text: modelData.fleet + "  ·  " + modelData.level
-                                                                  + (root.robotsOnline[modelData.name] ? "" : "  ·  VDA5050 offline")
                                                             color: root.robotsOnline[modelData.name] ? C.textDim : C.err
                                                             font.family: root.monoFontFamily
                                                             font.pixelSize: 16 * fleetPanel.contentScale
                                                             elide: Text.ElideRight; Layout.fillWidth: true
+                                                        }
+                                                        FreshnessTag {
+                                                            Layout.fillWidth: true
+                                                            visible: !!robotRow.tele
+                                                            online: !!root.robotsOnline[modelData.name]
+                                                            hasData: !!robotRow.tele
+                                                            lastRx: robotRow.tele ? Number(robotRow.tele.last_rx || 0) : 0
+                                                            nowTick: root.nowTick
+                                                            fontSize: Math.max(11, 13 * fleetPanel.contentScale)
                                                         }
                                                         // Show speed, localization, and safety indicators.
                                                         Text {
@@ -1288,9 +1433,23 @@ ApplicationWindow {
                                                               : "—%"
                                                         color: !modelData.hasBattery ? C.textDim
                                                                : (Number(modelData.battery) < 20 ? C.err : C.success)
+                                                        // Last-known value, not live -- dim it while disconnected.
+                                                        opacity: root.robotsOnline[modelData.name] ? 1.0 : 0.5
                                                         font.family: root.monoFontFamily
                                                         font.pixelSize: 20 * fleetPanel.contentScale
                                                         font.bold: true
+
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            visible: !root.robotsOnline[modelData.name] && modelData.hasBattery
+                                                            cursorShape: Qt.WhatsThisCursor
+                                                            ToolTip.visible: containsMouse
+                                                            ToolTip.delay: 400
+                                                            ToolTip.text: "Last reported "
+                                                                          + Number(modelData.battery).toFixed(0) + "%"
+                                                                          + (robotRow.lastSeenText ? " · " + robotRow.lastSeenText : "")
+                                                        }
                                                     }
                                                     ColumnLayout {
                                                         id: statusBlock
@@ -1302,12 +1461,15 @@ ApplicationWindow {
                                                             Layout.preferredHeight: 40 * fleetPanel.contentScale
                                                             radius: 12 * fleetPanel.contentScale
                                                             color: "transparent"
-                                                            border.color: root.statusColor(modelData.status)
+                                                            // A live RMF status is meaningless once the robot itself is unreachable.
+                                                            border.color: root.robotsOnline[modelData.name]
+                                                                          ? root.statusColor(modelData.status) : C.err
                                                             border.width: 1
                                                             Text {
                                                                 anchors.centerIn: parent
-                                                                text: modelData.status
-                                                                color: root.statusColor(modelData.status)
+                                                                text: root.robotsOnline[modelData.name] ? modelData.status : "OFFLINE"
+                                                                color: root.robotsOnline[modelData.name]
+                                                                       ? root.statusColor(modelData.status) : C.err
                                                                 font.family: root.monoFontFamily
                                                                 font.pixelSize: 15 * fleetPanel.contentScale
                                                                 font.bold: true

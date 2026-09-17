@@ -2,20 +2,22 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// Control a robot's pause state, speed limit, and position.
-Dialog {
+
+Popup {
     id: dlg
 
     property string robotName: ""
     // Keep the status bound to live robot telemetry.
     readonly property var tele: root.telemetryFor(robotName)
+    readonly property bool online: !!root.robotsOnline[robotName]
+    // VDA5050 offline means every command below would silently go nowhere.
+    readonly property bool controlsEnabled: online
     property real currentSpeedLimit: 0
 
     property string lastAction: ""
     property bool lastOk: true
     property string lastMessage: ""
 
-    // Select which field receives a point picked on the map.
     property string pickTarget: ""
 
     function beginPick(target) {
@@ -38,6 +40,14 @@ Dialog {
             goToCombo.currentIndex = idx
     }
 
+    function closeDrawer() {
+        if (mapLoader.item) {
+            mapLoader.item.clearPickedPose()
+            mapLoader.item.clearPickedWaypoint()
+        }
+        dlg.close()
+    }
+
     Connections {
         target: mapLoader.item
         function onPosePicked(x, y, yaw) {
@@ -56,69 +66,20 @@ Dialog {
         }
     }
 
-    // Preserve dialog size and position between openings.
-    property real userWidth: 380
-    property real userHeight: 0
-    readonly property real minWidth: 320
-    readonly property real minHeight: 360
-
-    // Scale dialog content with its size.
-    readonly property real uiScale: Math.max(0.82, Math.min(1.3, width / 380))
-    function scaled(px) { return Math.round(px * uiScale) }
-
-    modal: true
-    width: userWidth
-    height: userHeight > 0 ? userHeight : implicitHeight
+    parent: Overlay.overlay
+    width: 380
+    height: parent ? parent.height : 600
+    x: parent ? parent.width - width : 0
+    y: 0
     clip: true
     padding: 0
+    modal: false
+    focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     background: Rectangle {
-        color: C.surface; radius: 16
-        border.color: C.border; border.width: 1
-
-        // Drag the bottom-right corner to resize.
-        Item {
-            id: resizeGrip
-            width: 22; height: 22
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-
-            Canvas {
-                anchors.fill: parent
-                onPaint: {
-                    var ctx = getContext("2d")
-                    ctx.strokeStyle = C.textDim
-                    ctx.lineWidth = 1.5
-                    for (var i = 1; i <= 3; i++) {
-                        ctx.beginPath()
-                        ctx.moveTo(width - i * 6, height - 3)
-                        ctx.lineTo(width - 3, height - i * 6)
-                        ctx.stroke()
-                    }
-                }
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.SizeFDiagCursor
-                property real pressX: 0
-                property real pressY: 0
-                property real startW: 0
-                property real startH: 0
-                onPressed: (mouse) => {
-                    pressX = mouse.x; pressY = mouse.y
-                    startW = dlg.userWidth
-                    startH = dlg.userHeight > 0 ? dlg.userHeight : dlg.height
-                }
-                onPositionChanged: (mouse) => {
-                    dlg.userWidth = Math.max(dlg.minWidth,
-                        Math.min(root.width - dlg.x - 20, startW + (mouse.x - pressX)))
-                    dlg.userHeight = Math.max(dlg.minHeight,
-                        Math.min(root.height - dlg.y - 20, startH + (mouse.y - pressY)))
-                }
-            }
-        }
+        color: C.surface
+        Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: C.border }
     }
 
     Connections {
@@ -146,75 +107,185 @@ Dialog {
         speedField.text = currentSpeedLimit > 0 ? currentSpeedLimit.toFixed(2) : ""
     }
 
-    contentItem: ColumnLayout {
-        spacing: 14
+    // Re-localizing overrides the robot's believed pose -- confirm before sending it.
+    Popup {
+        id: confirmPopup
+        modal: true
+        focus: true
+        parent: Overlay.overlay
+        x: (dlg.parent.width - width) / 2
+        y: (dlg.parent.height - height) / 2
+        width: 300
+        padding: 18
+        property var onConfirm: null
 
-        Text {
-            id: titleText
-            Layout.fillWidth: true
-            Layout.topMargin: 18; Layout.leftMargin: 18; Layout.rightMargin: 18
-            text: "ROBOT CONTROL — " + dlg.robotName
-            font.pixelSize: dlg.scaled(16); font.bold: true; color: C.text
-            horizontalAlignment: Text.AlignHCenter
-            elide: Text.ElideRight
+        background: Rectangle { color: C.surfaceRaised; radius: 14; border.color: C.border; border.width: 1 }
 
-            // Drag the title bar to move the dialog.
-            MouseArea {
-                anchors.fill: parent
-                anchors.margins: -10
-                cursorShape: Qt.SizeAllCursor
-                property real pressX: 0
-                property real pressY: 0
-                onPressed: (mouse) => { pressX = mouse.x; pressY = mouse.y }
-                onPositionChanged: (mouse) => {
-                    dlg.x += mouse.x - pressX
-                    dlg.y += mouse.y - pressY
+        contentItem: ColumnLayout {
+            spacing: 14
+            Text {
+                text: "Re-localize " + dlg.robotName + " to (" + xField.text + ", " + yField.text + ", " + yawField.text + ")?"
+                color: C.text; font.pixelSize: 14; font.bold: true
+                wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            Text {
+                text: "This overrides its current believed pose immediately."
+                color: C.textDim; font.pixelSize: 12
+                wrapMode: Text.WordWrap; Layout.fillWidth: true
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+                Button {
+                    Layout.fillWidth: true
+                    text: "CANCEL"
+                    implicitHeight: 38
+                    contentItem: Text { text: parent.text; color: C.textDim; font.pixelSize: 13; font.bold: true
+                                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    onClicked: confirmPopup.close()
+                }
+                Button {
+                    Layout.fillWidth: true
+                    text: "CONFIRM"
+                    implicitHeight: 38
+                    contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 13; font.bold: true
+                                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { radius: 10; color: parent.down ? C.accentDark : C.err }
+                    onClicked: { if (confirmPopup.onConfirm) confirmPopup.onConfirm(); confirmPopup.close() }
                 }
             }
         }
+    }
 
-        Text {
-            Layout.fillWidth: true
-            Layout.leftMargin: 18; Layout.rightMargin: 18
-            text: dlg.tele
-                  ? (dlg.tele.paused ? "Paused by operator" : (dlg.tele.driving ? "Driving" : "Idle"))
-                    + (dlg.tele.safety.triggered ? "  ⚠ " + dlg.tele.safety.e_stop : "")
-                  : "No telemetry yet"
-            font.pixelSize: dlg.scaled(11)
-            color: (dlg.tele && dlg.tele.safety.triggered) ? C.err : C.textDim
-            horizontalAlignment: Text.AlignHCenter
-        }
+    contentItem: ColumnLayout {
+        spacing: 22
 
-        // Pause or resume the robot.
         RowLayout {
             Layout.fillWidth: true
-            Layout.leftMargin: 18; Layout.rightMargin: 18
-            spacing: 10
-
-            Button {
+            Layout.topMargin: 16; Layout.leftMargin: 18; Layout.rightMargin: 10
+            Text {
                 Layout.fillWidth: true
-                implicitHeight: dlg.scaled(38)
-                text: (dlg.tele && dlg.tele.paused) ? "PAUSED" : "PAUSE"
-                enabled: !dlg.tele || !dlg.tele.paused
-                contentItem: Text { text: parent.text; color: C.text; font.pixelSize: dlg.scaled(12); font.bold: true
-                                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                                     elide: Text.ElideRight }
-                background: Rectangle { radius: 10; color: parent.down ? C.border : C.surfaceAlt
-                                         border.color: C.border; border.width: 1
-                                         opacity: parent.enabled ? 1.0 : 0.5 }
-                onClicked: control.pauseRobot(dlg.robotName)
+                text: "ROBOT CONTROL"
+                font.pixelSize: 13; font.bold: true; font.letterSpacing: 0.8; color: C.textDim
             }
             Button {
+                Layout.preferredWidth: 30; Layout.preferredHeight: 30
+                text: "×"
+                contentItem: Text { text: parent.text; color: C.textDim; font.pixelSize: 20
+                                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { radius: 8; color: parent.down ? C.border : (parent.hovered ? C.surfaceAlt : "transparent") }
+                onClicked: dlg.closeDrawer()
+            }
+        }
+
+        // Status first -- controls below would silently no-op if unreachable.
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            spacing: 8
+
+            RowLayout {
                 Layout.fillWidth: true
-                implicitHeight: dlg.scaled(38)
-                text: (dlg.tele && dlg.tele.paused) ? "RESUME" : "RESUMED"
-                enabled: dlg.tele && dlg.tele.paused
-                contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: dlg.scaled(12); font.bold: true
-                                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                                     elide: Text.ElideRight }
-                background: Rectangle { radius: 10; color: parent.down ? C.accentDark : C.accent
-                                         opacity: parent.enabled ? 1.0 : 0.5 }
-                onClicked: control.resumeRobot(dlg.robotName)
+                spacing: 10
+                Text {
+                    Layout.fillWidth: true
+                    text: dlg.robotName
+                    font.pixelSize: 23; font.bold: true; color: C.text
+                    elide: Text.ElideRight
+                }
+                Rectangle {
+                    Layout.preferredWidth: statusPill.implicitWidth + 18
+                    Layout.preferredHeight: 24
+                    radius: 12
+                    color: "transparent"
+                    border.color: dlg.online ? C.success : C.err
+                    border.width: 1
+                    Text {
+                        id: statusPill
+                        anchors.centerIn: parent
+                        text: dlg.online ? "ONLINE" : "OFFLINE"
+                        color: dlg.online ? C.success : C.err
+                        font.pixelSize: 12; font.bold: true
+                    }
+                }
+            }
+
+            FreshnessTag {
+                Layout.fillWidth: true
+                online: dlg.online
+                hasData: !!dlg.tele
+                lastRx: dlg.tele ? Number(dlg.tele.last_rx || 0) : 0
+                nowTick: root.nowTick
+                fontSize: 12
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: dlg.online
+                text: dlg.tele
+                      ? (dlg.tele.paused ? "Paused by operator" : (dlg.tele.driving ? "Driving" : "Idle"))
+                        + (dlg.tele.safety.triggered ? "  ⚠ " + dlg.tele.safety.e_stop : "")
+                        + (dlg.tele.battery_soc != null ? "  ·  " + (dlg.tele.battery_soc * 100).toFixed(0) + "%" : "")
+                      : ""
+                font.pixelSize: 12
+                color: (dlg.tele && dlg.tele.safety.triggered) ? C.err : C.textDim
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: !dlg.controlsEnabled
+                text: "⚠ Controls unavailable while robot is offline"
+                color: C.warn
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+            }
+        }
+
+        Rectangle { Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                    Layout.preferredHeight: 1; color: C.border; opacity: 0.6 }
+
+        // Pause or resume the robot.
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            spacing: 6
+            enabled: dlg.controlsEnabled
+            opacity: dlg.controlsEnabled ? 1.0 : 0.65
+
+            Text { text: "MOTION CONTROL"; font.pixelSize: 12; font.bold: true
+                   font.letterSpacing: 0.8; color: C.textDim
+                   elide: Text.ElideRight; Layout.fillWidth: true }
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 10
+
+                Button {
+                    Layout.fillWidth: true
+                    implicitHeight: 40
+                    text: (dlg.tele && dlg.tele.paused) ? "PAUSED" : "PAUSE"
+                    enabled: !dlg.tele || !dlg.tele.paused
+                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 14; font.bold: true
+                                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                         elide: Text.ElideRight }
+                    background: Rectangle { radius: 10; color: parent.down ? C.border : C.surfaceAlt
+                                             border.color: C.border; border.width: 1
+                                             opacity: parent.enabled ? 1.0 : 0.65 }
+                    onClicked: control.pauseRobot(dlg.robotName)
+                }
+                Button {
+                    Layout.fillWidth: true
+                    implicitHeight: 40
+                    text: (dlg.tele && dlg.tele.paused) ? "RESUME" : "RESUMED"
+                    enabled: dlg.tele && dlg.tele.paused
+                    contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 14; font.bold: true
+                                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                         elide: Text.ElideRight }
+                    background: Rectangle { radius: 10; color: parent.down ? C.accentDark : C.accent
+                                             opacity: parent.enabled ? 1.0 : 0.65 }
+                    onClicked: control.resumeRobot(dlg.robotName)
+                }
             }
         }
 
@@ -222,9 +293,14 @@ Dialog {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
-            spacing: 4
-            Text { text: "SPEED LIMIT (m/s, blank = no cap)"; font.pixelSize: dlg.scaled(9); font.bold: true
-                   font.letterSpacing: 1.0; color: C.textDim
+            spacing: 6
+            enabled: dlg.controlsEnabled
+            opacity: dlg.controlsEnabled ? 1.0 : 0.65
+
+            Text { text: "SPEED LIMIT"; font.pixelSize: 12; font.bold: true
+                   font.letterSpacing: 0.8; color: C.textDim
+                   elide: Text.ElideRight; Layout.fillWidth: true }
+            Text { text: "Maximum speed (m/s, blank = no cap)"; font.pixelSize: 11; color: C.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true
@@ -232,20 +308,21 @@ Dialog {
                 TextField {
                     id: speedField
                     Layout.fillWidth: true
+                    Layout.preferredHeight: 40
                     placeholderText: "e.g. 0.30"
                     placeholderTextColor: C.placeholderText
                     validator: DoubleValidator { bottom: 0; decimals: 2; notation: DoubleValidator.StandardNotation }
                     color: C.text
-                    font.pixelSize: dlg.scaled(13)
+                    font.pixelSize: 14
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
                 }
                 Button {
                     text: "APPLY"
-                    implicitHeight: dlg.scaled(38)
-                    leftPadding: dlg.scaled(18); rightPadding: dlg.scaled(18)
-                    contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: dlg.scaled(12); font.bold: true
+                    implicitHeight: 40
+                    leftPadding: 18; rightPadding: 18
+                    contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 14; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                     background: Rectangle { radius: 10; color: parent.down ? C.accentDark : C.accent }
                     onClicked: control.setSpeedLimit(dlg.robotName, speedField.text === "" ? 0.0 : parseFloat(speedField.text))
@@ -257,36 +334,48 @@ Dialog {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
-            spacing: 4
-            Text { text: "RE-LOCALIZE (x, y, yaw rad — RMF frame)"; font.pixelSize: dlg.scaled(9); font.bold: true
-                   font.letterSpacing: 1.0; color: C.textDim
+            spacing: 6
+            enabled: dlg.controlsEnabled
+            opacity: dlg.controlsEnabled ? 1.0 : 0.65
+
+            Text { text: "LOCALIZATION"; font.pixelSize: 12; font.bold: true
+                   font.letterSpacing: 0.8; color: C.textDim
+                   elide: Text.ElideRight; Layout.fillWidth: true }
+            Text { text: "Set the robot's believed pose (RMF frame)"; font.pixelSize: 11; color: C.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 6
+                Text { Layout.fillWidth: true; text: "X"; font.pixelSize: 10; color: C.textDim; horizontalAlignment: Text.AlignHCenter }
+                Text { Layout.fillWidth: true; text: "Y"; font.pixelSize: 10; color: C.textDim; horizontalAlignment: Text.AlignHCenter }
+                Text { Layout.fillWidth: true; text: "YAW"; font.pixelSize: 10; color: C.textDim; horizontalAlignment: Text.AlignHCenter }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 6
                 TextField {
-                    id: xField; Layout.fillWidth: true; placeholderText: "x"
+                    id: xField; Layout.fillWidth: true; Layout.preferredHeight: 40; placeholderText: "x"
                     placeholderTextColor: C.placeholderText
                     validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                    color: C.text; font.pixelSize: dlg.scaled(13)
+                    color: C.text; font.pixelSize: 14
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
                 }
                 TextField {
-                    id: yField; Layout.fillWidth: true; placeholderText: "y"
+                    id: yField; Layout.fillWidth: true; Layout.preferredHeight: 40; placeholderText: "y"
                     placeholderTextColor: C.placeholderText
                     validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                    color: C.text; font.pixelSize: dlg.scaled(13)
+                    color: C.text; font.pixelSize: 14
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
                 }
                 TextField {
-                    id: yawField; Layout.fillWidth: true; placeholderText: "yaw"
+                    id: yawField; Layout.fillWidth: true; Layout.preferredHeight: 40; placeholderText: "yaw"
                     placeholderTextColor: C.placeholderText
                     validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                    color: C.text; font.pixelSize: dlg.scaled(13)
+                    color: C.text; font.pixelSize: 14
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                     background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
@@ -298,8 +387,8 @@ Dialog {
                 Button {
                     Layout.fillWidth: true
                     text: dlg.pickTarget === "pose" ? "CLICK MAP…" : "PICK ON MAP"
-                    implicitHeight: dlg.scaled(36)
-                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: dlg.scaled(12); font.bold: true
+                    implicitHeight: 38
+                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 13; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                          elide: Text.ElideRight }
                     background: Rectangle { radius: 10
@@ -312,18 +401,21 @@ Dialog {
                 Button {
                     Layout.fillWidth: true
                     text: "SET POSITION"
-                    implicitHeight: dlg.scaled(36)
+                    implicitHeight: 38
                     enabled: xField.text !== "" && yField.text !== "" && yawField.text !== ""
-                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: dlg.scaled(12); font.bold: true
+                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 13; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                          elide: Text.ElideRight }
                     background: Rectangle { radius: 10; color: parent.down ? C.border : C.surfaceAlt
                                              border.color: C.border; border.width: 1
-                                             opacity: parent.enabled ? 1.0 : 0.5 }
+                                             opacity: parent.enabled ? 1.0 : 0.65 }
                     onClicked: {
-                        control.initPosition(dlg.robotName, parseFloat(xField.text),
-                                              parseFloat(yField.text), parseFloat(yawField.text))
-                        if (mapLoader.item) mapLoader.item.clearPickedPose()
+                        confirmPopup.onConfirm = function() {
+                            control.initPosition(dlg.robotName, parseFloat(xField.text),
+                                                  parseFloat(yField.text), parseFloat(yawField.text))
+                            if (mapLoader.item) mapLoader.item.clearPickedPose()
+                        }
+                        confirmPopup.open()
                     }
                 }
             }
@@ -333,54 +425,57 @@ Dialog {
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
-            spacing: 4
-            Text { text: "GO TO WAYPOINT"; font.pixelSize: dlg.scaled(9); font.bold: true
-                   font.letterSpacing: 1.0; color: C.textDim
+            spacing: 6
+            enabled: dlg.controlsEnabled
+            opacity: dlg.controlsEnabled ? 1.0 : 0.65
+
+            Text { text: "NAVIGATION"; font.pixelSize: 12; font.bold: true
+                   font.letterSpacing: 0.8; color: C.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
-            RowLayout {
+            Text { text: "Destination"; font.pixelSize: 11; color: C.textDim
+                   elide: Text.ElideRight; Layout.fillWidth: true }
+            ComboBox {
+                id: goToCombo
                 Layout.fillWidth: true
-                spacing: 8
-                ComboBox {
-                    id: goToCombo
-                    Layout.fillWidth: true
-                    model: root.wpNames
-                    font.pixelSize: dlg.scaled(13)
-                    contentItem: Text {
-                        text: goToCombo.displayText; color: C.text; font: goToCombo.font
-                        leftPadding: 10; elide: Text.ElideRight
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle { implicitHeight: dlg.scaled(38); radius: 10
-                                             color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                model: root.wpNames
+                font.pixelSize: 14
+                contentItem: Text {
+                    text: goToCombo.displayText; color: C.text; font: goToCombo.font
+                    leftPadding: 10; elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
                 }
-                Button {
-                    text: dlg.pickTarget === "waypoint" ? "CLICK MAP…" : "PICK ON MAP"
-                    implicitHeight: dlg.scaled(38)
-                    leftPadding: dlg.scaled(14); rightPadding: dlg.scaled(14)
-                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: dlg.scaled(12); font.bold: true
-                                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
-                                         elide: Text.ElideRight }
-                    background: Rectangle { radius: 10
-                                             color: dlg.pickTarget === "waypoint" ? C.accentDark
-                                                    : (parent.down ? C.border : C.surfaceAlt)
-                                             border.color: dlg.pickTarget === "waypoint" ? C.accent : C.border
-                                             border.width: 1 }
-                    onClicked: dlg.beginPick("waypoint")
-                }
-                Button {
-                    text: "GO"
-                    implicitHeight: dlg.scaled(38)
-                    leftPadding: dlg.scaled(22); rightPadding: dlg.scaled(22)
-                    enabled: goToCombo.currentText !== ""
-                    contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: dlg.scaled(12); font.bold: true
-                                         horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: 10
-                                             color: !parent.enabled ? C.border : (parent.down ? C.accentDark : C.accent) }
-                    onClicked: {
-                        ros.dispatchToRobot(cfg.taskCategories.length > 0 ? cfg.taskCategories[0] : "loop",
-                                             goToCombo.currentText, 1, dlg.robotName)
-                        if (mapLoader.item) mapLoader.item.clearPickedWaypoint()
-                    }
+                background: Rectangle { implicitHeight: 40; radius: 10
+                                         color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+            }
+            Button {
+                Layout.fillWidth: true
+                text: dlg.pickTarget === "waypoint" ? "CLICK MAP…" : "PICK ON MAP"
+                implicitHeight: 38
+                contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 13; font.bold: true
+                                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                     elide: Text.ElideRight }
+                background: Rectangle { radius: 10
+                                         color: dlg.pickTarget === "waypoint" ? C.accentDark
+                                                : (parent.down ? C.border : C.surfaceAlt)
+                                         border.color: dlg.pickTarget === "waypoint" ? C.accent : C.border
+                                         border.width: 1 }
+                onClicked: dlg.beginPick("waypoint")
+            }
+            // Names the destination on the button so a stale combo value is obvious.
+            Button {
+                Layout.fillWidth: true
+                text: goToCombo.currentText !== "" ? "GO → " + goToCombo.currentText : "GO"
+                implicitHeight: 42
+                enabled: goToCombo.currentText !== ""
+                contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 14; font.bold: true
+                                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
+                                     elide: Text.ElideRight }
+                background: Rectangle { radius: 10
+                                         color: !parent.enabled ? C.border : (parent.down ? C.accentDark : C.accent) }
+                onClicked: {
+                    ros.dispatchToRobot(cfg.taskCategories.length > 0 ? cfg.taskCategories[0] : "loop",
+                                         goToCombo.currentText, 1, dlg.robotName)
+                    if (mapLoader.item) mapLoader.item.clearPickedWaypoint()
                 }
             }
         }
@@ -389,29 +484,12 @@ Dialog {
         Text {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
+            Layout.bottomMargin: 18
             visible: dlg.lastAction !== ""
             text: dlg.lastAction + ": " + dlg.lastMessage
             color: dlg.lastOk ? C.success : C.err
-            font.pixelSize: dlg.scaled(11)
+            font.pixelSize: 12
             wrapMode: Text.WordWrap
-        }
-
-        Button {
-            Layout.fillWidth: true
-            Layout.margins: 18
-            text: "CLOSE"
-            implicitHeight: dlg.scaled(36)
-            contentItem: Text { text: parent.text; color: C.text; font.pixelSize: dlg.scaled(13)
-                                 horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-            background: Rectangle { radius: 10; color: parent.down ? C.border : C.surfaceAlt
-                                     border.color: C.border; border.width: 1 }
-            onClicked: {
-                if (mapLoader.item) {
-                    mapLoader.item.clearPickedPose()
-                    mapLoader.item.clearPickedWaypoint()
-                }
-                dlg.close()
-            }
         }
     }
 }

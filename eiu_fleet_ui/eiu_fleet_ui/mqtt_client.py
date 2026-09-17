@@ -34,6 +34,7 @@ class MqttClient(QObject):
         self._online = {r.name: False for r in config.robots}
         self._telemetry = {}
         self._last_state_rx: dict[str, float] = {}
+        self._last_state_epoch: dict[str, float] = {}
         self._stale_reported: dict[str, bool] = {}
         self._online_dirty = False
         self._telemetry_dirty = False
@@ -128,6 +129,7 @@ class MqttClient(QObject):
                 with self._lock:
                     self._telemetry[robot.name] = state
                     self._last_state_rx[robot.name] = time.monotonic()
+                    self._last_state_epoch[robot.name] = time.time()
                     self._telemetry_dirty = True
         except Exception as e:
             print(f"[MQTT] malformed payload on {msg.topic}: {e}")
@@ -149,7 +151,8 @@ class MqttClient(QObject):
             telemetry_payload = None
             if self._telemetry_dirty:
                 telemetry_payload = json.dumps({
-                    name: {**s.to_dict(), "stale": stale_now.get(name, False)}
+                    name: {**s.to_dict(), "stale": stale_now.get(name, False),
+                           "last_rx": self._last_state_epoch.get(name, 0)}
                     for name, s in self._telemetry.items()})
             self._telemetry_dirty = False
 

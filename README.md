@@ -23,21 +23,22 @@ adapter + Nav2 stack and talks to that container over MQTT.
   <img src="assets/img/amr_software.png" alt="AMR software architecture" width="95%" />
 </p>
 
-| Property | Value |
-|---|---|
-| Manufacturer | `EIU-FABLAB` |
-| Kinematics | Differential drive |
-| Footprint | 0.6 m × 0.4 m (rectangular body) |
-| Max linear / angular speed | 0.30 m/s / 0.60 rad/s |
-| Compute | SOM-RK3399 — 2× Cortex-A72 + 4× Cortex-A53 (hexa-core) |
-| Perception | LR-1BS 2D LiDAR (270°) + Orbbec DaBai Pro 3D depth camera |
-| Inertial | BNO055 9-axis IMU |
-| Drive | Servo hub motors + SD-21007 servo driver, closed-loop |
-| Networking | TL-SF1005 industrial Ethernet switch + industrial Wi-Fi (teleop/monitoring) |
-| Power | Onboard battery, 29V/14A power distribution board |
-| Navigation stack | Nav2: Theta* planner → Simple Smoother → MPPI controller, global/local costmap |
-| RMF fleet | `amr_fleet` — [`config_amr.yaml`](vda5050_fleet_adapter_full_control/config/config_amr.yaml) |
-| Robots in this repo's demos | 1 (`amr_1`) |
+<table width="100%">
+<tr><th width="30%">Property</th><th>Value</th></tr>
+<tr><td>Manufacturer</td><td><code>EIU-FABLAB</code></td></tr>
+<tr><td>Kinematics</td><td>Differential drive</td></tr>
+<tr><td>Footprint</td><td>0.6 m × 0.4 m (rectangular body)</td></tr>
+<tr><td>Max linear / angular speed</td><td>0.30 m/s / 0.60 rad/s</td></tr>
+<tr><td>Compute</td><td>SOM-RK3399 — 2× Cortex-A72 + 4× Cortex-A53 (hexa-core)</td></tr>
+<tr><td>Perception</td><td>LR-1BS 2D LiDAR (270°) + Orbbec DaBai Pro 3D depth camera</td></tr>
+<tr><td>Inertial</td><td>BNO055 9-axis IMU</td></tr>
+<tr><td>Drive</td><td>Servo hub motors + SD-21007 servo driver, closed-loop</td></tr>
+<tr><td>Networking</td><td>TL-SF1005 industrial Ethernet switch + industrial Wi-Fi (teleop/monitoring)</td></tr>
+<tr><td>Power</td><td>Onboard battery, 29V/14A power distribution board</td></tr>
+<tr><td>Navigation stack</td><td>Nav2: Theta* planner → Simple Smoother → MPPI controller, global/local costmap</td></tr>
+<tr><td>RMF fleet</td><td><code>amr_fleet</code> — <a href="vda5050_fleet_adapter_full_control/config/config_amr.yaml"><code>config_amr.yaml</code></a></td></tr>
+<tr><td>Robots in this repo's demos</td><td>1 (<code>amr_1</code>)</td></tr>
+</table>
 
 ### TurtleBot3 Burger
 
@@ -45,15 +46,16 @@ adapter + Nav2 stack and talks to that container over MQTT.
   <img src="assets/img/turtlebot3.png" alt="TurtleBot3 Burger" width="30%" />
 </p>
 
-| Property | Value |
-|---|---|
-| Manufacturer | `ROBOTIS` |
-| Kinematics | Differential drive |
-| Dimensions | 138 mm × 178 mm × 192 mm (L×W×H) |
-| Max linear speed | 0.22 m/s |
-| Onboard compute | SOM-RK3399v2 |
-| RMF fleet | `tb3_fleet` — [`config_tb3.yaml`](vda5050_fleet_adapter_full_control/config/config_tb3.yaml) |
-| Robots in this repo's demos | 2 (`tb3_1`, `tb3_2`) |
+<table width="100%">
+<tr><th width="30%">Property</th><th>Value</th></tr>
+<tr><td>Manufacturer</td><td><code>ROBOTIS</code></td></tr>
+<tr><td>Kinematics</td><td>Differential drive</td></tr>
+<tr><td>Dimensions</td><td>138 mm × 178 mm × 192 mm (L×W×H)</td></tr>
+<tr><td>Max linear speed</td><td>0.22 m/s</td></tr>
+<tr><td>Onboard compute</td><td>SOM-RK3399v2</td></tr>
+<tr><td>RMF fleet</td><td><code>tb3_fleet</code> — <a href="vda5050_fleet_adapter_full_control/config/config_tb3.yaml"><code>config_tb3.yaml</code></a></td></tr>
+<tr><td>Robots in this repo's demos</td><td>2 (<code>tb3_1</code>, <code>tb3_2</code>)</td></tr>
+</table>
 
 ## Demo
 
@@ -112,7 +114,7 @@ Single-robot demo on the AMR line
 **`tb3_fleet`** — 2 × TurtleBot3
 Multi-robot demo — two robots deconflicting via RMF
 
-[<img src="https://img.youtube.com/vi/UslfKM7a148/hqdefault.jpg" width="100%" alt="Watch: TB3 multi-robot demo" />](https://www.youtube.com/watch?v=UslfKM7a148)
+[<img src="https://img.youtube.com/vi/UslfKM7a148/hqdefault.jpg" width="100%" alt="Watch: TB3 multi-robot demo" />](https://www.youtube.com/watch?v=ODSLt2Ox0S8)
 
 </td>
 </tr>

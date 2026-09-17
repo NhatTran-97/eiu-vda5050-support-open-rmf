@@ -12,6 +12,7 @@ Rectangle {
     property var waypoints: []
     property string selectedRobotName: ""
     property var telemetry: ({})
+    property real nowTick: 0
 
     // Estimate route progress without dropping the value when RMF replans.
     property string trackedTaskKey: ""
@@ -58,8 +59,6 @@ Rectangle {
     readonly property string operatingMode: primaryRobot
                                    ? String((telemetry[primaryRobot.name] || {}).operating_mode || "AUTOMATIC") : "AUTOMATIC"
     readonly property var safety: primaryRobot ? (telemetry[primaryRobot.name] || {}).safety : null
-    readonly property bool telemetryStale: primaryRobot
-                                   ? Boolean((telemetry[primaryRobot.name] || {}).stale) : false
     // AGV's reported loads (VDA5050 state.loads).
     readonly property var robotLoads: primaryRobot
                                    ? (telemetry[primaryRobot.name] || {}).loads || [] : []
@@ -76,6 +75,10 @@ Rectangle {
     readonly property string robotStatus: primaryRobot ? primaryRobot.status : "OFFLINE"
     readonly property bool robotOnline: primaryRobot
                                         ? Boolean(robotsOnline[primaryRobot.name]) : false
+    // Selected but disconnected -- telemetry below is frozen at its last received value.
+    readonly property bool offline: !!primaryRobot && !robotOnline
+    readonly property real lastRx: primaryRobot
+                                    ? Number((telemetry[primaryRobot.name] || {}).last_rx || 0) : 0
     readonly property color batteryColor: !hasBatteryReading ? C.textDim
                                           : (battery < 20 ? C.err
                                              : (battery < 50 ? C.warn : C.success))
@@ -357,32 +360,6 @@ Rectangle {
                     font.letterSpacing: 0.8
                 }
                 Item { Layout.fillWidth: true }
-                Rectangle {
-                    Layout.preferredWidth: liveRow.implicitWidth + 18
-                    Layout.preferredHeight: 24
-                    radius: 12
-                    color: Qt.rgba(0.13, 0.84, 0.63, 0.08)
-                    border.color: !robotOnline ? C.border : (root.telemetryStale ? C.warn : C.success)
-                    border.width: 1
-
-                    Row {
-                        id: liveRow
-                        anchors.centerIn: parent
-                        spacing: 6
-                        Rectangle {
-                            width: 7; height: 7; radius: 3.5
-                            color: !robotOnline ? C.textDim : (root.telemetryStale ? C.warn : C.success)
-                            anchors.verticalCenter: parent.verticalCenter
-                        }
-                        Text {
-                            text: !robotOnline ? "WAITING DATA" : (root.telemetryStale ? "STALE" : "LIVE DATA")
-                            color: !robotOnline ? C.textDim : (root.telemetryStale ? C.warn : C.success)
-                            font.family: fontMono
-                            font.pixelSize: 10 * root.uiScale
-                            font.bold: true
-                        }
-                    }
-                }
             }
         }
 
@@ -548,14 +525,16 @@ Rectangle {
                                 radius: 8
                                 color: root.eStopActive ? C.err : "transparent"
                                 border.color: root.eStopActive ? C.err
-                                              : (root.primaryRobot ? C.cyan : C.border)
+                                              : (root.offline ? C.err
+                                                 : (root.primaryRobot ? C.cyan : C.border))
                                 border.width: 1
                                 Text {
                                     id: statusText
                                     anchors.centerIn: parent
-                                    text: root.eStopActive ? "E-STOP" : root.robotStatus
+                                    text: root.eStopActive ? "E-STOP" : (root.offline ? "OFFLINE" : root.robotStatus)
                                     color: root.eStopActive ? C.text
-                                           : (root.primaryRobot ? C.cyan : C.textDim)
+                                           : (root.offline ? C.err
+                                              : (root.primaryRobot ? C.cyan : C.textDim))
                                     font.family: fontMono
                                     font.pixelSize: 10 * root.uiScale
                                     font.bold: true
@@ -564,9 +543,22 @@ Rectangle {
                         }
                     }
 
+                    FreshnessTag {
+                        Layout.fillWidth: true
+                        visible: !!root.primaryRobot
+                        online: root.robotOnline
+                        hasData: root.hasTele
+                        lastRx: root.lastRx
+                        nowTick: root.nowTick
+                        fontSize: 10 * root.uiScale
+                        bold: root.offline
+                    }
+
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        // Last-known values, not live -- dim them while disconnected.
+                        opacity: root.offline ? 0.5 : 1.0
                         // Limit column spacing to the panel width.
                         spacing: Math.max(10, Math.min(32 * root.uiScale, telemetryPanel.width * 0.09))
 

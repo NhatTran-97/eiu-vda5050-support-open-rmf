@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import "../components"
 
 // Show the map, waypoints, lanes, robots, and zoom controls.
@@ -14,11 +15,16 @@ Rectangle {
     property var  edges:       []
     property var  blockedEdgeIndices: []
     property var  mapRobots:   []
+    property var  robotsOnline: ({})   // VDA5050 connection state by robot name
     property var  telemetry:   ({})
     property string plannedDest: ""
+    property var activeDestinations: ({})   // waypoint name -> true, for any robot's underway task
+    property string selectedRobotName: ""
     property url robotIconSource: ""
     property var robotIconUrls: ({})   // robot name -> icon url; falls back to robotIconSource
-    property real robotMarkerSize: 46
+    // Scales with the map panel like labelScale, so the marker and its rings
+    // don't stay a fixed pixel size while everything else around them grows.
+    readonly property real robotMarkerSize: 46 * labelScale
 
     function iconForRobot(name) {
         return (robotIconUrls && robotIconUrls[name]) ? robotIconUrls[name] : robotIconSource
@@ -43,7 +49,7 @@ Rectangle {
         for (var k = 0; k < order.length; k++) {
             var i = order[k]
             var w = waypoints[i]
-            var grow = (plannedDest !== "" && w.name === plannedDest) ? 17 / 15 : 1
+            var grow = activeDestinations[w.name] ? 17 / 15 : 1
             var lw = labelMetrics.advanceWidth(w.name || "") * grow
             var lh = labelMetrics.height * grow
             var p = worldToScreen(w.x, w.y)
@@ -87,6 +93,7 @@ Rectangle {
     signal posePicked(real x, real y, real yaw)
     signal waypointPicked(string name)
     signal pickCancelled()
+    signal robotPicked(string name)
 
     function clearPickedPose() { pickedPose = null }
     function clearPickedWaypoint() { pickedWaypoint = "" }
@@ -521,6 +528,8 @@ Rectangle {
                     // Draw a planned path for each robot.
                     for (var ri = 0; ri < root.mapRobots.length; ri++) {
                         var rob = root.mapRobots[ri]
+                        // A disconnected robot's last-known path/position is stale -- don't draw it.
+                        if (!root.robotsOnline[rob.name]) continue
                         var rmfPath = rob.path || []
 
                         // Mark the destination of an active path.
@@ -649,10 +658,10 @@ Rectangle {
                     property color pinColor: modelData.charger ? "#F39C12"
                               : (modelData.parking ? "#2980B9" : "#27AE60")
                     property bool  picked: modelData.name === root.pickedWaypoint
-                    property bool  hasTarget: root.plannedDest !== ""
-                    property bool  isTaskTarget: hasTarget && modelData.name === root.plannedDest
-                    // Dim unrelated waypoints when a destination is active.
-                    property bool  emphasized: !hasTarget || isTaskTarget
+                    property bool  hasTarget: Object.keys(root.activeDestinations).length > 0
+                    property bool  isTaskTarget: !!root.activeDestinations[modelData.name]
+                    // Dim waypoints no robot is currently headed to.
+                    property bool  emphasized: !hasTarget || isTaskTarget || picked
                     x: sp.x; y: sp.y
                     z: 2
                     width: 1; height: 1
@@ -673,16 +682,15 @@ Rectangle {
                         color: parent.pinColor
                         border.color: parent.picked ? "#FF3DAE" : C.bg
                         border.width: parent.picked ? 2.5 : 1.5
+                        opacity: parent.emphasized ? 1.0 : 0.55
                     }
                     Rectangle {
                         x: -4; y: -4
                         width: 8; height: 8; radius: 4
                         color: "#ffffff"
+                        opacity: parent.emphasized ? 1.0 : 0.55
                     }
                     Text {
-                        // Label only chargers/target/picked when zoomed out -- full labels clutter a large graph.
-                        visible: mapContent.scale >= 1.3 || parent.picked || parent.isTaskTarget
-                                 || modelData.charger || modelData.parking
                         // Move labels that overlap their default position.
                         x: root.labelOffsets[index] ? root.labelOffsets[index].x : -width / 2
                         y: root.labelOffsets[index] ? root.labelOffsets[index].y : -30 * root.labelScale
@@ -697,23 +705,50 @@ Rectangle {
                 }
             }
 
-            // Draw one marker per robot in /fleet_states.
+            // Draw one marker per robot. Disconnected robots stay visible at their
+            // last-known position, dimmed with a static outline instead of a live pulse.
             Repeater {
                 model: root.mapRobots
                 delegate: Item {
                     id: robotMarker
                     z: 3
+                    readonly property bool online: !!root.robotsOnline[modelData.name]
+                    readonly property bool selected: modelData.name !== "" && modelData.name === root.selectedRobotName
                     property var sp: root.worldToScreen(modelData.x, modelData.y)
                     x: sp.x; y: sp.y
                     width: 1; height: 1
                     transformOrigin: Item.TopLeft
                     scale: 1 / Math.max(0.001, overlay.displayScale)
 
-                    // Distinguish robots from waypoint pins.
+                    // Shared selection with Fleet Robots and the telemetry panel. Only shown
+                    // for online robots -- an offline robot marks "selected" by making its own
+                    // red ring bolder instead of stacking a second color on top of it.
+                    Rectangle {
+                        visible: robotMarker.selected && robotMarker.online
+                        x: -width / 2; y: -height / 2
+                        width: root.robotMarkerSize * 1.4
+                        height: width
+                        radius: width / 2
+                        color: C.cyanBright
+                        opacity: 0.12
+                    }
+                    Rectangle {
+                        visible: robotMarker.selected && robotMarker.online
+                        x: -width / 2; y: -height / 2
+                        width: root.robotMarkerSize * 1.22
+                        height: width
+                        radius: width / 2
+                        color: "transparent"
+                        border.color: C.cyanBright
+                        border.width: 2
+                    }
+
+                    // Live robots get an animated pulse; offline ones a static, dim outline.
                     Rectangle {
                         id: pulseRing
+                        visible: robotMarker.online
                         x: -width / 2; y: -height / 2
-                        width: root.robotMarkerSize * 1.7
+                        width: root.robotMarkerSize * 1.3
                         height: width
                         radius: width / 2
                         color: "transparent"
@@ -723,15 +758,39 @@ Rectangle {
                         scale: 0.7
 
                         SequentialAnimation on scale {
+                            running: robotMarker.online
                             loops: Animation.Infinite
                             NumberAnimation { from: 0.7; to: 1.25; duration: 1200; easing.type: Easing.OutCubic }
                             PauseAnimation { duration: 200 }
                         }
                         SequentialAnimation on opacity {
+                            running: robotMarker.online
                             loops: Animation.Infinite
                             NumberAnimation { from: 0.7; to: 0.0; duration: 1200; easing.type: Easing.OutCubic }
                             PauseAnimation { duration: 200 }
                         }
+                    }
+                    // Offline is routine (robot just not connected yet), not an active fault --
+                    // muted blue-gray instead of red, which stays reserved for real emergencies.
+                    Rectangle {
+                        visible: !robotMarker.online && robotMarker.selected
+                        x: -width / 2; y: -height / 2
+                        width: root.robotMarkerSize * 1.4
+                        height: width
+                        radius: width / 2
+                        color: C.textDim
+                        opacity: 0.15
+                    }
+                    Rectangle {
+                        visible: !robotMarker.online
+                        x: -width / 2; y: -height / 2
+                        width: root.robotMarkerSize * (robotMarker.selected ? 1.15 : 1.05)
+                        height: width
+                        radius: width / 2
+                        color: "transparent"
+                        border.color: C.textDim
+                        border.width: robotMarker.selected ? 3 : 2
+                        opacity: robotMarker.selected ? 0.9 : 0.6
                     }
 
                     Image {
@@ -745,6 +804,7 @@ Rectangle {
                         smooth: true
                         mipmap: true
                         asynchronous: true
+                        opacity: robotMarker.online ? 1.0 : 0.45
                         // Center the robot icon on its marker.
                         rotation: -(modelData.yaw * 180 / Math.PI) + 90
                     }
@@ -772,8 +832,20 @@ Rectangle {
                         horizontalAlignment: Text.AlignHCenter
                         text: modelData.name || cfg.primaryRobot
                         font.pixelSize: 15 * root.labelScale; font.bold: true
-                        color: "#6FB2FF"
+                        color: robotMarker.online ? "#6FB2FF" : C.textDim
+                        opacity: robotMarker.online ? 1.0 : 0.75
                         style: Text.Outline; styleColor: C.bg
+                    }
+
+                    MouseArea {
+                        anchors.fill: robotIcon
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.robotPicked(modelData.name)
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 300
+                        ToolTip.text: modelData.name + (robotMarker.online ? " · LIVE"
+                                                         : " · OFFLINE · Last known position")
                     }
                 }
             }
