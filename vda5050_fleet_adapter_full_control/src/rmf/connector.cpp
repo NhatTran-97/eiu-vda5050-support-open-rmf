@@ -11,10 +11,16 @@
 #include "vda5050_fleet_adapter_full_control/vda5050/message_builder.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/instant_action_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/order_handler.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/order_validation.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/route_stitch.hpp"
 
 namespace vda5050_fleet_adapter_full_control::rmf {
 
 namespace {
+
+constexpr std::chrono::seconds kFactsheetFirstWait{5};
+constexpr std::chrono::seconds kFactsheetRetryWait{20};
+constexpr int kFactsheetRequestAttempts = 3;
 
 // Validate state fields needed for readiness, progress, and battery reporting.
 bool has_required_state_fields(const nlohmann::json &raw)
@@ -147,23 +153,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         }
         RobotContext &ctx = *it->second;
 
-        waypoints.reserve(route.size());
-        for (const auto &p : route)
-        {
-            // Apply the lower of the graph and operator speed limits.
-            std::optional<double> speed_limit = p.speed_limit;
-            if (ctx.operator_speed_limit.has_value())
-            {
-                speed_limit = speed_limit.has_value()
-                                  ? std::min(*speed_limit, *ctx.operator_speed_limit)
-                                  : ctx.operator_speed_limit;
-            }
-
-            warn_if_unroutable(ctx, p.node_id, p.x, p.y, p.theta, map_id, speed_limit);
-            const auto robot_pose = ctx.transform.to_robot(p.x, p.y, p.theta);
-            waypoints.push_back(vda5050::RouteWaypoint{
-                p.node_id, {robot_pose[0], robot_pose[1], robot_pose[2]}, speed_limit});
-        }
+        waypoints = to_waypoints(ctx, route, map_id);
 
         // Build the base node from the latest reported AGV state.
         base = waypoints.front().pose;
@@ -176,8 +166,13 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         header_id = ctx.next_order_header();
 
         // The order contains one base node and one edge per route point.
-        warn_if_order_oversized(ctx, route.size() + 1, route.size());
         warn_if_map_mismatch(ctx, map_id);
+        if (!order_allowed(ctx, base, waypoints, map_id, route.size() + 1, route.size()))
+        {
+            RCLCPP_ERROR(_logger, "[VDA5050] %s: order '%s' NOT sent -- it violates the AGV's declared limits",
+                         name.c_str(), order_id.c_str());
+            return {CommandStatus::rejected, {}};
+        }
         manufacturer = ctx.manufacturer;
         serial = ctx.serial;
         interface_name = ctx.interface_name;
@@ -213,6 +208,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
             ctx.order_action_ids.clear();
             // A fresh orderId restarts its own update sequence.
             ctx.order_update_id = 0;
+            ctx.route_offset = 0;
             ctx.current_route = waypoints;
             ctx.current_base_id = base_id;
             ctx.current_base = base;
@@ -228,6 +224,198 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
     return {CommandStatus::queued, order_id};
 }
 
+std::vector<vda5050::RouteWaypoint> Connector::to_waypoints(
+    const RobotContext &ctx, const std::vector<RoutePoint> &route, const std::string &map_id) const
+{
+    std::vector<vda5050::RouteWaypoint> waypoints;
+    waypoints.reserve(route.size());
+    for (const auto &p : route)
+    {
+        // Apply the lower of the graph and operator speed limits.
+        std::optional<double> speed_limit = p.speed_limit;
+        if (ctx.operator_speed_limit.has_value())
+        {
+            speed_limit = speed_limit.has_value() ? std::min(*speed_limit, *ctx.operator_speed_limit)
+                                                  : ctx.operator_speed_limit;
+        }
+
+        warn_if_unroutable(ctx, p.node_id, p.x, p.y, p.theta, map_id, speed_limit);
+        const auto robot_pose = ctx.transform.to_robot(p.x, p.y, p.theta);
+        waypoints.push_back(vda5050::RouteWaypoint{
+            p.node_id, {robot_pose[0], robot_pose[1], robot_pose[2]}, speed_limit});
+    }
+    return waypoints;
+}
+
+bool Connector::order_allowed(RobotContext &ctx, const vda5050::RobotPose &base,
+                              const std::vector<vda5050::RouteWaypoint> &route,
+                              const std::string &map_id, std::size_t node_count,
+                              std::size_t edge_count)
+{
+    vda5050::OrderShape shape;
+    shape.node_count = node_count;
+    shape.edge_count = edge_count;
+    shape.map_id = map_id;
+    shape.poses.push_back({base.x, base.y, base.theta});
+    for (const auto &w : route)
+    {
+        shape.poses.push_back({w.pose.x, w.pose.y, w.pose.theta});
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (ctx.last_order_time != std::chrono::steady_clock::time_point{})
+    {
+        shape.seconds_since_last_order = std::chrono::duration<double>(now - ctx.last_order_time).count();
+    }
+
+    std::vector<std::string> known_maps;
+    if (ctx.last_state.has_value())
+    {
+        for (const auto &m : ctx.last_state->maps)
+        {
+            const std::string id = m.value("mapId", std::string{});
+            if (!id.empty())
+            {
+                known_maps.push_back(id);
+            }
+        }
+    }
+
+    bool reject = false;
+    for (const auto &v : vda5050::check_order(shape, ctx.factsheet, known_maps))
+    {
+        const bool hard = v.severity == vda5050::Severity::hard;
+        if (hard)
+        {
+            RCLCPP_ERROR(_logger, "[VDA5050] %s: %s", ctx.name.c_str(), v.message.c_str());
+        }
+        else
+        {
+            RCLCPP_WARN(_logger, "[VDA5050] %s: %s", ctx.name.c_str(), v.message.c_str());
+        }
+        reject = reject || (hard && _strict_validation);
+    }
+    if (!reject)
+    {
+        ctx.last_order_time = now;
+    }
+    return !reject;
+}
+
+Connector::ReplanResult Connector::replan_route(const std::string &name,
+                                                const std::vector<RoutePoint> &route,
+                                                const std::string &map_id,
+                                                std::optional<std::size_t> released_count)
+{
+    ReplanResult result;
+    if (route.empty())
+    {
+        return result;
+    }
+
+    std::string manufacturer, serial, interface_name, order_id, base_id, order_map;
+    vda5050::RobotPose base{};
+    std::vector<vda5050::RouteWaypoint> combined;
+    int header_id = 0;
+    int update_id = 0;
+    std::size_t stitch_index = 0;
+    std::size_t new_released = 0;
+    std::size_t consumed = 0;
+    bool unchanged = false;
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _robots.find(name);
+        if (it == _robots.end())
+        {
+            return result;
+        }
+        RobotContext &ctx = *it->second;
+
+        // Only an acknowledged, unfinished order can be extended.
+        if (ctx.current_order_id.empty() || ctx.current_route.empty() || !ctx.last_state.has_value() ||
+            ctx.last_state->order_id != ctx.current_order_id ||
+            !ctx.last_state->last_node_sequence_id.has_value() ||
+            (!map_id.empty() && map_id != ctx.current_map_id))
+        {
+            return result;
+        }
+        const std::size_t traversed = static_cast<std::size_t>(*ctx.last_state->last_node_sequence_id) / 2;
+        if (traversed >= ctx.current_route.size())
+        {
+            return result;
+        }
+
+        const auto plan = vda5050::plan_stitch(ctx.current_route, ctx.current_released_count,
+                                               traversed, to_waypoints(ctx, route, ctx.current_map_id));
+        if (!plan.has_value())
+        {
+            return result;
+        }
+
+        consumed = plan->consumed;
+        stitch_index = plan->stitch_index;
+        unchanged = plan->unchanged;
+        combined = plan->route;
+        new_released = std::max(ctx.current_released_count,
+                                std::min(consumed + released_count.value_or(route.size()), combined.size()));
+        order_id = ctx.current_order_id;
+        order_map = ctx.current_map_id;
+        base_id = ctx.current_base_id;
+        base = ctx.current_base;
+        manufacturer = ctx.manufacturer;
+        serial = ctx.serial;
+        interface_name = ctx.interface_name;
+
+        if (!unchanged)
+        {
+            // Only the nodes from the stitch node onward travel in the update.
+            const std::size_t update_edges = combined.size() - stitch_index;
+            if (!order_allowed(ctx, base, combined, order_map, update_edges + 1, update_edges))
+            {
+                return result;
+            }
+            header_id = ctx.next_order_header();
+            update_id = ++ctx.order_update_id;
+        }
+    }
+
+    if (!unchanged)
+    {
+        const auto order = vda5050::build_route_order(header_id, order_id, manufacturer, serial, base_id, base,
+                                                      combined, order_map, update_id, new_released, stitch_index);
+        if (publish_raw(vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER),
+                        order.dump()) == CommandStatus::transport_failed)
+        {
+            RCLCPP_ERROR(_logger, "[VDA5050] %s -> order '%s' update %d NOT published (transport failure)",
+                         name.c_str(), order_id.c_str(), update_id);
+            result.status = CommandStatus::transport_failed;
+            return result;
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _robots.find(name);
+        if (it != _robots.end())
+        {
+            RobotContext &ctx = *it->second;
+            ctx.current_route = combined;
+            ctx.current_released_count = new_released;
+            ctx.target_node_id = combined.back().node_id;
+            ctx.route_offset = consumed;
+            result.released = new_released > consumed ? new_released - consumed : 0;
+        }
+    }
+
+    const std::string sent = unchanged ? "route unchanged, nothing sent" : "update " + std::to_string(update_id);
+    RCLCPP_INFO(_logger, "[VDA5050] %s replanned onto order '%s' (%s): stitched at sequence %zu, %zu point(s) after it",
+                name.c_str(), order_id.c_str(), sent.c_str(), 2 * stitch_index, combined.size() - stitch_index);
+    result.stitched = true;
+    result.order_id = order_id;
+    result.consumed = consumed;
+    return result;
+}
+
 CommandStatus Connector::release_more(const std::string &name, std::size_t released_count)
 {
     std::string order_id, base_id, manufacturer, serial, interface_name, map_id;
@@ -236,6 +424,7 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
     int header_id = 0;
     int order_update_id = 0;
     std::size_t clamped = 0;
+    std::size_t stitch_index = 0;
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -247,7 +436,8 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
         }
         RobotContext &ctx = *it->second;
 
-        clamped = std::min(released_count, ctx.current_route.size());
+        // RMF counts released points from the start of its current path.
+        clamped = std::min(released_count + ctx.route_offset, ctx.current_route.size());
         if (ctx.current_order_id.empty() || ctx.current_route.empty() ||
             clamped <= ctx.current_released_count)
         {
@@ -257,6 +447,8 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
 
         order_id = ctx.current_order_id;
         order_update_id = ++ctx.order_update_id;
+        // The update starts at the last node released so far.
+        stitch_index = ctx.current_released_count;
         waypoints = ctx.current_route;
         base_id = ctx.current_base_id;
         base = ctx.current_base;
@@ -269,7 +461,7 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
 
     const auto order = vda5050::build_route_order(
         header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id,
-        order_update_id, clamped);
+        order_update_id, clamped, stitch_index);
 
     const std::string order_topic =
         vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER);
@@ -294,8 +486,9 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
     }
 
     RCLCPP_INFO(_logger,
-                "[VDA5050] %s -> order '%s' update %d: released %zu/%zu route point(s)",
-                name.c_str(), order_id.c_str(), order_update_id, clamped, waypoints.size());
+                "[VDA5050] %s -> order '%s' update %d: released %zu/%zu route point(s), stitch at sequence %zu",
+                name.c_str(), order_id.c_str(), order_update_id, clamped, waypoints.size(),
+                 2 * stitch_index);
     return status;
 }
 
@@ -504,10 +697,14 @@ std::string Connector::execute_instant_action(
         }
         RobotContext &ctx = *it->second;
 
-        if (ctx.factsheet.has_value() && !ctx.factsheet->supports_action(action_type))
+        if (const auto violation = vda5050::check_instant_action(action_type, ctx.factsheet))
         {
-            RCLCPP_WARN(_logger, "[VDA5050] %s: action '%s' is not in the AGV's factsheet " "(protocolFeatures.agvActions) -- sending it anyway",
-                        name.c_str(), action_type.c_str());
+            if (violation->severity == vda5050::Severity::hard && _strict_validation)
+            {
+                RCLCPP_ERROR(_logger, "[VDA5050] %s: %s -- not sent", name.c_str(), violation->message.c_str());
+                return {};
+            }
+            RCLCPP_WARN(_logger, "[VDA5050] %s: %s -- sending it anyway", name.c_str(), violation->message.c_str());
         }
         else if (ctx.factsheet.has_value() && !ctx.factsheet->supports_scope(action_type, "INSTANT"))
         {
@@ -530,6 +727,54 @@ std::string Connector::execute_instant_action(
         return {};
     }
     return request.action_id;
+}
+
+void Connector::set_strict_validation(bool strict)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _strict_validation = strict;
+}
+
+void Connector::poll(const std::string &name)
+{
+    std::string topic;
+    nlohmann::json message;
+    int attempt = 0;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        auto it = _robots.find(name);
+        if (it == _robots.end())
+        {
+            return;
+        }
+        RobotContext &ctx = *it->second;
+
+        // Ask for the factsheet when the retained one never arrived.
+        if (ctx.factsheet.has_value() || ctx.connected != true ||
+            ctx.factsheet_requests >= kFactsheetRequestAttempts)
+        {
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        const auto wait = ctx.factsheet_requests == 0 ? kFactsheetFirstWait : kFactsheetRetryWait;
+        if (now - ctx.factsheet_wait_since < wait)
+        {
+            return;
+        }
+        ctx.factsheet_wait_since = now;
+        attempt = ++ctx.factsheet_requests;
+
+        message = vda5050::build_instant_action(ctx.next_instant_actions_header(), ctx.manufacturer,
+                                                ctx.serial, "factsheetRequest", nlohmann::json::object(), "NONE")
+                      .message;
+        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
+    }
+
+    if (publish_raw(topic, message.dump()) == CommandStatus::queued)
+    {
+        RCLCPP_INFO(_logger, "[VDA5050] %s: no factsheet received -- sent factsheetRequest (%d/%d)",
+                    name.c_str(), attempt, kFactsheetRequestAttempts);
+    }
 }
 
 void Connector::subscribe_robot(const RobotContext &ctx)
@@ -637,45 +882,6 @@ void Connector::warn_if_action_conflicts(const RobotContext &ctx,  const std::st
                         running.value("actionId", std::string{}).c_str(), status.c_str());
         }
     }
-}
-
-void Connector::warn_if_order_oversized(RobotContext &ctx, std::size_t node_count,
-                                        std::size_t edge_count) const
-{
-    if (ctx.factsheet.has_value())
-    {
-        const auto &fs = *ctx.factsheet;
-        if (fs.max_order_nodes.has_value() && node_count > *fs.max_order_nodes)
-        {
-            RCLCPP_WARN(_logger,
-                        "[VDA5050] %s: order has %zu node(s), exceeding the AGV's "
-                        "declared protocolLimits.maxArrayLens['order.nodes'] (%u) -- it "
-                        "may reject this order",
-                        ctx.name.c_str(), node_count, *fs.max_order_nodes);
-        }
-        if (fs.max_order_edges.has_value() && edge_count > *fs.max_order_edges)
-        {
-            RCLCPP_WARN(_logger,
-                        "[VDA5050] %s: order has %zu edge(s), exceeding the AGV's "
-                        "declared protocolLimits.maxArrayLens['order.edges'] (%u) -- it "
-                        "may reject this order",
-                        ctx.name.c_str(), edge_count, *fs.max_order_edges);
-        }
-
-        if (fs.min_order_interval.has_value())
-        {
-            const double since_last = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - ctx.last_order_time).count();
-            if (since_last < *fs.min_order_interval)
-            {
-                RCLCPP_WARN(_logger,
-                            "[VDA5050] %s: order published %.2fs after the previous one, "
-                            "under the AGV's declared minOrderInterval (%.2fs)",
-                            ctx.name.c_str(), since_last, *fs.min_order_interval);
-            }
-        }
-    }
-    ctx.last_order_time = std::chrono::steady_clock::now();
 }
 
 void Connector::warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_map_id) const
@@ -954,6 +1160,8 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
             if (online)
             {
                 RCLCPP_INFO(_logger, "[VDA5050] %s ONLINE", ctx->name.c_str());
+                ctx->factsheet_requests = 0;
+                ctx->factsheet_wait_since = std::chrono::steady_clock::now();
             }
             else if (ctx->connected == true)
             {
@@ -992,6 +1200,7 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
                     fs.agv_class.c_str(), fs.speed_max.value_or(0.0), actions.empty() ? "(none declared)" : actions.c_str());
 
         ctx->factsheet = std::move(fs);
+        ctx->factsheet_requests = 0;
     }
 }
 

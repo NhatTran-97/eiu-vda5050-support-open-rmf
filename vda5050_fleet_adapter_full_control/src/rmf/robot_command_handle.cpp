@@ -61,12 +61,13 @@ bool has_lane(const rmf_traffic::agv::Graph &graph, std::size_t from, std::size_
 VdaRobotCommandHandle::VdaRobotCommandHandle(
     rclcpp::Logger logger, std::string name, Connector &connector,
     std::shared_ptr<const rmf_traffic::agv::Graph> graph, double nominal_speed,
-    rclcpp::Clock::SharedPtr clock, bool honor_waypoint_timing)
+    rclcpp::Clock::SharedPtr clock, bool honor_waypoint_timing, bool stitch_on_replan)
   : _logger(std::move(logger)), _name(std::move(name)), _connector(connector),
     _graph(std::move(graph)),
     _nominal_speed(nominal_speed > 0.0 ? nominal_speed : 0.5),
     _clock(std::move(clock)),
-    _honor_waypoint_timing(honor_waypoint_timing)
+    _honor_waypoint_timing(honor_waypoint_timing),
+    _stitch_on_replan(stitch_on_replan)
 {
 }
 
@@ -275,6 +276,48 @@ void VdaRobotCommandHandle::follow_new_path(
         resuming_from_pause = _traffic_pause_deadline.has_value();
         _traffic_pause_deadline.reset();
     }
+    std::optional<std::size_t> initial_release;
+    if (_honor_waypoint_timing && _clock)
+    {
+        active.released_count =
+            releasable_count(active.times, rmf_traffic_ros2::convert(_clock->now()));
+        initial_release = active.released_count;
+    }
+    else
+    {
+        active.released_count = route.size();
+    }
+
+    // Continue the live order when the new route repeats its released part.
+    if (_stitch_on_replan && had_active_path)
+    {
+        const auto replan = _connector.replan_route(_name, route, map_name, initial_release);
+        if (replan.status == CommandStatus::transport_failed)
+        {
+            RCLCPP_ERROR(_logger,
+                         "[%s] follow_new_path: order update was not published (transport failure) -- "
+                         "RMF will see no progress on this command",
+                         _name.c_str());
+            return;
+        }
+        if (replan.stitched)
+        {
+            active.order_id = replan.order_id;
+            active.seq_offset = replan.consumed;
+            active.released_count = replan.released;
+            if (resuming_from_pause && _connector.resume(_name) == CommandStatus::transport_failed)
+            {
+                RCLCPP_ERROR(_logger,
+                             "[%s] follow_new_path: stopPause did not reach the AGV -- it may "
+                             "still be paused",
+                             _name.c_str());
+            }
+            std::lock_guard<std::mutex> lock(_mutex);
+            _path = std::move(active);
+            return;
+        }
+    }
+
     if (resuming_from_pause)
     {
         RCLCPP_INFO(_logger,
@@ -297,26 +340,15 @@ void VdaRobotCommandHandle::follow_new_path(
         }
     }
 
-    std::optional<std::size_t> initial_release;
-    if (_honor_waypoint_timing && _clock)
-    {
-        active.released_count =
-            releasable_count(active.times, rmf_traffic_ros2::convert(_clock->now()));
-        initial_release = active.released_count;
-    }
-    else
-    {
-        active.released_count = route.size();
-    }
-
     const auto result = _connector.navigate_route(_name, route, map_name, initial_release);
-    if (result.status == CommandStatus::transport_failed)
+    if (result.status != CommandStatus::queued)
     {
         // Keep the path inactive when its order was never published.
         RCLCPP_ERROR(_logger,
-                     "[%s] follow_new_path: order was not published (transport failure) -- "
+                     "[%s] follow_new_path: order was not published (%s) -- "
                      "RMF will see no progress on this command",
-                     _name.c_str());
+                     _name.c_str(),
+                     result.status == CommandStatus::rejected ? "rejected by validation" : "transport failure");
         return;
     }
     active.order_id = result.order_id;
@@ -465,11 +497,14 @@ void VdaRobotCommandHandle::update(const RobotData &data)
     {
         RCLCPP_WARN(_logger, "[%s] stop: no resume arrived -- cancelling for real", _name.c_str());
         _connector.stop(_name);
+        release_traffic_hold();
     }
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
-        _ready_for_orders = data.ready_for_orders();
+        // A traffic-hold pause does not make the AGV unavailable.
+        const bool traffic_hold = _traffic_pause_deadline.has_value();
+        _ready_for_orders = data.ready_for_orders(traffic_hold);
         if (!data.operable)
         {
             _not_ready_reason = "operating mode " + data.operating_mode;
@@ -486,7 +521,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         {
             _not_ready_reason = "FATAL error '" + data.fatal_error + "'";
         }
-        else if (data.paused)
+        else if (data.paused && !traffic_hold)
         {
             _not_ready_reason = "AGV reports paused";
         }
@@ -580,8 +615,9 @@ void VdaRobotCommandHandle::update(const RobotData &data)
             if (data.last_node_sequence_id.has_value() && !path.order_id.empty() &&
                 data.order_id == path.order_id)
             {
-                const std::size_t passed =
-                    static_cast<std::size_t>(*data.last_node_sequence_id) / 2;
+                // Sequence IDs count from the start of the order, not of this path.
+                const std::size_t reached = static_cast<std::size_t>(*data.last_node_sequence_id) / 2;
+                const std::size_t passed = reached > path.seq_offset ? reached - path.seq_offset : 0;
                 path.next_index =
                     std::max(path.next_index, std::min(passed, path.node_ids.size()));
             }
@@ -772,6 +808,7 @@ std::string VdaRobotCommandHandle::pause()
         std::lock_guard<std::mutex> lock(_mutex);
         _saved_maximum_delay = saved_delay;
         _paused = true;
+        _operator_paused = true;
     }
     RCLCPP_INFO(_logger, "[%s] paused by operator", _name.c_str());
     return {};
@@ -811,6 +848,7 @@ std::string VdaRobotCommandHandle::resume()
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _paused = false;
+        _operator_paused = false;
     }
     RCLCPP_INFO(_logger, "[%s] resumed by operator", _name.c_str());
     return {};
@@ -844,6 +882,21 @@ void VdaRobotCommandHandle::set_ready_for_orders(bool ready, const std::string &
         }
     }
     apply_commission();
+}
+
+void VdaRobotCommandHandle::release_traffic_hold()
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (_operator_paused)
+        {
+            return;
+        }
+    }
+    if (_connector.resume(_name) == CommandStatus::transport_failed)
+    {
+        RCLCPP_ERROR(_logger, "[%s] stopPause did not reach the AGV -- it may stay paused", _name.c_str());
+    }
 }
 
 void VdaRobotCommandHandle::apply_commission()

@@ -173,6 +173,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
 
         auto connector = std::make_shared<rmf::Connector>(
             logger, config.mqtt().broker_url, config.interface_name(), config.mqtt().username, config.mqtt().password);
+        connector->set_strict_validation(config.strict_validation());
         connector->start();
 
         const double nominal_speed = traits->linear().get_nominal_velocity();
@@ -202,7 +203,8 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             connector->add_robot(name, rc.manufacturer, rc.serial, rc.transform);
             robots[name] = std::make_shared<rmf::VdaRobotCommandHandle>(
                 logger, name, *connector, graph, nominal_speed,
-                adapter->node()->get_clock(), config.honor_waypoint_timing());
+                adapter->node()->get_clock(), config.honor_waypoint_timing(),
+                config.stitch_on_replan());
 
             RobotSetup setup;
             setup.responsive_wait = fleet_config->default_responsive_wait();
@@ -267,6 +269,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             continue;
                         }
                         command->set_online(true);
+                        connector->poll(name);
 
                         const auto data = connector->get_data(name);
                         if (!data)

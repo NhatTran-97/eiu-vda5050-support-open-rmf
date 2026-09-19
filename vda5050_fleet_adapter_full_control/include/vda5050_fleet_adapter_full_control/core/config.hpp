@@ -42,6 +42,8 @@ public:
     double update_rate_hz() const { return _update_rate_hz; }
     const MqttConfig &mqtt() const { return _mqtt; }
     bool honor_waypoint_timing() const { return _honor_waypoint_timing; }
+    bool stitch_on_replan() const { return _stitch_on_replan; }
+    bool strict_validation() const { return _strict_validation; }
     const std::optional<std::string> &server_uri() const { return _server_uri; }
     RobotConfig robot_config(const std::string &name) const;
 
@@ -49,6 +51,8 @@ private:
     std::string _interface_name = "uagv";
     double _update_rate_hz = 10.0;
     bool _honor_waypoint_timing = false;
+    bool _stitch_on_replan = false;
+    bool _strict_validation = true;
     std::optional<std::string> _server_uri;
     MqttConfig _mqtt;
     YAML::Node _robots_cfg;

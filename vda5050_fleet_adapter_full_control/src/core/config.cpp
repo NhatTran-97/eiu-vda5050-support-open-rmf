@@ -43,6 +43,8 @@ Config::Config(const std::string &config_file)
 
     _honor_waypoint_timing =
         vda["honor_waypoint_timing"] ? vda["honor_waypoint_timing"].as<bool>() : false;
+    _stitch_on_replan = vda["stitch_on_replan"] ? vda["stitch_on_replan"].as<bool>() : false;
+    _strict_validation = vda["strict_validation"] ? vda["strict_validation"].as<bool>() : true;
 
     if (vda["ui_websocket_uri"] && !vda["ui_websocket_uri"].IsNull())
     {

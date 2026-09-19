@@ -36,7 +36,8 @@ public:
                           std::shared_ptr<const rmf_traffic::agv::Graph> graph,
                           double nominal_speed,
                           rclcpp::Clock::SharedPtr clock,
-                          bool honor_waypoint_timing = false);
+                          bool honor_waypoint_timing = false,
+                          bool stitch_on_replan = false);
 
     // RMF RobotCommandHandle interface.
     void follow_new_path(
@@ -85,6 +86,8 @@ private:
         std::size_t waypoint_offset = 0;
         // Number of route points released in the latest order update.
         std::size_t released_count = 0;
+        // Route points passed before this path began.
+        std::size_t seq_offset = 0;
         // Whether this path has already requested a replan for a stuck order.
         bool replan_requested = false;
         ArrivalEstimator arrival_estimator;
@@ -103,6 +106,9 @@ private:
     // Applies the current commission decision to RMF when it changes.
     void apply_commission();
 
+    // Unpauses the AGV after a traffic hold ends, unless the operator paused it.
+    void release_traffic_hold();
+
     rclcpp::Logger _logger;
     std::string _name;
     Connector &_connector;
@@ -110,6 +116,7 @@ private:
     double _nominal_speed;
     rclcpp::Clock::SharedPtr _clock;
     bool _honor_waypoint_timing;
+    bool _stitch_on_replan;
 
     // Protects command state shared by RMF and the update loop.
     mutable std::mutex _mutex;
@@ -132,6 +139,8 @@ private:
     std::optional<bool> _commissioned;
     // Operator pause state.
     bool _paused = false;
+    // Set only by the operator's pause() and cleared by resume().
+    bool _operator_paused = false;
     // RMF's delay ceiling as it was before a pause lifted it.
     rmf_utils::optional<rmf_traffic::Duration> _saved_maximum_delay;
     // Time when a traffic hold should become a full cancellation if no new path arrives.

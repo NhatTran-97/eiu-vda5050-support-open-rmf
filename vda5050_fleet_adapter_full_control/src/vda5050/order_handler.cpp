@@ -14,7 +14,8 @@ nlohmann::json build_route_order(
     const std::vector<RouteWaypoint> &route,
     const std::string &map_id,
     int order_update_id,
-    std::optional<std::size_t> released_count)
+    std::optional<std::size_t> released_count,
+    std::size_t stitch_index)
 {
     if (order_id.empty())
     {
@@ -28,7 +29,12 @@ nlohmann::json build_route_order(
     nlohmann::json nodes = nlohmann::json::array();
     nlohmann::json edges = nlohmann::json::array();
 
-    nodes.push_back(make_node(base_node_id, 0, base.x, base.y, base.theta, map_id));
+    const std::size_t first = std::min(stitch_index, route.size());
+
+    if (first == 0)
+    {
+        nodes.push_back(make_node(base_node_id, 0, base.x, base.y, base.theta, map_id));
+    }
 
     std::string previous_node_id = base_node_id;
     for (std::size_t i = 0; i < route.size(); ++i)
@@ -39,11 +45,17 @@ nlohmann::json build_route_order(
         const int node_sequence = static_cast<int>(2 * (i + 1));
         const bool released = i < release_edges;
 
-        edges.push_back(make_edge("e_" + previous_node_id + "_" + wp.node_id, edge_sequence,
-                                  previous_node_id, wp.node_id, released, wp.speed_limit));
+        if (i >= first)
+        {
+            edges.push_back(make_edge("e_" + previous_node_id + "_" + wp.node_id, edge_sequence,
+                                      previous_node_id, wp.node_id, released, wp.speed_limit));
+        }
 
-        nodes.push_back(
-            make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, map_id, released));
+        if (i + 1 >= first)
+        {
+            nodes.push_back(
+                make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, map_id, released));
+        }
 
         previous_node_id = wp.node_id;
     }

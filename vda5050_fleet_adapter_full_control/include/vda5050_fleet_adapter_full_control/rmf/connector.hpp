@@ -26,6 +26,7 @@ enum class CommandStatus
 {
     queued,
     transport_failed,
+    rejected,
 };
 
 // Per-robot state in RMF coordinates, assembled from VDA5050 state and visualization messages.
@@ -61,10 +62,10 @@ struct RobotData
     // agvPosition.localizationScore, when the AGV scores its localization.
     std::optional<double> localization_score;
 
-    // True when the AGV can accept master-control orders.
-    bool ready_for_orders() const
+    // True when the AGV can accept master-control orders; tolerate_pause ignores a pause.
+    bool ready_for_orders(bool tolerate_pause = false) const
     {
-        return operable && !safety_state.triggered() && fatal_error.empty() && !paused;
+        return operable && !safety_state.triggered() && fatal_error.empty() && (tolerate_pause || !paused);
     }
 };
 
@@ -107,6 +108,24 @@ public:
                                   const std::string &map_id,
                                   std::optional<std::size_t> released_count = std::nullopt);
 
+    // Result of continuing the active order along a replanned route.
+    struct ReplanResult
+    {
+        CommandStatus status = CommandStatus::queued;
+        bool stitched = false;
+        std::string order_id;
+        // Route points the AGV had passed before the new path starts.
+        std::size_t consumed = 0;
+        // Points of the new path that are already released.
+        std::size_t released = 0;
+    };
+
+    // Attach a replanned route to the active order; stitched=false leaves the order untouched.
+    ReplanResult replan_route(const std::string &name,
+                              const std::vector<RoutePoint> &route,
+                              const std::string &map_id,
+                              std::optional<std::size_t> released_count = std::nullopt);
+
     // Extend an active order with a larger released horizon and a new orderUpdateId.
     CommandStatus release_more(const std::string &name, std::size_t released_count);
 
@@ -132,6 +151,12 @@ public:
 
     // Requests an immediate state update.
     void request_state(const std::string &name);
+
+    // Sends pending requests, such as factsheetRequest.
+    void poll(const std::string &name);
+
+    // Reject hard violations instead of only warning.
+    void set_strict_validation(bool strict);
 
     // Send initPosition in the robot frame and return its action ID, or an empty string on failure.
     std::string init_position(const std::string &name, double x, double y,
@@ -178,6 +203,8 @@ private:
         std::vector<std::string> order_action_ids;
         // Update ID of the tracked order, incremented for each horizon extension.
         int order_update_id = 0;
+        // Route points passed before the current path began.
+        std::size_t route_offset = 0;
         // Robot-frame route data retained to build later horizon updates.
         std::vector<vda5050::RouteWaypoint> current_route;
         std::string current_base_id;
@@ -191,6 +218,9 @@ private:
         std::chrono::steady_clock::time_point last_visualization_time{};
         // Capabilities declared by the AGV.
         std::optional<vda5050::ParsedFactsheet> factsheet;
+        // factsheetRequest retry progress.
+        int factsheet_requests = 0;
+        std::chrono::steady_clock::time_point factsheet_wait_since{};
         std::string last_node_id;
         std::optional<bool> connected;  // nullopt = unknown
         std::chrono::steady_clock::time_point last_state_time{};
@@ -233,9 +263,16 @@ private:
     void warn_if_action_conflicts(const RobotContext &ctx, const std::string &action_type,
                                   const std::string &blocking_type) const;
 
-    // Check factsheet protocol limits and update the order timestamp; the caller holds _mutex.
-    void warn_if_order_oversized(RobotContext &ctx, std::size_t node_count,
-                                 std::size_t edge_count) const;
+    // Convert RMF route points to robot-frame waypoints; caller holds _mutex.
+    std::vector<vda5050::RouteWaypoint> to_waypoints(const RobotContext &ctx,
+                                                      const std::vector<RoutePoint> &route,
+                                                      const std::string &map_id) const;
+
+    // Log violations; false means do not send.
+    // The caller holds _mutex.
+    bool order_allowed(RobotContext &ctx, const vda5050::RobotPose &base,
+                       const std::vector<vda5050::RouteWaypoint> &route,
+                       const std::string &map_id, std::size_t node_count, std::size_t edge_count);
 
     // Report a map ID mismatch with the AGV; the caller holds _mutex.
     void warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_map_id) const;
@@ -256,6 +293,7 @@ private:
     // Protects robot state shared by MQTT, ROS, and update-loop threads.
     mutable std::mutex _mutex;
     std::map<std::string, std::unique_ptr<RobotContext>> _robots;
+    bool _strict_validation = true;
 };
 
 }  // namespace vda5050_fleet_adapter_full_control::rmf

@@ -40,6 +40,8 @@ add_library(${PROJECT_NAME}_core SHARED
   src/vda5050/state_handler.cpp
   src/vda5050/factsheet_handler.cpp
   src/vda5050/order_handler.cpp
+  src/vda5050/order_validation.cpp
+  src/vda5050/route_stitch.cpp
   src/vda5050/instant_action_handler.cpp
   src/rmf/connector.cpp
   src/rmf/robot_command_handle.cpp
@@ -100,6 +102,12 @@ if(BUILD_TESTING)
 
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_order_validation test/test_order_validation.cpp)
+  target_link_libraries(test_order_validation ${PROJECT_NAME}_core)
+  ament_add_gtest(test_route_stitch test/test_route_stitch.cpp)
+  target_link_libraries(test_route_stitch ${PROJECT_NAME}_core)
 endif()
 
 ament_package()
