@@ -132,7 +132,7 @@ void ActionManager::process_instant_actions(
   invoke_pending_callbacks(pending);
 }
 
-// Sync route actions, adding new ones and removing stale waiting ones.
+// Sync order actions (nodes, edges) against current state: add new actions, remove stale waiting ones not in update.
 void ActionManager::sync_order_actions(const std::vector<vda5050::Node>& nodes,
                                        const std::vector<vda5050::Edge>& edges)
 {
@@ -291,7 +291,7 @@ void ActionManager::on_edge_entered(const std::string& edge_id,
   invoke_pending_callbacks(pending);
 }
 
-// Complete an edge and fail its unfinished actions.
+// Mark edge (edge_id, sequence_id) as exited; fail any unfinished edge actions with "Edge left before action completed".
 void ActionManager::on_edge_left(const std::string& edge_id,
                                  uint32_t           sequence_id)
                                  {
@@ -460,7 +460,7 @@ void ActionManager::cancel_all(const std::string& exclude_action_id) {
   invoke_pending_callbacks(pending);
 }
 
-// Time out HARD actions awaiting pause confirmation.
+// Check for HARD actions stuck waiting (now, hard_pause_timeout): fail those past timeout, resume others paused for them.
 bool ActionManager::check_timeouts(
   std::chrono::steady_clock::time_point now,
   std::chrono::steady_clock::duration   hard_pause_timeout)
@@ -583,7 +583,7 @@ bool ActionManager::has_active_actions() const
   return false;
 }
 
-// Whether an active route action prevents order replacement.
+// Return true if any order action (node/edge trigger, not instant) is active; instant actions don't block order replacement.
 bool ActionManager::has_active_order_actions() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
@@ -642,7 +642,7 @@ void ActionManager::mark_trigger_ready_locked(TriggerKind        trigger_kind,
   }
 }
 
-// Fail and cancel unfinished actions on a completed edge.
+// Fail all actions attached to edge (edge_id, sequence_id) with "Edge left before action completed"; queue cancels.
 void ActionManager::fail_edge_actions_locked(const std::string& edge_id,
                                              uint32_t           sequence_id,
                                              PendingCallbacks&  pending) {
@@ -663,7 +663,7 @@ void ActionManager::fail_edge_actions_locked(const std::string& edge_id,
   }
 }
 
-// Remove waiting route actions absent from the updated order.
+// Remove stale WAITING order actions not in desired_order_actions (desired_order_actions); preserve instant/active.
 void ActionManager::remove_stale_waiting_order_actions_locked(
   const std::unordered_map<std::string, ActionRecord>& desired_order_actions) {
   std::vector<std::string> compact_order;
@@ -726,7 +726,7 @@ void ActionManager::update_status(const std::string&    action_id,
   }
 }
 
-// Gather execute, pause, and resume callbacks for ready actions.
+// Collect pending callbacks from current action state: execute ready WAITING, pause for HARD, resume paused-for-hard.
 ActionManager::PendingCallbacks ActionManager::dispatch_pending_locked() {
   PendingCallbacks pending;
   pending.execute_cb = on_execute_;

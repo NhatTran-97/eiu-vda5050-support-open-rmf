@@ -33,8 +33,20 @@ struct CompletedControlAction {
 };
 
 /**
- * @brief Derive adapter mode from connectivity, orders, and control feedback.
- * Order and per-action lifecycles remain with their own managers.
+ * @brief Adapter-wide state machine: connectivity, order activity, control action confirmations.
+ *
+ * Manages top-level adapter mode transitions (INITIALIZING → CONNECTING → IDLE ↔ ORDER_ACTIVE).
+ * Handles fatal errors, MQTT connectivity state, driving/paused flags from robot driver,
+ * and control action (pause/resume/cancel) confirmation logic.
+ *
+ * Intentionally narrow: owns only mode, connectivity, and control confirmation. Does not own
+ * order state (OrderManager) or per-action lifecycle (ActionManager) — those are delegated.
+ *
+ * Key responsibilities:
+ *  - Manage 11-mode state machine (INITIALIZING, CONNECTING, IDLE, ORDER_ACTIVE, ACTION_BLOCKED, etc.)
+ *  - Track MQTT connectivity and fatal error state
+ *  - Confirm control actions (pause/resume/cancel) when driver confirms
+ *  - Gate message processing and state publication based on mode
  */
 class AdapterStateMachine {
 public:

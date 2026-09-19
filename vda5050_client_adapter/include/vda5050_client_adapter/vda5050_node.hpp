@@ -1,7 +1,39 @@
 #pragma once
 
 /**
- * @brief Declare the ROS interfaces and MQTT wiring for VDA5050Node.
+ * @file vda5050_node.hpp
+ * @brief VDA5050 v2.1.0 adapter — ROS2 node interface.
+ *
+ * `VDA5050Node` is the ROS/MQTT wiring layer.
+ * High-level runtime transitions are delegated to `AdapterStateMachine`,
+ * while `OrderManager` and `ActionManager` remain responsible for their
+ * own domain lifecycles.
+ *
+ * ROS2 I/O Overview:
+ *
+ *  Published (adapter → robot):
+ *    ~/order              vda5050_msgs/Order
+ *    ~/action_execute     vda5050_msgs/Action
+ *    ~/action_cancel      std_msgs/String    ("pause:id"|"resume:id"|"cancel:id")
+ *
+ *  Subscribed (robot → adapter):
+ *    ~/agv_position       vda5050_msgs/AgvPosition
+ *    ~/velocity           vda5050_msgs/Velocity
+ *    ~/battery_state      vda5050_msgs/BatteryState
+ *    ~/driving            std_msgs/Bool
+ *    ~/paused             std_msgs/Bool
+ *    ~/action_state_feedback
+ *                         vda5050_msgs/ActionState  (robot reports status changes)
+ *    ~/error              vda5050_msgs/Error
+ *    ~/safety_state       vda5050_msgs/SafetyState
+ *    ~/operating_mode     std_msgs/String
+ *    ~/load               vda5050_msgs/Load
+ *    ~/node_reached       vda5050_msgs/NodeState
+ *    ~/edge_entered       vda5050_msgs/EdgeState
+ *    ~/edge_completed     vda5050_msgs/EdgeState
+ *    ~/order_dropped      std_msgs/String    (orderId the bridge dropped on its own)
+ *    ~/distance_since_last_node
+ *                         std_msgs/Float64   (live progress on the current leg)
  */
 
 #include <atomic>
@@ -42,8 +74,19 @@
 namespace vda5050_adapter {
 
 /**
- * @brief Bridge VDA5050 MQTT messages and ROS robot interfaces.
- * Coordinate order, action, and adapter state through their managers.
+ * @brief VDA5050 adapter node: ROS2/MQTT bridge for autonomous mobile robots.
+ *
+ * Mediates between Master Control (MQTT/VDA5050 JSON) and robot drivers (ROS2 topics).
+ * Manages order lifecycle, action execution, state publication, and MQTT connectivity.
+ * Single-threaded design: all callbacks and state updates run serially via rclcpp::spin().
+ *
+ * Key responsibilities:
+ *  - Subscribe to robot telemetry (position, velocity, battery, driving, action feedback)
+ *  - Publish VDA5050 state, visualization, connection, and factsheet to MQTT
+ *  - Handle inbound orders and instantActions from Master Control
+ *  - Manage order state and route traversal via OrderManager
+ *  - Execute and track actions (NONE/SOFT/HARD blocking) via ActionManager
+ *  - Coordinate adapter-wide mode transitions via AdapterStateMachine
  */
 class VDA5050Node : public rclcpp::Node {
 public:

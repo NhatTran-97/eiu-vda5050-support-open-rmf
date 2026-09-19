@@ -1,5 +1,15 @@
 /**
- * @brief Verify VDA5050 JSON and ROS message conversion.
+ * @file test_converters.cpp
+ * @brief Unit tests for json_converter.hpp and ros_converters.hpp.
+ *
+ * Coverage:
+ *  - JSON round-trip for all top-level message types
+ *  - Optional fields omitted when not set / preserved when set
+ *  - Enum string values match VDA5050 spec (camelCase keys)
+ *  - maxArrayLens uses dot-notation key names (VDA5050 §9.4)
+ *  - agvActions contains resultDescription and blockingTypes
+ *  - ROS ↔ internal converters for all structs
+ *  - std::optional<T> adl_serializer generic handler
  */
 
 #include <gtest/gtest.h>

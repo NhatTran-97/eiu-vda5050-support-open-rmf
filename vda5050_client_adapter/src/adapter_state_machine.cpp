@@ -233,7 +233,7 @@ const char* AdapterStateMachine::to_string(AdapterMode mode)
   return "UNKNOWN";
 }
 
-// Derive mode from current flags in priority order.
+// Recompute mode_ from all internal flags (priority: shutting_down > initialized > fatal_error > mqtt_connected > pending_cancel > pending_pause > pending_resume > paused > action_blocked > order_active). Must hold mutex.
 void AdapterStateMachine::recompute_mode_locked()
 {
   if (shutting_down_) {
