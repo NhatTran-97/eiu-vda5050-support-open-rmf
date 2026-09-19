@@ -4,6 +4,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "vda5050_client_adapter/vda5050_types.hpp"
@@ -103,6 +104,9 @@ public:
   bool edge_entered(const std::string& edge_id, uint32_t sequence_id);
   bool edge_completed(const std::string& edge_id, uint32_t sequence_id);
 
+  // True (once) for an edge_entered that arrives after its edge_completed; the caller ignores it.
+  bool absorb_late_edge_entered(const std::string& edge_id, uint32_t sequence_id);
+
   // Live progress on the current leg, streamed from the driver between
   // node_reached events (node_reached still sets the exact value on arrival).
   void set_distance_since_last_node(double meters);
@@ -174,6 +178,9 @@ private:
   // right before apply_order() clears it -- see is_stale_node/is_stale_edge.
   std::vector<std::string> stale_node_ids_;
   std::vector<std::string> stale_edge_ids_;
+
+  // Edges completed before their edge_entered arrived.
+  std::vector<std::pair<std::string, uint32_t>> completed_before_entered_;
 
   bool new_base_request_{false};
   bool order_active_{false};

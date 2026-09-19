@@ -762,3 +762,94 @@ TEST(OrderManagerTest, EdgeCompletedRemovesEdgeFromActiveState) {
   EXPECT_EQ(mgr.active_edge_states().size(), 0u);
   EXPECT_EQ(mgr.edge_states().size(), 0u);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// edge_entered arriving after edge_completed
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(OrderManagerTest, AbsorbsEdgeEnteredThatArrivesAfterItsEdgeCompleted) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+
+  ASSERT_TRUE(mgr.edge_completed("e12", 1));
+  EXPECT_TRUE(mgr.absorb_late_edge_entered("e12", 1));
+  EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));  // absorbed once only
+}
+
+TEST(OrderManagerTest, AbsorbsLateEdgeEnteredForConsecutiveEdges) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true), make_node("n3", 4, true)},
+    {make_edge("e12", 1, true, "n1", "n2"), make_edge("e23", 3, true, "n2", "n3")}
+  )).accepted);
+
+  ASSERT_TRUE(mgr.edge_completed("e12", 1));
+  ASSERT_TRUE(mgr.edge_completed("e23", 3));
+  EXPECT_TRUE(mgr.absorb_late_edge_entered("e12", 1));
+  EXPECT_TRUE(mgr.absorb_late_edge_entered("e23", 3));
+}
+
+TEST(OrderManagerTest, DoesNotAbsorbEdgeEnteredInNormalOrder) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+
+  EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));
+  ASSERT_TRUE(mgr.edge_entered("e12", 1));
+  ASSERT_TRUE(mgr.edge_completed("e12", 1));
+  EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));
+}
+
+TEST(OrderManagerTest, LateEdgeEnteredIsForgottenWhenANewOrderStarts) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o1", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+  ASSERT_TRUE(mgr.edge_completed("e12", 1));
+
+  ASSERT_TRUE(mgr.process_order(make_order("o2", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+  EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));
+}
+
+TEST(OrderManagerTest, AbsorbsStaleEdgeCompletedFromJustReplacedOrder) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+
+  ASSERT_TRUE(mgr.process_order(make_order("ord-2", 1,
+    {make_node("n1", 0, true), make_node("n4", 2, true)},
+    {make_edge("e14", 1, true, "n1", "n4")}
+  )).accepted);
+
+  EXPECT_TRUE(mgr.edge_completed("e12", 1));   // echo from ord-1
+  EXPECT_FALSE(mgr.edge_completed("zzz", 9));  // unknown edge is still an error
+  EXPECT_EQ(mgr.edge_states().size(), 1u);     // ord-2's edge untouched
+}
+
+TEST(OrderManagerTest, AbsorbsStaleEdgeEventsWhenReplacementHasNoReleasedEdge) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+
+  ASSERT_TRUE(mgr.process_order(make_order("ord-2", 1,
+    {make_node("n1", 0, true), make_node("n4", 2, false)},
+    {make_edge("e14", 1, false, "n1", "n4")}
+  )).accepted);
+
+  EXPECT_TRUE(mgr.edge_entered("e12", 1));
+  EXPECT_TRUE(mgr.edge_completed("e12", 1));
+  EXPECT_FALSE(mgr.edge_entered("zzz", 9));
+}

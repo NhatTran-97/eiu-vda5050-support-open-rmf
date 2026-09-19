@@ -120,6 +120,7 @@ void OrderManager::cancel_order(const std::string& order_id)
   horizon_nodes_.clear();
   horizon_edges_.clear();
   active_edges_.clear();
+  completed_before_entered_.clear();
   current_order_id_         = "";
   current_order_update_id_  = 0;
   current_zone_set_id_      = "";
@@ -152,6 +153,10 @@ bool OrderManager::node_reached(const NodeReachedEvent& evt) {
   std::unique_lock<std::mutex> lock(mutex_);
 
   if (!order_active_ || remaining_base_nodes_.empty()) {
+    // Late echo from the replaced order.
+    if (is_stale_node(evt.node_id)) {
+      return true;
+    }
     std::cerr << "[OrderManager] Unexpected node_reached: no released base node pending\n";
     return false;
   }
@@ -197,6 +202,10 @@ bool OrderManager::edge_entered(const std::string& edge_id,  uint32_t sequence_i
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (remaining_base_edges_.empty()) {
+    // Late echo from the replaced order.
+    if (is_stale_edge(edge_id)) {
+      return true;
+    }
     std::cerr << "[OrderManager] Unexpected edge_entered: no released base edge pending\n";
     return false;
   }
@@ -246,6 +255,10 @@ bool OrderManager::edge_completed(const std::string& edge_id,
   // Fallback: edge_entered was skipped, consume from base directly.
   if (!order_active_ || remaining_base_edges_.empty())
   {
+    // Late echo from the replaced order.
+    if (is_stale_edge(edge_id)) {
+      return true;
+    }
     std::cerr << "[OrderManager] Unexpected edge_completed: no released base edge pending\n";
     return false;
   }
@@ -253,6 +266,9 @@ bool OrderManager::edge_completed(const std::string& edge_id,
   const auto& expected_edge = remaining_base_edges_.front();
   if (expected_edge.edge_id != edge_id || expected_edge.sequence_id != sequence_id)
   {
+    if (is_stale_edge(edge_id)) {
+      return true;
+    }
     std::cerr << "[OrderManager] Out-of-order edge_completed: expected '"
               << expected_edge.edge_id << "' (seq=" << expected_edge.sequence_id
               << "), got '" << edge_id << "' (seq=" << sequence_id << ")\n";
@@ -260,6 +276,18 @@ bool OrderManager::edge_completed(const std::string& edge_id,
   }
 
   remaining_base_edges_.erase(remaining_base_edges_.begin());
+  completed_before_entered_.emplace_back(edge_id, sequence_id);
+  return true;
+}
+
+// Return true (once) if edge_entered arrives after the edge was already completed.
+bool OrderManager::absorb_late_edge_entered(const std::string& edge_id, uint32_t sequence_id)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto it = std::find(completed_before_entered_.begin(), completed_before_entered_.end(),
+                            std::make_pair(edge_id, sequence_id));
+  if (it == completed_before_entered_.end()) return false;
+  completed_before_entered_.erase(it);
   return true;
 }
 
@@ -452,6 +480,7 @@ void OrderManager::apply_order(const vda5050::Order& order)
   horizon_nodes_.clear();
   horizon_edges_.clear();
   active_edges_.clear();
+  completed_before_entered_.clear();
 
   for (const auto& n : order.nodes)
   {

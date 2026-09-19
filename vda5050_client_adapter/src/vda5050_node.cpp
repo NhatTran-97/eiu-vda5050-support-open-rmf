@@ -877,6 +877,11 @@ void VDA5050Node::on_edge_entered(
   RCLCPP_INFO(get_logger(), "Edge entered: %s (seq=%u)",
               msg->edge_id.c_str(), msg->sequence_id);
 
+  // Ignore an edge_entered that arrives after its edge_completed.
+  if (order_manager_->absorb_late_edge_entered(msg->edge_id, msg->sequence_id)) {
+    return;
+  }
+
   if (!order_manager_->edge_entered(msg->edge_id, msg->sequence_id)) {
     vda5050::Error err;
     err.error_type = "navigationOrderError";
