@@ -64,6 +64,8 @@ flowchart TB
         iah["instant_action_handler.cpp"]
         fsh["factsheet_handler.cpp"]
         mb["message_builder.cpp"]
+        ov["order_validation.cpp\nhard / soft checks"]
+        rs["route_stitch.cpp\nreplan tail onto a live order"]
     end
     subgraph mqtt_ ["mqtt/"]
         mc["mqtt_client.cpp\nPaho wrapper"]
@@ -75,7 +77,7 @@ flowchart TB
     rch --> conn
     opi --> conn
     conn --> mc
-    conn --> oh & sh & iah & fsh & mb
+    conn --> oh & sh & iah & fsh & mb & ov & rs
 ```
 
 ## Key flows
@@ -107,12 +109,61 @@ sequenceDiagram
     RCH->>RMF: done() once the AGV reaches the final node
 ```
 
+### Replanning a live order
+
+```mermaid
+flowchart TB
+    A["RMF replans:\nfollow_new_path(new route)"] --> B{"stitch_on_replan\nand a live order?"}
+    B -- no --> R
+    B -- yes --> C{"AGV acknowledged the order,\nhas a valid pose, same map?"}
+    C -- no --> R
+    C -- yes --> D{"new route repeats the\nreleased part?"}
+    D -- no --> R
+    D -- yes --> S["order update on the same orderId,\nattached at the last released node\n(nothing is sent if the route is unchanged)"]
+    R["replace the order:\nresume the held order with a new one,\nor cancelOrder first"]
+```
+
+`Connector::replan_route` does the check with `plan_stitch`. The new route
+matches when its start repeats the released nodes the AGV has not reached
+yet; up to three leading points on the lane the AGV is on, repeated turns
+in place, and released nodes the new route passes straight through are
+tolerated. VDA5050 cannot withdraw released nodes, so a route that changes
+that part is refused with a `not stitching (<reason>)` log line and the
+order is replaced instead. Nothing more is released while the AGV is held
+for the replan.
+
+### Traffic hold
+
+An RMF `stop` does not cancel the order: `startPause` is sent and a
+10 s deadline starts. A new path before the deadline is stitched onto the
+order or replaces it, followed by `stopPause`. Without one, `cancelOrder`
+is sent and the AGV is unpaused, unless the operator paused it. A pause
+from this hold does not decommission the robot.
+
+### Factsheet and validation
+
+The retained `factsheet` is parsed into `ParsedFactsheet`. When none
+arrives, `Connector::poll` sends `factsheetRequest` (after 5 s, then every
+20 s, up to 3 times). Before an order or instant action is published:
+
+| Severity | Condition | Effect |
+|---|---|---|
+| Hard | a pose is not finite | order rejected |
+| Hard | `mapId` is not among the maps the AGV reports | order rejected |
+| Hard | more nodes or edges than `maxArrayLens` allows | order rejected |
+| Hard | a custom action is missing from the factsheet | action not sent |
+| Soft | order sent inside `minOrderInterval`; a core action (`cancelOrder`, `startPause`, `stopPause`, `stateRequest`, `initPosition`, `factsheetRequest`) missing from the factsheet | warning only |
+
+`strict_validation: false` turns the hard rejections into warnings.
+
 ### Commission state
 
-A robot is only commissioned (eligible for new RMF tasks) while **both**
-hold: its VDA5050 `state` arrived within `state_timeout_s`, and that state
-carries a usable pose. Either one dropping decommissions it immediately;
-both must return before it's offered work again.
+`RobotCommandHandle` commissions a robot only while it is fresh, has a
+usable pose, and `RobotData::ready_for_orders` holds (operating mode,
+safety state, FATAL errors, pause) — the conditions are listed under
+Commission tracking in the [README](../README.md#features). Any of them
+failing decommissions it immediately through `apply_commission()`; all must
+hold again before it is offered work.
 
 ## Configuration (`config_tb3.yaml` / `config_amr.yaml`)
 
@@ -129,6 +180,8 @@ The keys below apply to either file.
 | `vda5050.robots.<name>.manufacturer/serial` | — | Required per robot; missing entry fails startup |
 | `vda5050.update_rate_hz` | 10 | RMF update-loop frequency |
 | `vda5050.honor_waypoint_timing` | false | Horizon release paced by schedule instead of all-at-once |
+| `vda5050.stitch_on_replan` | false | Attach a replanned route to the live order as an update instead of replacing the order |
+| `vda5050.strict_validation` | true | Reject hard violations before publishing; off only warns |
 | `vda5050.ui_websocket_uri` | — | Optional task-event broadcast to a UI |
 | `account_for_battery_drain` | false | Off = report SoC 1.0 to RMF regardless of real battery |
 

@@ -156,8 +156,7 @@ bool ParsedFactsheet::has_content() const
     return !series_name.empty() || !agv_kinematic.empty() || !agv_class.empty() ||
            !localization_types.empty() || !navigation_types.empty() ||
            speed_min.has_value() || speed_max.has_value() || !agv_actions.empty() ||
-           max_order_nodes.has_value() || max_order_edges.has_value() ||
-           min_order_interval.has_value();
+           max_order_nodes.has_value() || max_order_edges.has_value() || min_order_interval.has_value();
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050

@@ -251,27 +251,19 @@ private:
     CommandStatus publish_raw(const std::string &topic, const std::string &payload);
 
     // Choose a factsheet-compatible blocking type; the caller holds _mutex.
-    static std::string blocking_type_for(const RobotContext &ctx,
-                                         const std::string &action_type,
-                                         const std::string &preferred);
+    static std::string blocking_type_for(const RobotContext &ctx, const std::string &action_type, const std::string &preferred);
                                          
     // Report unsupported navigation inputs; the caller holds _mutex.
     void warn_if_unroutable(const RobotContext &ctx, const std::string &dest_node_id,
-                            double x, double y, double theta,
-                            const std::string &map_id,
-                            std::optional<double> speed_limit) const;
+                            double x, double y, double theta, const std::string &map_id, std::optional<double> speed_limit) const;
 
     // Report action conflicts; the caller holds _mutex.
-    void warn_if_action_conflicts(const RobotContext &ctx, const std::string &action_type,
-                                  const std::string &blocking_type) const;
+    void warn_if_action_conflicts(const RobotContext &ctx, const std::string &action_type, const std::string &blocking_type) const;
 
     // Convert RMF route points to robot-frame waypoints; caller holds _mutex.
-    std::vector<vda5050::RouteWaypoint> to_waypoints(const RobotContext &ctx,
-                                                      const std::vector<RoutePoint> &route,
-                                                      const std::string &map_id) const;
+    std::vector<vda5050::RouteWaypoint> to_waypoints(const RobotContext &ctx,  const std::vector<RoutePoint> &route,  const std::string &map_id) const;
 
-    // Log violations; false means do not send.
-    // The caller holds _mutex.
+    // Log violations; false means do not send. The caller holds _mutex.
     bool order_allowed(RobotContext &ctx, const vda5050::RobotPose &base,
                        const std::vector<vda5050::RouteWaypoint> &route,
                        const std::string &map_id, std::size_t node_count, std::size_t edge_count);

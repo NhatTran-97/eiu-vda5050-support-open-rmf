@@ -41,8 +41,7 @@ Config::Config(const std::string &config_file)
         throw std::runtime_error("vda5050.update_rate_hz must be a finite value in (0, 100]");
     }
 
-    _honor_waypoint_timing =
-        vda["honor_waypoint_timing"] ? vda["honor_waypoint_timing"].as<bool>() : false;
+    _honor_waypoint_timing = vda["honor_waypoint_timing"] ? vda["honor_waypoint_timing"].as<bool>() : false;
     _stitch_on_replan = vda["stitch_on_replan"] ? vda["stitch_on_replan"].as<bool>() : false;
     _strict_validation = vda["strict_validation"] ? vda["strict_validation"].as<bool>() : true;
 
@@ -87,9 +86,7 @@ RobotConfig Config::robot_config(const std::string &name) const
     const YAML::Node rc = _robots_cfg ? _robots_cfg[name] : YAML::Node();
     if (!rc)
     {
-        throw std::runtime_error(
-            "robot '" + name + "' is in the fleet's nav graph but has no entry "
-            "under vda5050.robots in config.yaml");
+        throw std::runtime_error( "robot '" + name + "' is in the fleet's nav graph but has no entry " "under vda5050.robots in config.yaml");
     }
     if (rc["manufacturer"])
     {
@@ -112,8 +109,7 @@ RobotConfig Config::robot_config(const std::string &name) const
         const double scale = t["scale"] ? t["scale"].as<double>() : 1.0;
         if (!std::isfinite(scale) || scale == 0.0)
         {
-            throw std::runtime_error(
-                "robot '" + name + "': transform.scale must be finite and non-zero");
+            throw std::runtime_error("robot '" + name + "': transform.scale must be finite and non-zero");
         }
         double tx = 0.0, ty = 0.0;
         if (t["translation"] && t["translation"].size() >= 2)

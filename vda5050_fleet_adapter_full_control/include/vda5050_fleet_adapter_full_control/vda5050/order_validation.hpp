@@ -44,8 +44,7 @@ std::vector<Violation> check_order(const OrderShape &order,
 bool is_core_action(const std::string &action_type);
 
 // Check that the AGV declared an instant action in its factsheet.
-std::optional<Violation> check_instant_action(const std::string &action_type,
-                                              const std::optional<ParsedFactsheet> &factsheet);
+std::optional<Violation> check_instant_action(const std::string &action_type,  const std::optional<ParsedFactsheet> &factsheet);
 
 bool has_hard_violation(const std::vector<Violation> &violations);
 

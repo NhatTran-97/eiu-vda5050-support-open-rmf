@@ -31,8 +31,7 @@ double distance_to_segment(const RobotPose &p, const RobotPose &a, const RobotPo
 
 // Whether the first `lead` points of the new route lie on the AGV's lane.
 bool leading_on_lane(const std::vector<RouteWaypoint> &current_route, std::size_t traversed,
-                     const std::vector<RouteWaypoint> &new_route, std::size_t lead,
-                     double lane_tolerance)
+                     const std::vector<RouteWaypoint> &new_route, std::size_t lead, double lane_tolerance)
 {
     const RobotPose &start = traversed > 0 ? current_route[traversed - 1].pose : new_route.front().pose;
     const RobotPose &next = current_route[traversed].pose;
@@ -46,8 +45,7 @@ bool leading_on_lane(const std::vector<RouteWaypoint> &current_route, std::size_
     return true;
 }
 
-std::optional<StitchPlan> attach(const std::vector<RouteWaypoint> &current_route,
-                                 std::size_t released_count, std::size_t traversed,
+std::optional<StitchPlan> attach(const std::vector<RouteWaypoint> &current_route, std::size_t released_count, std::size_t traversed,
                                  const std::vector<RouteWaypoint> &new_route, std::size_t lead,
                                  double position_tolerance, double lane_tolerance)
 {
@@ -58,25 +56,21 @@ std::optional<StitchPlan> attach(const std::vector<RouteWaypoint> &current_route
     while (k < released_count)
     {
         std::size_t group = 1;
-        while (k + group < released_count &&
-               same_point(current_route[k], current_route[k + group], position_tolerance))
+        while (k + group < released_count && same_point(current_route[k], current_route[k + group], position_tolerance))
         {
             ++group;
         }
         if (n < new_route.size() && same_point(current_route[k], new_route[n], position_tolerance))
         {
             std::size_t used = 1;
-            while (used < group && n + used < new_route.size() &&
-                   same_point(current_route[k], new_route[n + used], position_tolerance))
+            while (used < group && n + used < new_route.size() && same_point(current_route[k], new_route[n + used], position_tolerance))
             {
                 ++used;
             }
             n += used;
         }
         else if (!(n > 0 && n < new_route.size() &&
-                   distance_to_segment(current_route[k].pose, new_route[n - 1].pose, new_route[n].pose) <=
-                       lane_tolerance &&
-                   !at_position(current_route[k], new_route[n], position_tolerance)))
+                   distance_to_segment(current_route[k].pose, new_route[n - 1].pose, new_route[n].pose) <= lane_tolerance && !at_position(current_route[k], new_route[n], position_tolerance)))
         {
             // The new route neither stops at this point nor passes straight through it.
             return std::nullopt;
@@ -106,11 +100,8 @@ std::optional<StitchPlan> attach(const std::vector<RouteWaypoint> &current_route
 
 }  // namespace
 
-std::optional<StitchPlan> plan_stitch(const std::vector<RouteWaypoint> &current_route,
-                                      std::size_t released_count, std::size_t traversed,
-                                      const std::vector<RouteWaypoint> &new_route,
-                                      double position_tolerance, std::size_t max_leading,
-                                      double lane_tolerance)
+std::optional<StitchPlan> plan_stitch(const std::vector<RouteWaypoint> &current_route, std::size_t released_count, std::size_t traversed,
+                                      const std::vector<RouteWaypoint> &new_route, double position_tolerance, std::size_t max_leading, double lane_tolerance)
 {
     if (new_route.empty() || released_count > current_route.size() || traversed > released_count)
     {

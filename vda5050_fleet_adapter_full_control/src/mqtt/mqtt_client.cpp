@@ -6,14 +6,13 @@ namespace vda5050_fleet_adapter_full_control::mqtt {
 
 MqttClient::MqttClient(std::string broker_url, std::string client_id,
                         std::optional<std::string> username,
-                        std::optional<std::string> password)
-  : _client(std::make_shared<::mqtt::async_client>(broker_url, client_id))
+                        std::optional<std::string> password): _client(std::make_shared<::mqtt::async_client>(broker_url, client_id))
 {
     _client->set_callback(*this);
-
     _conn_opts.set_clean_session(true);
     _conn_opts.set_keep_alive_interval(60);
     _conn_opts.set_automatic_reconnect(true);
+    
     if (username.has_value())
     {
         _conn_opts.set_user_name(*username);

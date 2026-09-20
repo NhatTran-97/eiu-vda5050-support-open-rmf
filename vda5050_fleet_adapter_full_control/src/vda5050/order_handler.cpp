@@ -19,8 +19,7 @@ nlohmann::json build_route_order(
 {
     if (order_id.empty())
     {
-        throw std::invalid_argument("build_route_order: order_id must not be empty -- the caller "
-            "must generate it before calling, so it can track the same id " "make_order() ends up sending.");
+        throw std::invalid_argument("build_route_order: order_id must not be empty -- the caller " "must generate it before calling, so it can track the same id " "make_order() ends up sending.");
     }
 
     // Clamp the released count to the route length.
@@ -47,14 +46,12 @@ nlohmann::json build_route_order(
 
         if (i >= first)
         {
-            edges.push_back(make_edge("e_" + previous_node_id + "_" + wp.node_id, edge_sequence,
-                                      previous_node_id, wp.node_id, released, wp.speed_limit));
+            edges.push_back(make_edge("e_" + previous_node_id + "_" + wp.node_id, edge_sequence, previous_node_id, wp.node_id, released, wp.speed_limit));
         }
 
         if (i + 1 >= first)
         {
-            nodes.push_back(
-                make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, map_id, released));
+            nodes.push_back(make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, map_id, released));
         }
 
         previous_node_id = wp.node_id;

@@ -20,9 +20,7 @@ public:
     using ConnectionLostCallback = std::function<void(const std::string &cause)>;
     using ErrorCallback = std::function<void(const std::string &context, const std::string &what)>;
 
-    MqttClient(std::string broker_url, std::string client_id,
-               std::optional<std::string> username = std::nullopt,
-               std::optional<std::string> password = std::nullopt);
+    MqttClient(std::string broker_url, std::string client_id, std::optional<std::string> username = std::nullopt, std::optional<std::string> password = std::nullopt);
 
     ~MqttClient() override;
 

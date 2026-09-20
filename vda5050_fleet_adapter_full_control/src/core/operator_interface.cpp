@@ -15,8 +15,7 @@ namespace {
 // Extract yaw without introducing a tf2 dependency.
 double yaw_of(const geometry_msgs::msg::Quaternion &q)
 {
-    return std::atan2(2.0 * (q.w * q.z + q.x * q.y),
-                      1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+    return std::atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z));
 }
 
 // Prefix for per-robot speed-limit parameters.
@@ -54,7 +53,7 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
 
         _init_position_subs.push_back(
             _node.create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("~/" + name + "/init_position", rclcpp::QoS(1),[this, name](
-                    const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
+                                                                                                        const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
                 {
                     on_init_position(name, *msg);
                 }));
@@ -62,8 +61,7 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
         const auto make_service = [&](const std::string &verb, std::function<std::string()> action)
         {
             return _node.create_service<std_srvs::srv::Trigger>("~/" + name + "/" + verb, [this, name, verb, action](
-                    const std::shared_ptr<std_srvs::srv::Trigger::Request>,
-                    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+                    const std::shared_ptr<std_srvs::srv::Trigger::Request>, std::shared_ptr<std_srvs::srv::Trigger::Response> response)
                 {
                     if (!action)
                     {
@@ -91,13 +89,11 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
             apply_speed_limit(name, initial);
         }
 
-        RCLCPP_INFO(_node.get_logger(),
-                    "Operator interface for '%s': %s/%s/{init_position, pause, resume}, " "parameter %s",
+        RCLCPP_INFO(_node.get_logger(),"Operator interface for '%s': %s/%s/{init_position, pause, resume}, " "parameter %s",
                     name.c_str(), _node.get_name(), name.c_str(), speed_limit_parameter(name).c_str());
     }
 
-    _init_action_timer = _node.create_wall_timer(
-        std::chrono::milliseconds(500), [this]() { poll_pending_init_actions(); });
+    _init_action_timer = _node.create_wall_timer( std::chrono::milliseconds(500), [this]() { poll_pending_init_actions(); });
 
     _on_set_params = _node.add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &parameters)
         {
@@ -109,8 +105,7 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
         });
 }
 
-rcl_interfaces::msg::SetParametersResult OperatorInterface::on_set_parameters(
-    const std::vector<rclcpp::Parameter> &parameters)
+rcl_interfaces::msg::SetParametersResult OperatorInterface::on_set_parameters( const std::vector<rclcpp::Parameter> &parameters)
 {
     rcl_interfaces::msg::SetParametersResult result;
     result.successful = true;
@@ -193,10 +188,7 @@ void OperatorInterface::on_init_position(
     const auto map_name = _connector.get_known_map(robot_name);
     if (!map_name.has_value())
     {
-        RCLCPP_WARN(_node.get_logger(),
-                    "init_position for '%s' ignored: the AGV has never reported a VDA5050 "
-                    "state, so it is not reachable yet",
-                    robot_name.c_str());
+        RCLCPP_WARN(_node.get_logger(), "init_position for '%s' ignored: the AGV has never reported a VDA5050 " "state, so it is not reachable yet", robot_name.c_str());
         publish_result("error: no VDA5050 state from the robot yet -- is it online?");
         return;
     }

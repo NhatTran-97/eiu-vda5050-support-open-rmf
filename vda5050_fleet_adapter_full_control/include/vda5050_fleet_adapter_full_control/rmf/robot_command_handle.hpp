@@ -31,17 +31,12 @@ public:
     using RequestCompleted = Base::RequestCompleted;
 
     // The connector and graph must outlive this handle; the clock uses the RMF plan's time source.
-    VdaRobotCommandHandle(rclcpp::Logger logger, std::string name,
-                          Connector &connector,
-                          std::shared_ptr<const rmf_traffic::agv::Graph> graph,
-                          double nominal_speed,
-                          rclcpp::Clock::SharedPtr clock,
-                          bool honor_waypoint_timing = false,
-                          bool stitch_on_replan = false);
+    VdaRobotCommandHandle(rclcpp::Logger logger, std::string name,  Connector &connector, std::shared_ptr<const rmf_traffic::agv::Graph> graph,
+                          double nominal_speed, rclcpp::Clock::SharedPtr clock,
+                          bool honor_waypoint_timing = false,  bool stitch_on_replan = false);
 
     // RMF RobotCommandHandle interface.
-    void follow_new_path(
-        const std::vector<rmf_traffic::agv::Plan::Waypoint> &waypoints, ArrivalEstimator next_arrival_estimator, RequestCompleted path_finished_callback) override;
+    void follow_new_path(const std::vector<rmf_traffic::agv::Plan::Waypoint> &waypoints, ArrivalEstimator next_arrival_estimator, RequestCompleted path_finished_callback) override;
 
     void stop() override;
 

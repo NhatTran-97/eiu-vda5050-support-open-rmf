@@ -77,9 +77,7 @@ nlohmann::json make_node(const std::string &node_id, int sequence_id,
     };
 }
 
-nlohmann::json make_edge(const std::string &edge_id, int sequence_id,
-                        const std::string &start_node_id, const std::string &end_node_id,
-                        bool released, std::optional<double> max_speed)
+nlohmann::json make_edge(const std::string &edge_id, int sequence_id, const std::string &start_node_id, const std::string &end_node_id, bool released, std::optional<double> max_speed)
 {
     nlohmann::json edge = {
         {"edgeId", edge_id},
@@ -96,9 +94,8 @@ nlohmann::json make_edge(const std::string &edge_id, int sequence_id,
     return edge;
 }
 
-nlohmann::json make_order(int header_id, const std::string& manufacturer, const std::string& serial,
-                          const nlohmann::json& nodes, const nlohmann::json& edges,
-                          const std::string& order_id, int order_update_id)
+nlohmann::json make_order(int header_id, const std::string& manufacturer, const std::string& serial, const nlohmann::json& nodes, 
+                        const nlohmann::json& edges, const std::string& order_id, int order_update_id)
 {
     nlohmann::json msg = header(header_id, manufacturer, serial);
     msg["orderId"] = order_id.empty() ? make_uuid() : order_id;
@@ -108,9 +105,7 @@ nlohmann::json make_order(int header_id, const std::string& manufacturer, const 
     return msg;
 }
 
-nlohmann::json make_action(const std::string& action_type, const std::string& blocking_type,
-                            const std::string& action_id,
-                            const nlohmann::json& parameters)
+nlohmann::json make_action(const std::string& action_type, const std::string& blocking_type, const std::string& action_id, const nlohmann::json& parameters)
 {
     nlohmann::json action = {
         {"actionType", action_type},
@@ -129,16 +124,14 @@ nlohmann::json make_action(const std::string& action_type, const std::string& bl
     return action;
 }
 
-nlohmann::json make_instant_actions(int header_id, const std::string& manufacturer,
-                                    const std::string& serial, const nlohmann::json& actions)
+nlohmann::json make_instant_actions(int header_id, const std::string& manufacturer, const std::string& serial, const nlohmann::json& actions)
 {
     nlohmann::json msg = header(header_id, manufacturer, serial);
     msg["actions"] = actions;
     return msg;
 }
 
-nlohmann::json cancel_order_action(const std::string& action_id,
-                                   const std::string& blocking_type)
+nlohmann::json cancel_order_action(const std::string& action_id, const std::string& blocking_type)
 {
     return make_action("cancelOrder", blocking_type, action_id);
 }
