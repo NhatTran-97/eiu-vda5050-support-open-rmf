@@ -1,5 +1,6 @@
 """Track VDA5050 connectivity and telemetry for configured robots over MQTT."""
 
+import collections
 import json
 import threading
 import time
@@ -8,12 +9,18 @@ import paho.mqtt.client as mqtt
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 
 from .config import FleetConfig, client_id
+from .vda5050 import traffic
+from .vda5050.graph import NavGraph, OffGraphTracker
 from .vda5050.state import parse_state
 
 LEAF_CONNECTION = "connection"
 LEAF_STATE = "state"
+# Published by the fleet adapter to the robot; the dashboard only listens in.
+LEAF_ORDER = "order"
+LEAF_INSTANT = "instantActions"
 # Mark robot telemetry stale after this many seconds without a state message.
 STATE_STALE_AFTER_SEC = 5.0
+TRAFFIC_LOG_SIZE = 200
 
 
 class MqttClient(QObject):
@@ -22,6 +29,7 @@ class MqttClient(QObject):
     stateChanged = Signal()
     onlineChanged = Signal()
     telemetryChanged = Signal()
+    trafficChanged = Signal()
 
     def __init__(self, config: FleetConfig, parent=None):
         super().__init__(parent)
@@ -40,6 +48,19 @@ class MqttClient(QObject):
         self._telemetry_dirty = False
         self._online_json = json.dumps(self._online)
         self._telemetry_json = "{}"
+
+        # Message log, newest last; raw payloads are fetched on demand via rawFor().
+        self._traffic = collections.deque(maxlen=TRAFFIC_LOG_SIZE)
+        self._traffic_seq = 0
+        self._traffic_dirty = False
+        self._traffic_json = "[]"
+        self._state_sig: dict[str, tuple] = {}
+        # robot -> {actionId: blockingType}, learned from order/instantActions messages.
+        self._blocking: dict[str, dict] = {}
+        self._off_graph = None
+        self._off_graph_state: dict[str, tuple] = {}
+        # robot -> trimmed latest order for the node-details view.
+        self._orders: dict[str, dict] = {}
 
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(200)
@@ -93,8 +114,10 @@ class MqttClient(QObject):
             for robot in self._config.robots:
                 client.subscribe(robot.topic(LEAF_CONNECTION))
                 client.subscribe(robot.topic(LEAF_STATE))
+                client.subscribe(robot.topic(LEAF_ORDER))
+                client.subscribe(robot.topic(LEAF_INSTANT))
             print(f"[MQTT] broker connected, subscribed to "
-                  f"{len(self._config.robots)} robot(s)' connection+state topics")
+                  f"{len(self._config.robots)} robot(s)' connection/state/order/instantActions topics")
         else:
             print(f"[MQTT] connect failed rc={rc}")
         self.stateChanged.emit()
@@ -124,13 +147,36 @@ class MqttClient(QObject):
                     if self._online.get(robot.name) != online:
                         self._online[robot.name] = online
                         self._online_dirty = True
+                        self._log(robot.name, "in", "connection",
+                                  "ONLINE" if online else "OFFLINE", msg.payload)
             elif msg.topic == robot.topic(LEAF_STATE):
                 state = parse_state(data)
+                sig = traffic.state_signature(state)
                 with self._lock:
                     self._telemetry[robot.name] = state
+                    if self._off_graph is not None:
+                        self._off_graph_state[robot.name] = self._off_graph.update(
+                            robot.name, state.x, state.y, time.monotonic())
                     self._last_state_rx[robot.name] = time.monotonic()
                     self._last_state_epoch[robot.name] = time.time()
                     self._telemetry_dirty = True
+                    # Log only meaningful state changes.
+                    self._latch_action_status(robot.name, state)
+                    if self._state_sig.get(robot.name) != sig:
+                        self._state_sig[robot.name] = sig
+                        self._log(robot.name, "in", "state", traffic.state_summary(state), msg.payload)
+            elif msg.topic == robot.topic(LEAF_ORDER):
+                with self._lock:
+                    self._blocking.setdefault(robot.name, {}).update(traffic.order_actions(data))
+                    self._orders[robot.name] = traffic.order_detail(data)
+                    self._telemetry_dirty = True    # action_states carry blockingType
+                    self._log(robot.name, "out", "order", traffic.order_summary(data), msg.payload)
+            elif msg.topic == robot.topic(LEAF_INSTANT):
+                with self._lock:
+                    self._blocking.setdefault(robot.name, {}).update(traffic.instant_actions(data))
+                    self._telemetry_dirty = True
+                    self._log(robot.name, "out", "instantAction", traffic.instant_summary(data), msg.payload,
+                              ids=list(traffic.instant_actions(data)))
         except Exception as e:
             print(f"[MQTT] malformed payload on {msg.topic}: {e}")
 
@@ -151,10 +197,16 @@ class MqttClient(QObject):
             telemetry_payload = None
             if self._telemetry_dirty:
                 telemetry_payload = json.dumps({
-                    name: {**s.to_dict(), "stale": stale_now.get(name, False),
-                           "last_rx": self._last_state_epoch.get(name, 0)}
+                    name: self._export(name, s, stale_now.get(name, False))
                     for name, s in self._telemetry.items()})
             self._telemetry_dirty = False
+
+            traffic_payload = None
+            if self._traffic_dirty:
+                # Newest first; raw payloads are fetched separately via rawFor().
+                traffic_payload = json.dumps(
+                    [{k: v for k, v in e.items() if k != "raw"} for e in reversed(self._traffic)])
+            self._traffic_dirty = False
 
         if online_payload is not None:
             self._online_json = online_payload
@@ -162,6 +214,50 @@ class MqttClient(QObject):
         if telemetry_payload is not None:
             self._telemetry_json = telemetry_payload
             self.telemetryChanged.emit()
+        if traffic_payload is not None:
+            self._traffic_json = traffic_payload
+            self.trafficChanged.emit()
+
+    def set_graph(self, graph: NavGraph):
+        """Enable off-graph detection against the given navigation graph."""
+        self._off_graph = OffGraphTracker(graph)
+
+    def _export(self, name, state, stale):
+        """Telemetry dict for QML; action states gain the blockingType the order declared."""
+        d = state.to_dict()
+        blocking = self._blocking.get(name, {})
+        d["action_states"] = [
+            {**a, "blockingType": blocking.get(a.get("actionId"), "")} if isinstance(a, dict) else a
+            for a in d["action_states"]]
+        d["order_detail"] = self._orders.get(name)
+        d["off_graph_m"], d["off_graph"] = self._off_graph_state.get(name, (None, False))
+        d["stale"] = stale
+        d["last_rx"] = self._last_state_epoch.get(name, 0)
+        return d
+
+    def _latch_action_status(self, robot: str, state):
+        """Keep each instantAction's last reported status. Caller holds self._lock."""
+        reported = {a.get("actionId"): a.get("actionStatus")
+                    for a in state.action_states if isinstance(a, dict)}
+        if not reported:
+            return
+        for e in self._traffic:
+            if e["type"] != "instantAction" or e["robot"] != robot:
+                continue
+            for action_id in e["ids"]:
+                status = reported.get(action_id)
+                if status and status != e["status"]:
+                    e["status"] = status
+                    self._traffic_dirty = True
+
+    def _log(self, robot: str, direction: str, kind: str, summary: str, payload, ids=None):
+        """Append to the traffic log. Caller holds self._lock; ids = actionIds an instantAction carries."""
+        self._traffic_seq += 1
+        raw = payload.decode("utf-8", "replace") if isinstance(payload, (bytes, bytearray)) else str(payload)
+        self._traffic.append({"id": self._traffic_seq, "ts": time.time(), "robot": robot,
+                              "dir": direction, "type": kind, "summary": summary, "ids": ids or [],
+                              "status": "SENT" if kind == "instantAction" else "", "raw": raw})
+        self._traffic_dirty = True
 
     # MQTT state exposed to QML.
 
@@ -172,6 +268,20 @@ class MqttClient(QObject):
     @Property(str, notify=onlineChanged)
     def robotsOnlineJson(self):
         return self._online_json
+
+    @Property(str, notify=trafficChanged)
+    def trafficJson(self):
+        return self._traffic_json
+
+    @Slot(int, result=str)
+    def rawFor(self, msg_id):
+        """Pretty-printed original payload of one logged message ('' if it has aged out)."""
+        with self._lock:
+            raw = next((e["raw"] for e in self._traffic if e["id"] == msg_id), "")
+        try:
+            return json.dumps(json.loads(raw), indent=2)
+        except Exception:
+            return raw
 
     @Property(str, notify=telemetryChanged)
     def telemetryJson(self):

@@ -296,6 +296,10 @@ class FleetSettings(QObject):
     def robotNamesJson(self):
         return json.dumps([r.name for r in self._c.robots])
 
+    @Property(str, constant=True)
+    def robotFleetsJson(self):
+        return json.dumps({r.name: r.fleet_name for r in self._c.robots})
+
     @Property(bool, constant=True)
     def websocketEnabled(self):
         return self._c.websocket_uri is not None

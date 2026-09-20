@@ -9,6 +9,7 @@ Popup {
     property string robotName: ""
     // Keep the status bound to live robot telemetry.
     readonly property var tele: root.telemetryFor(robotName)
+    readonly property bool robotPaused: !!(tele && tele.paused)
     readonly property bool online: !!root.robotsOnline[robotName]
     // VDA5050 offline means every command below would silently go nowhere.
     readonly property bool controlsEnabled: online
@@ -261,29 +262,37 @@ Popup {
                 Layout.fillWidth: true
                 spacing: 10
 
+                // The button matching the current state is filled; the other is outlined.
                 Button {
+                    id: pauseBtn
                     Layout.fillWidth: true
                     implicitHeight: 40
-                    text: (dlg.tele && dlg.tele.paused) ? "PAUSED" : "PAUSE"
-                    enabled: !dlg.tele || !dlg.tele.paused
-                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 14; font.bold: true
+                    text: dlg.robotPaused ? "PAUSED" : "PAUSE"
+                    enabled: !dlg.robotPaused
+                    contentItem: Text { text: pauseBtn.text; color: dlg.robotPaused ? C.bg : C.warn
+                                         font.pixelSize: 14; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                          elide: Text.ElideRight }
-                    background: Rectangle { radius: 10; color: parent.down ? C.border : C.surfaceAlt
-                                             border.color: C.border; border.width: 1
-                                             opacity: parent.enabled ? 1.0 : 0.65 }
+                    background: Rectangle { radius: 10
+                                             color: dlg.robotPaused ? C.warn
+                                                    : Qt.alpha(C.warn, pauseBtn.down ? 0.30 : 0.10)
+                                             border.color: C.warn; border.width: 1 }
                     onClicked: control.pauseRobot(dlg.robotName)
                 }
                 Button {
+                    id: resumeBtn
                     Layout.fillWidth: true
                     implicitHeight: 40
-                    text: (dlg.tele && dlg.tele.paused) ? "RESUME" : "RESUMED"
-                    enabled: dlg.tele && dlg.tele.paused
-                    contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 14; font.bold: true
+                    text: dlg.robotPaused ? "RESUME" : "RESUMED"
+                    enabled: dlg.robotPaused
+                    contentItem: Text { text: resumeBtn.text; color: dlg.robotPaused ? C.success : C.bg
+                                         font.pixelSize: 14; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                          elide: Text.ElideRight }
-                    background: Rectangle { radius: 10; color: parent.down ? C.accentDark : C.accent
-                                             opacity: parent.enabled ? 1.0 : 0.65 }
+                    background: Rectangle { radius: 10
+                                             color: dlg.robotPaused ? Qt.alpha(C.success, resumeBtn.down ? 0.30 : 0.10)
+                                                    : C.success
+                                             border.color: C.success; border.width: 1 }
                     onClicked: control.resumeRobot(dlg.robotName)
                 }
             }

@@ -42,6 +42,8 @@ class RobotState:
     action_states: list = field(default_factory=list)
 
     localization_score: float | None = None
+    x: float | None = None
+    y: float | None = None
     map_id: str = ""
     # Whether the adapter can use this robot pose for route planning.
     position_initialized: bool = False
@@ -92,6 +94,8 @@ def parse_state(raw: dict) -> RobotState:
     pos = raw.get("agvPosition")
     if isinstance(pos, dict):
         s.localization_score = pos.get("localizationScore")
+        s.x = pos.get("x")
+        s.y = pos.get("y")
         s.map_id = pos.get("mapId", "")
         # Require x, y, theta, and the initialization flag for a usable pose.
         has_xytheta = all(pos.get(k) is not None for k in ("x", "y", "theta"))

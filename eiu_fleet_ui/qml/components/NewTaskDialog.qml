@@ -8,7 +8,12 @@ Dialog {
     id: dlg
 
     property var places: []      // Waypoint names from nav_graph
+    property var robotsOnline: ({})
+    // Only online robots can take a task.
+    property var robotNames: JSON.parse(cfg.robotNamesJson).filter(function (n) { return !!robotsOnline[n] })
     property string errorMessage: ""
+
+    onAboutToShow: robotCombo.currentIndex = 0
 
     Connections {
         target: ros
@@ -107,6 +112,32 @@ Dialog {
                 font.pixelSize: 13
                 contentItem: Text {
                     text: placeCombo.displayText; color: C.text; font: placeCombo.font
+                    leftPadding: 10; elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
+                }
+                background: Rectangle {
+                    implicitHeight: 42; radius: 10
+                    color: C.surfaceAlt; border.color: C.border; border.width: 1
+                }
+            }
+        }
+
+        // Choose which robot performs the task, or let RMF decide.
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            spacing: 4
+            visible: catCombo.currentText !== "delivery"
+            Text { text: "ASSIGN TO ROBOT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+            ComboBox {
+                id: robotCombo
+                objectName: "robotCombo"
+                Layout.fillWidth: true
+                model: ["Auto (RMF chooses)"].concat(dlg.robotNames)
+                font.pixelSize: 13
+                contentItem: Text {
+                    text: robotCombo.displayText; color: robotCombo.currentIndex > 0 ? C.text : C.textDim
+                    font: robotCombo.font
                     leftPadding: 10; elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -259,6 +290,7 @@ Dialog {
 
             Button {
                 id: submitBtn
+                objectName: "submitBtn"
                 text: "DISPATCH TASK"
                 enabled: catCombo.currentText === "delivery"
                         ? (pickupCombo.currentText !== "" && dropoffCombo.currentText !== ""
@@ -280,6 +312,9 @@ Dialog {
                     if (catCombo.currentText === "delivery") {
                         ros.dispatchDelivery(pickupCombo.currentText, pickupHandlerField.text,
                                              dropoffCombo.currentText, dropoffHandlerField.text)
+                    } else if (robotCombo.currentIndex > 0) {
+                        ros.dispatchToRobot(catCombo.currentText, placeCombo.currentText, loopsSpin.value,
+                                            robotCombo.currentText)
                     } else {
                         ros.dispatch(catCombo.currentText, placeCombo.currentText, loopsSpin.value)
                     }

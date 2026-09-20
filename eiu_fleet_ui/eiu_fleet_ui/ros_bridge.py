@@ -804,10 +804,19 @@ class RosBridge(QObject):
         if indices:
             self._lane_command_queue.put(([], indices))
 
+    def _robot_registered(self, robot: str) -> bool:
+        """True when a fleet adapter has reported this robot to RMF."""
+        return any(r["name"] == robot for r in json.loads(self._robots_json))
+
     def _dispatch(self, category: str, place: str, loops: int, robot: str):
         if not self._ok or self._task_pub is None:
             print("[ROS] dispatch skipped — ROS not ready yet")
             self.dispatchResult.emit(False, "ROS not connected — dispatch not sent")
+            return
+
+        if robot and not self._robot_registered(robot):
+            print(f"[ROS] dispatch skipped — {robot} is not registered with RMF")
+            self.dispatchResult.emit(False, f"{robot} is not registered with RMF (offline) — task not sent")
             return
 
         import uuid

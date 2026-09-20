@@ -11,6 +11,8 @@ Rectangle {
     property var robotsOnline: ({})
     property var waypoints: []
     property string selectedRobotName: ""
+    // True once the operator has picked a robot.
+    property bool userPicked: false
     property var telemetry: ({})
     property real nowTick: 0
 
@@ -79,6 +81,23 @@ Rectangle {
     readonly property bool offline: !!primaryRobot && !robotOnline
     readonly property real lastRx: primaryRobot
                                     ? Number((telemetry[primaryRobot.name] || {}).last_rx || 0) : 0
+
+    // VDA5050 order/action state, as parsed from the robot's state topic.
+    readonly property string orderId: primaryRobot
+                                   ? String((telemetry[primaryRobot.name] || {}).order_id || "") : ""
+    readonly property var orderUpdateId: primaryRobot
+                                   ? (telemetry[primaryRobot.name] || {}).order_update_id : null
+    readonly property var orderNodeStates: primaryRobot
+                                   ? ((telemetry[primaryRobot.name] || {}).node_states || []) : []
+    readonly property var orderActionStates: primaryRobot
+                                   ? ((telemetry[primaryRobot.name] || {}).action_states || []) : []
+    readonly property string orderLastNodeId: primaryRobot
+                                   ? String((telemetry[primaryRobot.name] || {}).last_node_id || "") : ""
+    readonly property var orderLastNodeSeq: primaryRobot
+                                   ? (telemetry[primaryRobot.name] || {}).last_node_sequence_id : null
+    readonly property var orderDetail: primaryRobot
+                                   ? ((telemetry[primaryRobot.name] || {}).order_detail || null) : null
+    readonly property bool hasOrder: hasTele && orderId !== ""
     readonly property color batteryColor: !hasBatteryReading ? C.textDim
                                           : (battery < 20 ? C.err
                                              : (battery < 50 ? C.warn : C.success))
@@ -123,6 +142,19 @@ Rectangle {
         }
         if (names.indexOf(selectedRobotName) < 0)
             selectedRobotName = names[0]
+    }
+
+    // Prefer an online robot; keep the current one while it is online.
+    function autoPickOnline() {
+        if (userPicked || robotsOnline[selectedRobotName])
+            return
+        var names = buildRobotNames()
+        for (var i = 0; i < names.length; ++i) {
+            if (robotsOnline[names[i]]) {
+                selectedRobotName = names[i]
+                return
+            }
+        }
     }
 
     function selectedRobot() {
@@ -312,8 +344,10 @@ Rectangle {
     }
 
     onBatteryChanged: batteryGauge.requestPaint()
+    onRobotsOnlineChanged: autoPickOnline()
     onRobotsChanged: {
         ensureSelectedRobot()
+        autoPickOnline()
         updateTaskProgress()
     }
     onTasksChanged: updateTaskProgress()
@@ -322,7 +356,10 @@ Rectangle {
         updateTaskProgress()
         batteryGauge.requestPaint()
     }
-    Component.onCompleted: ensureSelectedRobot()
+    Component.onCompleted: {
+        ensureSelectedRobot()
+        autoPickOnline()
+    }
 
     radius: 12
     color: "#091827"
@@ -423,7 +460,10 @@ Rectangle {
                                 font.family: fontMono
                                 font.pixelSize: 18 * root.uiScale
                                 font.bold: true
-                                onActivated: root.selectedRobotName = currentText
+                                onActivated: {
+                                    root.userPicked = true
+                                    root.selectedRobotName = currentText
+                                }
 
                                 contentItem: Text {
                                     leftPadding: 11
@@ -859,198 +899,227 @@ Rectangle {
                 }
             }
 
-            // Task counts grouped by state.
-            Rectangle {
+            // Right-hand column: VDA5050 order/action traffic above the task chart.
+            ColumnLayout {
                 Layout.fillWidth: true
-                // Don't stretch an empty chart into a tall blank panel.
-                Layout.fillHeight: root.taskTotal > 0
+                Layout.fillHeight: true
                 Layout.preferredWidth: 360
-                implicitHeight: distributionColumn.implicitHeight + 24
-                radius: 10
-                color: C.surface
-                border.color: C.border
-                border.width: 1
+                spacing: 10
 
-                ColumnLayout {
-                    id: distributionColumn
-                    anchors.fill: parent
-                    anchors.margins: 12
-                    spacing: 12
+                VdaOrderPanel {
+                    Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignTop
+                    robotName: root.robotName
+                    hasTele: root.hasTele
+                    hasOrder: root.hasOrder
+                    offline: root.offline
+                    orderId: root.orderId
+                    updateId: root.orderUpdateId
+                    nodeStates: root.orderNodeStates
+                    actionStates: root.orderActionStates
+                    orderDetail: root.orderDetail
+                    lastNodeId: root.orderLastNodeId
+                    lastNodeSeq: root.orderLastNodeSeq
+                    uiScale: root.uiScale
+                }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        ColumnLayout {
-                            spacing: 1
-                            Text {
-                                text: "TASK DISTRIBUTION"
-                                color: C.textDim
-                                font.pixelSize: 11 * root.uiScale
-                                font.bold: true
-                                font.letterSpacing: 1.0
+                // Task counts grouped by state.
+                Rectangle {
+                    Layout.fillWidth: true
+                    // Keep an empty chart compact.
+                    Layout.fillHeight: root.taskTotal > 0
+                    Layout.alignment: Qt.AlignTop
+                    Layout.preferredWidth: 360
+                    implicitHeight: distributionColumn.implicitHeight + 24
+                    radius: 10
+                    color: C.surface
+                    border.color: C.border
+                    border.width: 1
+
+                    ColumnLayout {
+                        id: distributionColumn
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 12
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                spacing: 1
+                                Text {
+                                    text: "TASK DISTRIBUTION"
+                                    color: C.textDim
+                                    font.pixelSize: 11 * root.uiScale
+                                    font.bold: true
+                                    font.letterSpacing: 1.0
+                                }
+                                Text {
+                                    text: root.robotName
+                                    color: C.cyan
+                                    font.family: fontMono
+                                    font.pixelSize: 10 * root.uiScale
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    Layout.maximumWidth: 180 * root.uiScale
+                                }
                             }
+                            Item { Layout.fillWidth: true }
                             Text {
-                                text: root.robotName
+                                text: root.taskTotal + " TOTAL"
                                 color: C.cyan
                                 font.family: fontMono
-                                font.pixelSize: 10 * root.uiScale
+                                font.pixelSize: 11 * root.uiScale
                                 font.bold: true
-                                elide: Text.ElideRight
-                                Layout.maximumWidth: 180 * root.uiScale
-                            }
-                        }
-                        Item { Layout.fillWidth: true }
-                        Text {
-                            text: root.taskTotal + " TOTAL"
-                            color: C.cyan
-                            font.family: fontMono
-                            font.pixelSize: 11 * root.uiScale
-                            font.bold: true
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        spacing: 14 * root.uiScale
-
-                        Item {
-                            Layout.preferredWidth: 84 * Math.min(1.15, root.uiScale)
-                            Layout.preferredHeight: Layout.preferredWidth
-                            Layout.alignment: Qt.AlignVCenter
-
-                            Canvas {
-                                id: taskDonut
-                                anchors.fill: parent
-                                antialiasing: true
-                                Component.onCompleted: requestPaint()
-                                onPaint: {
-                                    var ctx = getContext("2d")
-                                    ctx.reset()
-                                    var cx = width / 2
-                                    var cy = height / 2
-                                    var radius = Math.min(width, height) / 2 - 6
-                                    var start = -Math.PI / 2
-
-                                    ctx.lineCap = "butt"
-                                    ctx.lineWidth = 10
-                                    ctx.strokeStyle = C.surfaceRaised
-                                    ctx.beginPath()
-                                    ctx.arc(cx, cy, radius, 0, Math.PI * 2)
-                                    ctx.stroke()
-
-                                    if (root.taskTotal <= 0) return
-                                    for (var i = 0; i < root.taskStats.length; i++) {
-                                        var seg = root.taskStats[i]
-                                        if (seg.value <= 0) continue
-                                        var sweep = Math.PI * 2 * (seg.value / root.taskTotal)
-                                        ctx.strokeStyle = seg.barColor
-                                        ctx.beginPath()
-                                        ctx.arc(cx, cy, radius, start, start + sweep)
-                                        ctx.stroke()
-                                        start += sweep
-                                    }
-                                }
-                            }
-                            Column {
-                                anchors.centerIn: parent
-                                spacing: -2
-                                Text {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    text: root.taskTotal > 0
-                                          ? Math.round(100 * root.completedCount / root.taskTotal) + "%"
-                                          : "—"
-                                    color: C.success
-                                    font.family: fontMono
-                                    font.pixelSize: 16 * root.uiScale
-                                    font.bold: true
-                                }
-                                Text {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    text: "DONE"
-                                    color: C.textDim
-                                    font.pixelSize: 8 * root.uiScale
-                                    font.bold: true
-                                    font.letterSpacing: 0.6
-                                }
                             }
                         }
 
-                        ColumnLayout {
+                        RowLayout {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            spacing: 4
+                            spacing: 14 * root.uiScale
 
-                            Repeater {
-                                model: root.taskStats
+                            Item {
+                                Layout.preferredWidth: 84 * Math.min(1.15, root.uiScale)
+                                Layout.preferredHeight: Layout.preferredWidth
+                                Layout.alignment: Qt.AlignVCenter
 
-                                delegate: RowLayout {
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    spacing: 8
-                                    // Dim states with no tasks.
-                                    opacity: modelData.value > 0 ? 1.0 : 0.45
+                                Canvas {
+                                    id: taskDonut
+                                    anchors.fill: parent
+                                    antialiasing: true
+                                    Component.onCompleted: requestPaint()
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.reset()
+                                        var cx = width / 2
+                                        var cy = height / 2
+                                        var radius = Math.min(width, height) / 2 - 6
+                                        var start = -Math.PI / 2
 
-                                    Text {
-                                        Layout.minimumWidth: implicitWidth
-                                        Layout.preferredWidth: Math.max(
-                                            implicitWidth,
-                                            76 * Math.min(1.15, root.uiScale))
-                                        text: modelData.label
-                                        color: C.text
-                                        font.pixelSize: 11 * root.uiScale
-                                        font.bold: true
-                                    }
-                                    Rectangle {
-                                        id: chartTrack
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 9
-                                        radius: 4.5
-                                        color: C.surfaceRaised
+                                        ctx.lineCap = "butt"
+                                        ctx.lineWidth = 10
+                                        ctx.strokeStyle = C.surfaceRaised
+                                        ctx.beginPath()
+                                        ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+                                        ctx.stroke()
 
-                                        Rectangle {
-                                            width: modelData.value > 0
-                                                   ? Math.max(5, parent.width * modelData.value
-                                                              / Math.max(1, root.taskTotal))
-                                                   : 0
-                                            height: parent.height
-                                            radius: parent.radius
-                                            color: modelData.barColor
-
-                                            Behavior on width {
-                                                NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
-                                            }
+                                        if (root.taskTotal <= 0) return
+                                        for (var i = 0; i < root.taskStats.length; i++) {
+                                            var seg = root.taskStats[i]
+                                            if (seg.value <= 0) continue
+                                            var sweep = Math.PI * 2 * (seg.value / root.taskTotal)
+                                            ctx.strokeStyle = seg.barColor
+                                            ctx.beginPath()
+                                            ctx.arc(cx, cy, radius, start, start + sweep)
+                                            ctx.stroke()
+                                            start += sweep
                                         }
                                     }
+                                }
+                                Column {
+                                    anchors.centerIn: parent
+                                    spacing: -2
                                     Text {
-                                        Layout.preferredWidth: 24
-                                        text: modelData.value
-                                        color: modelData.barColor
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        text: root.taskTotal > 0
+                                              ? Math.round(100 * root.completedCount / root.taskTotal) + "%"
+                                              : "—"
+                                        color: C.success
                                         font.family: fontMono
-                                        font.pixelSize: 13 * root.uiScale
+                                        font.pixelSize: 16 * root.uiScale
                                         font.bold: true
-                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                    Text {
+                                        anchors.horizontalCenter: parent.horizontalCenter
+                                        text: "DONE"
+                                        color: C.textDim
+                                        font.pixelSize: 8 * root.uiScale
+                                        font.bold: true
+                                        font.letterSpacing: 0.6
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                spacing: 4
+
+                                Repeater {
+                                    model: root.taskStats
+
+                                    delegate: RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        spacing: 8
+                                        // Dim states with no tasks.
+                                        opacity: modelData.value > 0 ? 1.0 : 0.45
+
+                                        Text {
+                                            Layout.minimumWidth: implicitWidth
+                                            Layout.preferredWidth: Math.max(
+                                                implicitWidth,
+                                                76 * Math.min(1.15, root.uiScale))
+                                            text: modelData.label
+                                            color: C.text
+                                            font.pixelSize: 11 * root.uiScale
+                                            font.bold: true
+                                        }
+                                        Rectangle {
+                                            id: chartTrack
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 9
+                                            radius: 4.5
+                                            color: C.surfaceRaised
+
+                                            Rectangle {
+                                                width: modelData.value > 0
+                                                       ? Math.max(5, parent.width * modelData.value
+                                                                  / Math.max(1, root.taskTotal))
+                                                       : 0
+                                                height: parent.height
+                                                radius: parent.radius
+                                                color: modelData.barColor
+
+                                                Behavior on width {
+                                                    NumberAnimation { duration: 280; easing.type: Easing.OutCubic }
+                                                }
+                                            }
+                                        }
+                                        Text {
+                                            Layout.preferredWidth: 24
+                                            text: modelData.value
+                                            color: modelData.barColor
+                                            font.family: fontMono
+                                            font.pixelSize: 13 * root.uiScale
+                                            font.bold: true
+                                            horizontalAlignment: Text.AlignRight
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    Connections {
-                        target: root
-                        function onTaskStatsChanged() { taskDonut.requestPaint() }
-                    }
+                        Connections {
+                            target: root
+                            function onTaskStatsChanged() { taskDonut.requestPaint() }
+                        }
 
-                    Text {
-                        Layout.fillWidth: true
-                        visible: root.taskTotal === 0
-                        text: root.primaryRobot
-                              ? "No task history for " + root.robotName
-                              : "Waiting for robot telemetry"
-                        color: C.textDim
-                        font.pixelSize: 10 * root.uiScale
-                        horizontalAlignment: Text.AlignHCenter
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.taskTotal === 0
+                            text: root.primaryRobot
+                                  ? "No task history for " + root.robotName
+                                  : "Waiting for robot telemetry"
+                            color: C.textDim
+                            font.pixelSize: 10 * root.uiScale
+                            horizontalAlignment: Text.AlignHCenter
+                        }
                     }
                 }
+
+                // Let the column grow so content top-aligns.
+                Item { Layout.fillHeight: true; visible: root.taskTotal === 0 }
             }
         }
     }

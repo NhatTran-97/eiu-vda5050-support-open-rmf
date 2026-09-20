@@ -46,6 +46,7 @@ ApplicationWindow {
     property var robotsOnline: ({})
     // VDA5050 telemetry by robot name.
     property var telemetry: ({})
+    property var traffic: []
     // Applied speed limit by robot name; zero means no limit.
     property var speedLimits: ({})
     readonly property string monoFontFamily: fontMono
@@ -54,8 +55,10 @@ ApplicationWindow {
     property string selectedRobotName: ""
     function selectRobot(name) {
         root.selectedRobotName = name
-        if (fleetAnalytics)
+        if (fleetAnalytics) {
+            fleetAnalytics.userPicked = true
             fleetAnalytics.selectedRobotName = name
+        }
     }
 
     function countTasksByState(state) {
@@ -97,12 +100,14 @@ ApplicationWindow {
     function reloadTasks()  { root.tasks = JSON.parse(ros.tasksJson) }
     function reloadRobotsOnline() { root.robotsOnline = JSON.parse(mqtt.robotsOnlineJson) }
     function reloadTelemetry() { root.telemetry = JSON.parse(mqtt.telemetryJson) }
+    function reloadTraffic() { root.traffic = JSON.parse(mqtt.trafficJson) }
     function telemetryFor(name) { return root.telemetry[name] || null }
     function reloadSpeedLimits() { root.speedLimits = JSON.parse(control.speedLimitsJson) }
 
     // Include configured robots not yet present in /fleet_states.
     readonly property var displayRobots: {
         var known = JSON.parse(cfg.robotNamesJson)
+        var fleetOf = JSON.parse(cfg.robotFleetsJson)
         var byName = {}
         for (var i = 0; i < root.robots.length; i++)
             byName[root.robots[i].name] = root.robots[i]
@@ -123,10 +128,12 @@ ApplicationWindow {
                 continue
             }
             var pendingHasBattery = !!(tele && tele.battery_soc != null)
+            // Use the robot's own fleet name.
+            var ownFleet = fleetOf[name] || cfg.fleetName
             out.push({
-                key: cfg.fleetName + "/" + name,
+                key: ownFleet + "/" + name,
                 name: name,
-                fleet: cfg.fleetName,
+                fleet: ownFleet,
                 model: "",
                 status: "PENDING SYNC",
                 battery: pendingHasBattery ? tele.battery_soc * 100 : 0,
@@ -206,6 +213,12 @@ ApplicationWindow {
             if (t && t.stale === true)
                 items.push({ severity: "warning", robot: r.name, title: r.name + " telemetry stale",
                              detail: "No recent VDA5050 state update" })
+            if (root.robotsOnline[r.name] && t && t.off_graph)
+                items.push({ severity: "warning", robot: r.name, title: r.name + " off the navigation graph",
+                             detail: Number(t.off_graph_m).toFixed(1) + " m from the nearest lane · RMF may not be able to plan its route" })
+            if (root.robotsOnline[r.name] && t && t.paused)
+                items.push({ severity: "warning", robot: r.name, title: r.name + " paused",
+                             detail: "RMF will not assign tasks until it is resumed" })
         }
         var failedTasks = 0
         for (var j = 0; j < root.tasks.length; j++) {
@@ -310,6 +323,7 @@ ApplicationWindow {
         reloadTasks()
         reloadRobotsOnline()
         reloadTelemetry()
+        reloadTraffic()
         reloadSpeedLimits()
         // Children complete first, so FleetAnalytics has already auto-selected a robot.
         if (fleetAnalytics.selectedRobotName)
@@ -326,6 +340,7 @@ ApplicationWindow {
         target: mqtt
         function onOnlineChanged() { root.reloadRobotsOnline() }
         function onTelemetryChanged() { root.reloadTelemetry() }
+        function onTrafficChanged() { root.reloadTraffic() }
     }
 
     Connections {
@@ -340,6 +355,7 @@ ApplicationWindow {
     NewTaskDialog {
         id: taskDialog
         places: root.wpNames
+        robotsOnline: root.robotsOnline
         anchors.centerIn: parent
     }
 
@@ -1036,11 +1052,12 @@ ApplicationWindow {
                         ColumnLayout {
                             id: fleetPanel
                             objectName: "fleetPanel"
-                            // Size the robot list for the fleet count.
+                            // Map : robot panel split is 60 : 40 by default.
+                            readonly property real panelRatio: 0.4
                             readonly property bool smallFleet: root.displayRobots.length <= 3
-                            SplitView.preferredWidth: smallFleet ? 480 : 720
+                            SplitView.preferredWidth: dashboardSplit.width * panelRatio
                             SplitView.minimumWidth: smallFleet ? 420 : 640
-                            SplitView.maximumWidth: smallFleet ? 620 : 900
+                            SplitView.maximumWidth: dashboardSplit.width * 0.5
                             spacing: 16
 
                             // Scale typography with the robot panel width.
@@ -1557,7 +1574,7 @@ ApplicationWindow {
                                 objectName: "recentTasksPanel"
                                 Layout.fillWidth: true
                                 // Don't stretch an empty table into a tall blank panel.
-                                Layout.fillHeight: root.tasks.length > 0
+                                Layout.fillHeight: root.tasks.length > 0 || panelTab === "traffic"
                                 Layout.preferredHeight: 280
                                 radius: 16
                                 color: C.surface
@@ -1576,6 +1593,7 @@ ApplicationWindow {
                                 readonly property real actionColumnWidth: 26
                                 readonly property real identityColumnGap: 8 * tableScale
 
+                                property string panelTab: "tasks"   // tasks | traffic
                                 property string taskSearchText: ""
                                 property string taskStateFilter: "All"
 
@@ -1624,16 +1642,40 @@ ApplicationWindow {
                                                 radius: 2
                                                 color: C.accent
                                             }
-                                            Text {
-                                                text: "RECENT TASKS"
-                                                color: C.text
-                                                font.pixelSize: 13 * recentTasksPanel.tableScale
-                                                font.bold: true
-                                                font.letterSpacing: 0.8
+                                            Repeater {
+                                                model: [{ key: "tasks", label: "RECENT TASKS" },
+                                                        { key: "traffic", label: "VDA5050 TRAFFIC" }]
+                                                delegate: Text {
+                                                    readonly property bool active: recentTasksPanel.panelTab === modelData.key
+                                                    text: modelData.label
+                                                    color: active ? C.text : C.textDim
+                                                    font.pixelSize: 12 * recentTasksPanel.tableScale
+                                                    font.bold: true
+                                                    font.letterSpacing: 0.8
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: recentTasksPanel.panelTab = modelData.key
+                                                    }
+                                                    Rectangle {
+                                                        visible: parent.active
+                                                        anchors.left: parent.left
+                                                        anchors.right: parent.right
+                                                        anchors.top: parent.bottom
+                                                        anchors.topMargin: 3
+                                                        height: 2
+                                                        radius: 1
+                                                        color: C.accent
+                                                    }
+                                                }
                                             }
+                                            // Keeps the tab-specific controls on the right.
+                                            Item { visible: recentTasksPanel.panelTab === "traffic"; Layout.fillWidth: true }
                                             TextField {
                                                 id: taskSearchField
+                                                visible: recentTasksPanel.panelTab === "tasks"
                                                 Layout.fillWidth: true
+                                                Layout.minimumWidth: 70
                                                 Layout.maximumWidth: 180 * recentTasksPanel.tableScale
                                                 Layout.preferredHeight: 28 * recentTasksPanel.tableScale
                                                 placeholderText: "Search robot / dest…"
@@ -1650,6 +1692,7 @@ ApplicationWindow {
                                             }
                                             ComboBox {
                                                 id: taskStateCombo
+                                                visible: recentTasksPanel.panelTab === "tasks"
                                                 Layout.preferredWidth: 108 * recentTasksPanel.tableScale
                                                 Layout.preferredHeight: 28 * recentTasksPanel.tableScale
                                                 model: ["All", "Queued", "Underway", "Completed", "Cancelled", "Failed"]
@@ -1666,6 +1709,8 @@ ApplicationWindow {
                                                 }
                                             }
                                             Rectangle {
+                                                // Hide the count on a narrow card.
+                                                visible: recentTasksPanel.panelTab === "traffic" || recentTasksPanel.width >= 560
                                                 Layout.preferredWidth: recordsText.implicitWidth + 18
                                                 Layout.preferredHeight: 24
                                                 radius: 8
@@ -1676,9 +1721,11 @@ ApplicationWindow {
                                                 Text {
                                                     id: recordsText
                                                     anchors.centerIn: parent
-                                                    text: (recentTasksPanel.taskSearchText === "" && recentTasksPanel.taskStateFilter === "All")
-                                                          ? root.tasks.length + " records"
-                                                          : recentTasksPanel.filteredTasks.length + " / " + root.tasks.length
+                                                    text: recentTasksPanel.panelTab === "traffic"
+                                                          ? root.traffic.length + " messages"
+                                                          : (recentTasksPanel.taskSearchText === "" && recentTasksPanel.taskStateFilter === "All")
+                                                            ? root.tasks.length + " records"
+                                                            : recentTasksPanel.filteredTasks.length + " / " + root.tasks.length
                                                     color: C.cyan
                                                     font.family: root.monoFontFamily
                                                     font.pixelSize: Math.max(11, 10 * recentTasksPanel.tableScale)
@@ -1692,6 +1739,7 @@ ApplicationWindow {
 
                                     // Use the same column widths for headers and rows.
                                     Rectangle {
+                                        visible: recentTasksPanel.panelTab === "tasks"
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: 34 * recentTasksPanel.tableScale
                                         color: "#0A1A2B"
@@ -1709,9 +1757,19 @@ ApplicationWindow {
                                             Item { Layout.preferredWidth: recentTasksPanel.actionColumnWidth; Layout.minimumWidth: Layout.preferredWidth }
                                         }
                                     }
-                                    Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: C.border; opacity: 0.4 }
+                                    Rectangle { visible: recentTasksPanel.panelTab === "tasks"; Layout.fillWidth: true; Layout.preferredHeight: 1; color: C.border; opacity: 0.4 }
+
+                                    VdaTrafficPanel {
+                                        objectName: "vdaTraffic"
+                                        visible: recentTasksPanel.panelTab === "traffic"
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        traffic: root.traffic
+                                        uiScale: recentTasksPanel.tableScale
+                                    }
 
                                     Item {
+                                        visible: recentTasksPanel.panelTab === "tasks"
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
 

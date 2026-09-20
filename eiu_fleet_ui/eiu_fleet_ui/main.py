@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import signal
 import subprocess
@@ -142,6 +143,7 @@ from .mqtt_client import MqttClient
 from .ros_bridge import RosBridge
 from .ros_control import RosControl
 from .task_websocket import TaskEventServer
+from .vda5050.graph import NavGraph
 
 
 def build_engine(app: QApplication):
@@ -158,6 +160,7 @@ def build_engine(app: QApplication):
     settings   = FleetSettings(fleet_cfg)
     map_prov   = MapProvider(fleet_cfg)
     mqtt       = MqttClient(fleet_cfg)
+    mqtt.set_graph(NavGraph(map_prov.waypoints(), json.loads(map_prov.lanesJson)))
     ros        = RosBridge()
     ros.set_fleet_names(list(fleet_cfg.fleet_names))
     ros.set_robot_fleets({r.name: r.fleet_name for r in fleet_cfg.robots})
