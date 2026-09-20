@@ -20,15 +20,19 @@ struct StitchPlan
     std::size_t stitch_index = 0;
     // True when the new tail equals the tail already in the order.
     bool unchanged = false;
+    // Leading points of the new route the order already covers.
+    std::size_t leading = 0;
 };
 
-// Attach a replanned route to the live order at the end of its released base.
-// The AGV keeps driving the released part, so the new route must repeat it exactly.
-// Returns nullopt when it does not, and the caller sends a replacement order instead.
+// Attach a replanned route to the live order after its released base.
+// The new route must repeat the released part; up to max_leading points on the AGV's lane may be skipped.
+// Returns nullopt when it does not.
 std::optional<StitchPlan> plan_stitch(const std::vector<RouteWaypoint> &current_route,
                                       std::size_t released_count, std::size_t traversed,
                                       const std::vector<RouteWaypoint> &new_route,
-                                      double position_tolerance = 0.10);
+                                      double position_tolerance = 0.10,
+                                      std::size_t max_leading = 3,
+                                      double lane_tolerance = 0.15);
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050
 

@@ -311,6 +311,10 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
     {
         return result;
     }
+    const auto declined = [&](const std::string &reason) {
+        RCLCPP_INFO(_logger, "[VDA5050] %s: not stitching (%s)", name.c_str(), reason.c_str());
+        return result;
+    };
 
     std::string manufacturer, serial, interface_name, order_id, base_id, order_map;
     vda5050::RobotPose base{};
@@ -320,6 +324,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
     std::size_t stitch_index = 0;
     std::size_t new_released = 0;
     std::size_t consumed = 0;
+    std::size_t leading = 0;
     bool unchanged = false;
 
     {
@@ -332,32 +337,56 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         RobotContext &ctx = *it->second;
 
         // Only an acknowledged, unfinished order can be extended.
-        if (ctx.current_order_id.empty() || ctx.current_route.empty() || !ctx.last_state.has_value() ||
-            ctx.last_state->order_id != ctx.current_order_id ||
-            !ctx.last_state->last_node_sequence_id.has_value() ||
-            (!map_id.empty() && map_id != ctx.current_map_id))
+        if (ctx.current_order_id.empty() || ctx.current_route.empty() || !ctx.last_state.has_value())
         {
-            return result;
+            return declined("no live order");
+        }
+        if (ctx.last_state->order_id != ctx.current_order_id || !ctx.last_state->last_node_sequence_id.has_value())
+        {
+            return declined("the AGV has not acknowledged the order");
+        }
+        if (!ctx.last_state->has_position())
+        {
+            return declined("the AGV has no valid pose");
+        }
+        if (!map_id.empty() && map_id != ctx.current_map_id)
+        {
+            return declined("map changed");
         }
         const std::size_t traversed = static_cast<std::size_t>(*ctx.last_state->last_node_sequence_id) / 2;
         if (traversed >= ctx.current_route.size())
         {
-            return result;
+            return declined("the AGV is at the last node");
         }
 
-        const auto plan = vda5050::plan_stitch(ctx.current_route, ctx.current_released_count,
-                                               traversed, to_waypoints(ctx, route, ctx.current_map_id));
+        const auto new_route = to_waypoints(ctx, route, ctx.current_map_id);
+        const auto plan = vda5050::plan_stitch(ctx.current_route, ctx.current_released_count, traversed, new_route);
         if (!plan.has_value())
         {
-            return result;
+            const auto join = [](const std::vector<vda5050::RouteWaypoint> &points, std::size_t first,
+                                 std::size_t last) {
+                std::string out;
+                for (std::size_t i = first; i < std::min(points.size(), last); ++i)
+                {
+                    out += (out.empty() ? "" : " ") + points[i].node_id;
+                }
+                return out;
+            };
+            return declined("new route does not repeat the released part: released " +
+                            std::to_string(ctx.current_released_count) + ", passed " + std::to_string(traversed) +
+                            ", order [" + join(ctx.current_route, traversed, ctx.current_released_count) +
+                            "], new route [" + join(new_route, 0, 8) + "]");
         }
 
         consumed = plan->consumed;
+        leading = plan->leading;
         stitch_index = plan->stitch_index;
         unchanged = plan->unchanged;
         combined = plan->route;
+        const std::size_t released_new = released_count.value_or(route.size());
         new_released = std::max(ctx.current_released_count,
-                                std::min(consumed + released_count.value_or(route.size()), combined.size()));
+                                std::min(consumed + (released_new > leading ? released_new - leading : 0),
+                                         combined.size()));
         order_id = ctx.current_order_id;
         order_map = ctx.current_map_id;
         base_id = ctx.current_base_id;
@@ -413,6 +442,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
     result.stitched = true;
     result.order_id = order_id;
     result.consumed = consumed;
+    result.leading_dropped = leading;
     return result;
 }
 

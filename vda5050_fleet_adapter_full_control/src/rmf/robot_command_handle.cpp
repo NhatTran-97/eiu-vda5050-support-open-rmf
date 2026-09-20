@@ -302,6 +302,15 @@ void VdaRobotCommandHandle::follow_new_path(
         }
         if (replan.stitched)
         {
+            // Drop the leading points the order already covers.
+            if (replan.leading_dropped > 0)
+            {
+                const auto dropped = static_cast<std::ptrdiff_t>(replan.leading_dropped);
+                active.node_ids.erase(active.node_ids.begin(), active.node_ids.begin() + dropped);
+                active.positions.erase(active.positions.begin(), active.positions.begin() + dropped);
+                active.times.erase(active.times.begin(), active.times.begin() + dropped);
+                active.waypoint_offset += replan.leading_dropped;
+            }
             active.order_id = replan.order_id;
             active.seq_offset = replan.consumed;
             active.released_count = replan.released;
@@ -597,8 +606,9 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         {
             auto &path = *_path;
 
-            // Release route points as their scheduled times pass.
-            if (_honor_waypoint_timing && _clock && path.released_count < path.times.size())
+            // Release route points on schedule, except while the AGV is held for a replan.
+            if (_honor_waypoint_timing && _clock && !_traffic_pause_deadline.has_value() &&
+                path.released_count < path.times.size())
             {
                 const auto now = rmf_traffic_ros2::convert(_clock->now());
                 const std::size_t releasable = releasable_count(path.times, now);
@@ -754,7 +764,6 @@ void VdaRobotCommandHandle::set_update_handle(std::shared_ptr<RobotUpdateHandle>
 
     if (_honor_waypoint_timing)
     {
-        // Treat a stop at the release boundary as a scheduled hold.
         handle->maximum_delay(rmf_utils::optional<rmf_traffic::Duration>());
     }
 

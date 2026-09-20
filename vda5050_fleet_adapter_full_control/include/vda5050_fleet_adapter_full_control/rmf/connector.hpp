@@ -118,6 +118,8 @@ public:
         std::size_t consumed = 0;
         // Points of the new path that are already released.
         std::size_t released = 0;
+        // Leading points of the new path the order already covers.
+        std::size_t leading_dropped = 0;
     };
 
     // Attach a replanned route to the active order; stitched=false leaves the order untouched.

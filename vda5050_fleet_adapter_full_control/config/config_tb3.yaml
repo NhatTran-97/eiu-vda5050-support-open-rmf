@@ -55,8 +55,8 @@ vda5050:
   interface_name: "AMR"
   update_rate_hz: 10.0
   honor_waypoint_timing: true
-  # Replan as an order update, not a new order.
-  stitch_on_replan: false
+  # Send a replanned route as an update to the live order.
+  stitch_on_replan: true
   # Reject orders and actions that break the factsheet.
   strict_validation: true
   mqtt:
