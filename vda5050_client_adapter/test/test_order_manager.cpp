@@ -805,6 +805,29 @@ TEST(OrderManagerTest, DoesNotAbsorbEdgeEnteredInNormalOrder) {
   EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));
 }
 
+TEST(OrderManagerTest, RepeatedEdgeEnteredForActiveEdgeIsIgnored) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o1", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, true), make_node("n3", 4, true)},
+    {make_edge("e12", 1, true, "n1", "n2"), make_edge("e23", 3, true, "n2", "n3")}
+  )).accepted);
+
+  ASSERT_TRUE(mgr.edge_entered("e12", 1));
+  EXPECT_TRUE(mgr.edge_entered("e12", 1));
+  ASSERT_TRUE(mgr.edge_completed("e12", 1));
+  ASSERT_TRUE(mgr.edge_entered("e23", 3));
+}
+
+TEST(OrderManagerTest, EdgeEnteredForAnUnknownEdgeIsStillRejected) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o1", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2")}
+  )).accepted);
+
+  EXPECT_FALSE(mgr.edge_entered("e99", 1));
+}
+
 TEST(OrderManagerTest, LateEdgeEnteredIsForgottenWhenANewOrderStarts) {
   vda5050_adapter::OrderManager mgr;
   ASSERT_TRUE(mgr.process_order(make_order("o1", 1,

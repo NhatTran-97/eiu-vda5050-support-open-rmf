@@ -201,6 +201,13 @@ bool OrderManager::edge_entered(const std::string& edge_id,  uint32_t sequence_i
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
+  // Ignore a repeated report for an edge already being traversed.
+  const bool already_active = std::any_of(active_edges_.begin(), active_edges_.end(),
+    [&](const vda5050::Edge& e) { return e.edge_id == edge_id && e.sequence_id == sequence_id; });
+  if (already_active) {
+    return true;
+  }
+
   if (remaining_base_edges_.empty()) {
     // Late echo from the replaced order.
     if (is_stale_edge(edge_id)) {
