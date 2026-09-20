@@ -17,6 +17,11 @@ find_package(rmf_battery REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(rcl_interfaces REQUIRED)
+find_package(rmf_fleet_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 # ─── Paho MQTT C++ (apt: libpaho-mqttpp-dev libpaho-mqtt-dev) ──────────────────
 find_library(PAHO_MQTTPP_LIB NAMES paho-mqttpp3)
@@ -30,6 +35,9 @@ endif()
 # ─── Core library (everything except the ROS entry point) ─────────────────────
 add_library(${PROJECT_NAME}_core SHARED
   src/vda5050_protocol.cpp
+  src/factsheet.cpp
+  src/readiness.cpp
+  src/operator_interface.cpp
   src/vda5050_connector.cpp
   src/robot_state_machine.cpp
   src/robot_adapter.cpp
@@ -48,7 +56,8 @@ target_link_libraries(${PROJECT_NAME}_core PUBLIC
   ${PAHO_MQTT_C_LIB}
 )
 ament_target_dependencies(${PROJECT_NAME}_core PUBLIC
-  rclcpp rmf_traffic rmf_battery)
+  rclcpp rmf_traffic rmf_battery geometry_msgs rcl_interfaces rmf_fleet_msgs
+  std_msgs std_srvs)
 
 # ─── Node executable ──────────────────────────────────────────────────────────
 add_executable(fleet_adapter src/main.cpp)
@@ -66,6 +75,7 @@ install(PROGRAMS
         scripts/dispatch_patrol.py
         scripts/cancel_task.py
         scripts/mock_mqtt_robot.py
+        scripts/run_mock_fleets.py
         scripts/test_dispatch_e2e.py
         DESTINATION lib/${PROJECT_NAME})
 
@@ -75,6 +85,15 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_protocol test/test_protocol.cpp)
   target_link_libraries(test_protocol ${PROJECT_NAME}_core)
+
+  ament_add_gtest(test_factsheet test/test_factsheet.cpp)
+  target_link_libraries(test_factsheet ${PROJECT_NAME}_core)
+
+  ament_add_gtest(test_connector test/test_connector.cpp)
+  target_link_libraries(test_connector ${PROJECT_NAME}_core)
+
+  ament_add_gtest(test_readiness test/test_readiness.cpp)
+  target_link_libraries(test_readiness ${PROJECT_NAME}_core)
 
   ament_add_gtest(test_transform test/test_transform.cpp)
   target_link_libraries(test_transform ${PROJECT_NAME}_core)

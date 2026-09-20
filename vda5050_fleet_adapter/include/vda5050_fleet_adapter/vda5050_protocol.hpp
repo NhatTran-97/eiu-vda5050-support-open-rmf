@@ -8,7 +8,6 @@
 
 /// Transport-agnostic VDA5050 v2.x message helpers (build + parse). All wire
 /// format knowledge lives here so the rest of the adapter stays clean.
-/// Ported from the reference vda5050_messages.py.
 namespace vda5050_fleet_adapter::protocol {
 
 inline constexpr const char* VERSION = "2.1.0";
@@ -68,8 +67,29 @@ nlohmann::json make_instant_actions(int header_id,
                                     const std::string& serial,
                                     const nlohmann::json& actions);
 
+/// Like make_action, but `parameters` is a JSON object whose values keep their types.
+nlohmann::json make_typed_action(const std::string& action_type,
+                                 const std::string& blocking_type,
+                                 const nlohmann::json& parameters,
+                                 const std::string& action_id = "");
+
 /// Standard instant action to abort the current order.
-nlohmann::json cancel_order_action(const std::string& action_id = "");
+nlohmann::json cancel_order_action(const std::string& action_id = "",
+                                   const std::string& blocking_type = "HARD");
+
+/// Pause the AGV while keeping its order.
+nlohmann::json start_pause_action(const std::string& blocking_type = "NONE");
+
+/// Resume a paused order.
+nlohmann::json stop_pause_action(const std::string& blocking_type = "NONE");
+
+/// Ask the AGV to publish its factsheet.
+nlohmann::json factsheet_request_action(const std::string& blocking_type = "NONE");
+
+/// Set the AGV's pose on `map_id`, in the robot frame.
+nlohmann::json init_position_action(double x, double y, double theta,
+                                    const std::string& map_id,
+                                    const std::string& blocking_type = "NONE");
 
 /// Generate a UUID-v4 string (used for orderId / actionId).
 std::string make_uuid();
@@ -92,6 +112,19 @@ public:
 
   std::optional<double> battery_soc;  // 0.0–1.0 (from VDA5050 0–100 %)
 
+  /// Parsed state.safetyState fields.
+  struct SafetyState
+  {
+    std::string e_stop = "NONE";  // AUTOACK | MANUAL | REMOTE | NONE
+    bool field_violation = false;
+
+    /// True while an emergency stop or protective-field violation is active.
+    bool triggered() const;
+  };
+  SafetyState safety_state;
+
+  std::string operating_mode = "AUTOMATIC";  // AUTOMATIC | SEMIAUTOMATIC | MANUAL | ...
+
   std::string order_id;
   std::optional<int> order_update_id;
   std::string last_node_id;
@@ -105,6 +138,12 @@ public:
 
   /// True when a valid, initialized AGV position is present.
   bool has_position() const;
+
+  /// True when the operating mode accepts master-control orders.
+  bool operable() const;
+
+  /// The first FATAL error type, or an empty string when none exists.
+  std::string first_fatal_error() const;
 
   /// True when `order_id` has been fully executed at `target_node_id` (no
   /// pending node/edge states, not driving). An empty target skips the final

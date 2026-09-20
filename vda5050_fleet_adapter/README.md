@@ -2,113 +2,32 @@
 
 Open-RMF **EasyFullControl** fleet adapter that drives VDA5050 AGVs over MQTT. Acts as the VDA5050 master control: receives tasks from Open-RMF, converts each navigation goal into a VDA5050 `order`, and feeds robot `state` back into RMF.
 
-## Overview
+EasyFullControl issues navigation **one destination at a time**, so one VDA5050 order is one destination (base node = current pose, end node = destination) with a fresh `orderId`. This is the simpler, lower-barrier path; multi-node orders, horizon release and stitching live in [`vda5050_fleet_adapter_full_control`](../vda5050_fleet_adapter_full_control/README.md).
 
-EasyFullControl issues navigation **one destination at a time** — RMF hands the adapter a single `Destination` and waits for `execution.finished()` before the next. This means **one VDA5050 order = one destination** (base node = current pose, end node = destination), with a fresh `orderId` each time and no overlapping orders. It removes multi-node order / stitch / order-update machinery entirely and eliminates the class of deadlock bugs that multi-node orders produce.
+See [docs/architecture.md](docs/architecture.md) for diagrams, flows, and the config reference.
 
-## System Context
+## Features
 
-```mermaid
-flowchart LR
-    subgraph pc ["Ground-station PC · Jazzy Docker · Domain 7"]
-        rmf("Open-RMF\nschedule + dispatcher")
-        fa("vda5050_fleet_adapter\n← THIS PACKAGE")
-        broker[("Mosquitto\nlocalhost:1883")]
-        rmf <-->|"EasyFullControl API"| fa
-        fa  <-->|"VDA5050 JSON\norder · state · viz"| broker
-    end
-
-    subgraph robot ["TurtleBot3 · Humble · Domain 4"]
-        ca("vda5050_client_adapter")
-        broker <-->|"VDA5050 JSON"| ca
-    end
-```
-
-## Architecture
-
-```mermaid
-flowchart TB
-    main["main.cpp\nAdapter::make · add_easy_fleet(from_config_files)\nparse vda5050 block · run update loop"]
-
-    main -->|"RobotCallbacks\nnavigate · stop · action"| ra
-    main <-->|"EasyRobotUpdateHandle::update"| ra
-
-    ra["RobotAdapter\nbridges 1 robot EasyFullControl ↔ SM"]
-    ra -->|"owns"| sm["RobotStateMachine\nIDLE / NAVIGATING / EXECUTING_ACTION"]
-    ra -->|"uses"| conn["Vda5050Connector\n1 MQTT connection · N robots"]
-
-    conn --- proto["vda5050_protocol\nbuild/parse JSON — pure, unit-testable"]
-    conn --- tf["transform\nRMF ↔ robot frame — pure, unit-testable"]
-```
-
-### State machine
-
-| State | Trigger in | Trigger out |
-|---|---|---|
-| `IDLE` | startup / `finished()` / cancel | `on_navigate` → NAVIGATING, `on_action` → EXECUTING_ACTION |
-| `NAVIGATING` | `on_navigate` | `is_command_completed` fires `finished()` → IDLE |
-| `EXECUTING_ACTION` | `on_action` | action FINISHED/FAILED → IDLE |
-
-## Package Structure
-
-| File | Role |
+| Area | What it does |
 |---|---|
-| `src/main.cpp` | Entry point: parse config, create Adapter + fleet, build robots, run update loop |
-| `include/.../vda5050_protocol.hpp` · `src/vda5050_protocol.cpp` | Pure VDA5050 message layer: build `order` / `instantActions`, parse `state` into `ParsedState`. No MQTT, no RMF. |
-| `include/.../transform.hpp` | 2D affine transform between RMF nav-graph frame and robot map frame. Header-only, pure. |
-| `include/.../vda5050_connector.hpp` · `src/vda5050_connector.cpp` | Owns one paho MQTT connection, one `RobotContext` per robot. Downlink: `navigate`, `stop`, `execute_instant_action`. Uplink: `get_data`, `is_command_completed`, `get_action_state`, `is_online`. Thread-safe. |
-| `include/.../robot_state_machine.hpp` · `src/robot_state_machine.cpp` | Explicit per-robot lifecycle. Holds active `CommandExecution`, fires `finished()` on completion. |
-| `include/.../robot_adapter.hpp` · `src/robot_adapter.cpp` | Bridges one EasyFullControl robot to the connector + state machine. |
-| `config/config.yaml` | Two blocks: `rmf_fleet:` (EasyFullControl schema) + `vda5050:` (adapter-specific: MQTT, identity, transform per robot). |
-| `maps/nav_graph.yaml` | RMF nav graph — waypoint names become VDA5050 nodeIds. |
-| `launch/fleet_adapter.launch.py` | Launches the `fleet_adapter` node. |
-| `docker/Dockerfile` · `docker/run.sh` | Jazzy + RMF + paho-mqtt-cpp build environment. |
-| `scripts/dispatch_patrol.py` | Publishes a patrol task to the RMF task API. |
-| `scripts/cancel_task.py` | Cancels a task by id. |
-| `scripts/mock_mqtt_robot.py` | Simulates a VDA5050 AGV over MQTT — runs the full stack without hardware. |
-| `test/test_protocol.cpp` | Order / state JSON shape, ParsedState parsing, completion logic. |
-| `test/test_transform.cpp` | `to_robot` / `to_rmf` round-trip. |
-| `test/test_state_machine.cpp` | State transitions and `finished()` firing. |
+| Navigation | One order per destination; RMF waits for completion before the next. The operator speed cap goes into the edge's `maxSpeed` |
+| Actions | `PerformAction` (for example `dock`) is sent as a VDA5050 instant action and tracked to FINISHED or FAILED |
+| Factsheet | The retained `factsheet` sets each action's blocking type; custom actions missing from it are rejected (`strict_validation`). A missing factsheet is requested with `factsheetRequest`. An action that conflicts with the AGV's motion or a running HARD-only action is logged as a warning |
+| Commissioning | A robot that is offline, has no valid pose, is in a non-automatic operating mode, reports an eStop or field violation, has a FATAL error, or is paused by someone else is decommissioned in RMF and recommissioned when it recovers |
+| Pause instead of cancel | When RMF stops a robot the order is paused; a new command reuses or replaces it, and only a hold with no command for 10 s cancels it |
+| Operator interface | `<node>/<robot>/init_position` (`PoseWithCovarianceStamped`) with the result on `init_position_result`, services `<node>/<robot>/pause` and `resume`, parameter `speed_limit.<robot>` (m/s, 0 = no cap) |
+| Lane closures | `LaneRequest` messages for this fleet close and open lanes in RMF |
+| Multiple fleets | One adapter process per fleet, each with its own config file and node name |
 
-## Data Flow
+## Prerequisites
 
-**Downlink (RMF → AGV)**
+- ROS 2 Jazzy + Open-RMF (`ros-jazzy-rmf-fleet-adapter`, `rmf-traffic-ros2`)
+- Paho MQTT C++: `apt install libpaho-mqttpp-dev libpaho-mqtt-dev`
+- A running MQTT broker (Mosquitto)
 
-```
-RMF navigate callback
-  → RobotStateMachine::on_navigate
-  → Vda5050Connector::navigate
-  → build 2-node order (current pose → destination, transformed to robot frame)
-  → publish on MQTT .../order
-```
+`docker/` has a Jazzy image with all of the above.
 
-**Uplink (AGV → RMF)**
-
-```
-MQTT .../state received
-  → Vda5050Connector caches ParsedState
-  → update loop: get_data (position + battery in RMF frame)
-  → RobotAdapter::update → EasyRobotUpdateHandle::update
-  → state machine checks is_command_completed → fires finished()
-```
-
-## Configuration
-
-Config file: [`config/config.yaml`](config/config.yaml)
-
-Key parameters under `vda5050:`:
-
-| Parameter | Description |
-|---|---|
-| `interface_name` | VDA5050 interface name — must match client adapter |
-| `update_rate_hz` | How often to push state into RMF |
-| `mqtt.host` / `mqtt.port` | MQTT broker address |
-| `robots[].manufacturer` / `serial` | VDA5050 robot identity |
-| `robots[].transform` | RMF frame → robot map frame offset |
-
-> `interface_name`, `manufacturer`, and `serial` must match `vda5050_client_adapter` exactly so both ends share the same MQTT topics.
-
-## Build & Run
+## Build & run
 
 ```bash
 # 1. Build Docker image and open a shell (first time only)
@@ -122,37 +41,78 @@ source install/setup.bash
 ros2 run rmf_traffic_ros2 rmf_traffic_schedule &
 ros2 run rmf_task_ros2 rmf_task_dispatcher &
 
-# 4. Start fleet adapter
-ros2 launch vda5050_fleet_adapter fleet_adapter.launch.py
+# 4. Start the fleet adapters (TB3 and AMR)
+ros2 launch vda5050_fleet_adapter fleet_adapters.launch.py
 
 # 5. Dispatch a patrol task
-python3 src/vda5050_fleet_adapter/scripts/dispatch_patrol.py wp6
+python3 src/vda5050_fleet_adapter/scripts/dispatch_patrol.py Patrol_C1
 
 # Inspect MQTT traffic
-mosquitto_sub -t 'TB3/v2/ROBOTIS/0001/#'
+mosquitto_sub -t 'AMR/v2/#'
 ```
 
-## Testing
+### Multiple fleets
+
+Each robot type needs its own adapter process, because EasyFullControl reads one fleet per config (footprint and kinematics differ per fleet). `config_tb3.yaml` defines `tb3_fleet` (`tb3_1`, `tb3_2`) and `config_amr.yaml` defines `amr_fleet` (`amr_1`); each adapter needs a unique node name.
+
+```bash
+# Both at once
+ros2 launch vda5050_fleet_adapter fleet_adapters.launch.py
+
+# Or one per terminal
+ros2 launch vda5050_fleet_adapter fleet_adapter.launch.py \
+    config_file:=config/config_tb3.yaml node_name:=vda5050_fleet_adapter_tb3
+ros2 launch vda5050_fleet_adapter fleet_adapter.launch.py \
+    config_file:=config/config_amr.yaml node_name:=vda5050_fleet_adapter_amr
+```
+
+The node name sets the prefix of the operator topics, for example `vda5050_fleet_adapter_tb3/tb3_1/pause`.
+
+## Configuration
+
+Each fleet config file holds the RMF fleet definition (`rmf_fleet:`) and the VDA5050/MQTT settings (`vda5050:`); the key reference is in [docs/architecture.md](docs/architecture.md#configuration-config_tb3yaml--config_amryaml). To add a robot:
+
+1. Add an `is_charger` waypoint for it in `maps/nav_graph.yaml`.
+2. Add it under both `rmf_fleet.robots` and `vda5050.robots` in its fleet's config file.
+
+`interface_name`, `manufacturer` and `serial` must match `vda5050_client_adapter` exactly so both ends share the same MQTT topics.
+
+## Testing without hardware
 
 ```bash
 # Unit tests (no hardware, no MQTT)
 colcon test --packages-select vda5050_fleet_adapter
 
-# End-to-end with simulated robot (no hardware)
-python3 src/vda5050_fleet_adapter/scripts/test_dispatch_e2e.py --target wp6
+# End-to-end with one simulated robot (no hardware)
+python3 src/vda5050_fleet_adapter/scripts/test_dispatch_e2e.py --host localhost \
+    --interface AMR --manufacturer ROBOTIS --serial 0001 --target Patrol_C1
 
 # Run simulated robot only (dispatch manually)
 python3 src/vda5050_fleet_adapter/scripts/mock_mqtt_robot.py
+
+# Two fleets: mock robots for every robot in both configs, then dispatch one patrol per fleet
+python3 src/vda5050_fleet_adapter/scripts/run_mock_fleets.py \
+    config/config_amr.yaml config/config_tb3.yaml --host localhost --port 1883
+python3 src/vda5050_fleet_adapter/scripts/test_dispatch_e2e.py --no-mock --host localhost \
+    --config config/config_amr.yaml --config config/config_tb3.yaml \
+    --fleet-target amr_fleet=Patrol_C3 --fleet-target tb3_fleet=Patrol_C1
 ```
 
-## Multi-robot
+The mock robots reuse the identities of the real robots, so the mock scripts refuse a broker that is not localhost unless `--allow-remote` is given.
 
-1. Add an `is_charger` waypoint per robot in `maps/nav_graph.yaml`.
-2. Add the robot under both `rmf_fleet.robots` and `vda5050.robots` in `config/config.yaml`.
+## Reviewer recommendations
 
-The connector and update loop are already multi-robot — one MQTT connection serves every robot, keyed by `manufacturer/serial`.
+| Recommendation | Status |
+|---|---|
+| Port the factsheet and per-action blocking | ✅ Done — [`factsheet.cpp`](src/factsheet.cpp), blocking type chosen in [`vda5050_connector.cpp`](src/vda5050_connector.cpp) |
+| Decommission on disconnect | ✅ Done — [`readiness.cpp`](src/readiness.cpp) and [`RobotAdapter::apply_readiness`](src/robot_adapter.cpp) |
+| Pause and resume instead of cancel | ✅ Done — `HOLDING` state in [`robot_state_machine.cpp`](src/robot_state_machine.cpp) |
+| Port `initPosition` | ✅ Done — [`operator_interface.cpp`](src/operator_interface.cpp) |
+| Lane closures, eStop, operating mode, speed override | ✅ Done — lane subscription in [`main.cpp`](src/main.cpp), eStop and mode in the commission decision, speed cap in the connector |
+| Multi-node orders, horizon, stitching | ➖ Not ported — EasyFullControl hands over one destination at a time; see `vda5050_fleet_adapter_full_control` |
 
 ## Related
 
 - [Root README — system overview](../README.md)
 - [VDA5050 Client Adapter](../vda5050_client_adapter/README.md)
+- [vda5050_fleet_adapter_full_control](../vda5050_fleet_adapter_full_control/README.md)

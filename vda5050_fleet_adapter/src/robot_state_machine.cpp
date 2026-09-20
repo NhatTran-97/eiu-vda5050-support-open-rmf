@@ -9,10 +9,15 @@
 namespace vda5050_fleet_adapter {
 
 namespace {
-// How long a single navigation may run before we start complaining, and how
-// often to repeat the complaint afterwards.
+// How long a navigation may run before a warning is logged, and how often to repeat it.
 constexpr double kNavWarnAfterSec = 120.0;
 constexpr double kNavWarnEverySec = 60.0;
+
+// How long a held robot waits for a new RMF command before its order is cancelled.
+constexpr double kHoldTimeoutSec = 10.0;
+
+// How long the AGV's state may still report the pause after a stopPause was sent.
+constexpr double kResumeGraceSec = 3.0;
 }  // namespace
 
 RobotStateMachine::RobotStateMachine(rclcpp::Logger logger, Vda5050Connector& connector, std::string robot_name)
@@ -64,24 +69,36 @@ void RobotStateMachine::on_navigate(
     _action_id.clear();
   }
 
+  const bool was_holding = _state == State::HOLDING;
+  _hold_deadline.reset();
+
   _nav_exec = std::move(execution);
   _state = State::NAVIGATING;
   _nav_started = std::chrono::steady_clock::now();
   _nav_last_warn = _nav_started;
 
+  if (was_holding && _connector.has_active_order_to(_name, node_id))
+  {
+    RCLCPP_INFO(_logger, "[%s] navigate -> node '%s': resuming the held order",_name.c_str(), node_id.c_str());
+    resume_unless_operator_paused_locked();
+    return;
+  }
+
   RCLCPP_INFO(_logger, "[%s] navigate -> (%.2f, %.2f, %.2f) node '%s' map '%s'",
-              _name.c_str(), p.x(), p.y(), p.z(), node_id.c_str(),
-              destination.map().c_str());
+              _name.c_str(), p.x(), p.y(), p.z(), node_id.c_str(), destination.map().c_str());
 
   _connector.navigate(_name, node_id, p.x(), p.y(), p.z(), destination.map(), destination.speed_limit());
+  if (was_holding)
+  {
+    resume_unless_operator_paused_locked();
+  }
 }
 
 void RobotStateMachine::on_stop(ConstActivityIdentifierPtr activity)
 {
   std::lock_guard<std::mutex> lock(_mutex);
 
-  // A stop arriving mid-action used to be dropped silently, leaving the robot
-  // running an action RMF believes it has cancelled.
+  // VDA5050 cannot cancel a running instantAction, so RMF releases the activity while the AGV finishes it.
   if (_state == State::EXECUTING_ACTION && _action_exec.has_value())
   {
     const auto current = _action_exec->identifier();
@@ -106,9 +123,18 @@ void RobotStateMachine::on_stop(ConstActivityIdentifierPtr activity)
   if (activity && current && !(*activity == *current))
     return; 
 
-  RCLCPP_INFO(_logger, "[%s] stop", _name.c_str());
-  _connector.stop(_name);
   _nav_exec.reset();
+  if (_connector.pause(_name))
+  {
+    RCLCPP_INFO(_logger, "[%s] stop (startPause, awaiting a new command or cancel)", _name.c_str());
+    _state = State::HOLDING;
+    _hold_deadline = std::chrono::steady_clock::now() +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>( std::chrono::duration<double>(kHoldTimeoutSec));
+    return;
+  }
+
+  RCLCPP_INFO(_logger, "[%s] stop (startPause not sent, cancelling the order)", _name.c_str());
+  _connector.stop(_name);
   _state = State::IDLE;
 }
 
@@ -120,13 +146,16 @@ void RobotStateMachine::on_action(const std::string& category,
   if (description.is_object()) 
   {
     for (auto it = description.begin(); it != description.end(); ++it)
-      params.emplace_back(it.key(), it.value().is_string() ? 
-                                                   it.value().get<std::string>()
-                                                 : it.value().dump());
+      params.emplace_back(it.key(), it.value().is_string() ?  it.value().get<std::string>(): it.value().dump());
   }
 
   std::lock_guard<std::mutex> lock(_mutex);
   RCLCPP_INFO(_logger, "[%s] action '%s'", _name.c_str(), category.c_str());
+
+  if (_state == State::HOLDING)
+  {
+    release_hold_locked(true);
+  }
 
   const std::string action_id =
     _connector.execute_instant_action(_name, category, params);
@@ -150,6 +179,16 @@ RobotStateMachine::on_state_update()
 {
   std::lock_guard<std::mutex> lock(_mutex);
 
+  if (_state == State::HOLDING)
+  {
+    if (_hold_deadline && std::chrono::steady_clock::now() >= *_hold_deadline)
+    {
+      RCLCPP_INFO(_logger, "[%s] no new command after the hold -- cancelling the order", _name.c_str());
+      release_hold_locked(true);
+    }
+    return nullptr;
+  }
+
   if (_state == State::NAVIGATING && _nav_exec.has_value()) 
   {
     if (_connector.is_command_completed(_name)) {
@@ -161,15 +200,12 @@ RobotStateMachine::on_state_update()
     }
 
     const auto now = std::chrono::steady_clock::now();
-    const double waiting =
-      std::chrono::duration<double>(now - _nav_started).count();
-    const double since_warn =
-      std::chrono::duration<double>(now - _nav_last_warn).count();
+    const double waiting = std::chrono::duration<double>(now - _nav_started).count();
+    const double since_warn = std::chrono::duration<double>(now - _nav_last_warn).count();
     if (waiting > kNavWarnAfterSec && since_warn > kNavWarnEverySec)
     {
       _nav_last_warn = now;
-      RCLCPP_ERROR(_logger,
-                   "[%s] navigation still not complete after %.0f s and RMF is "
+      RCLCPP_ERROR(_logger, "[%s] navigation still not complete after %.0f s and RMF is "
                    "blocked waiting for it. Check that the robot echoes "
                    "lastNodeId equal to the nodeId this adapter sent, and that "
                    "nodeStates/edgeStates drain.",
@@ -209,6 +245,62 @@ RobotStateMachine::State RobotStateMachine::state()
 {
   std::lock_guard<std::mutex> lock(_mutex);
   return _state;
+}
+
+bool RobotStateMachine::pause_expected()
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  if (_operator_paused)
+  {
+    return false;
+  }
+  return _state == State::HOLDING || std::chrono::steady_clock::now() < _resume_grace_until;
+}
+
+std::string RobotStateMachine::pause()
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  _operator_paused = true;
+  if (!_connector.pause(_name))
+  {
+    return "startPause was not published";
+  }
+  RCLCPP_INFO(_logger, "[%s] paused by operator", _name.c_str());
+  return {};
+}
+
+std::string RobotStateMachine::resume()
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  _operator_paused = false;
+  if (!_connector.resume(_name))
+  {
+    return "stopPause was not published";
+  }
+  RCLCPP_INFO(_logger, "[%s] resumed by operator", _name.c_str());
+  return {};
+}
+
+void RobotStateMachine::release_hold_locked(bool cancel)
+{
+  _hold_deadline.reset();
+  if (cancel)
+  {
+    _connector.stop(_name);
+  }
+  resume_unless_operator_paused_locked();
+  _state = State::IDLE;
+}
+
+void RobotStateMachine::resume_unless_operator_paused_locked()
+{
+  if (!_operator_paused)
+  {
+    _connector.resume(_name);
+    _resume_grace_until = std::chrono::steady_clock::now() +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+        std::chrono::duration<double>(kResumeGraceSec));
+  }
 }
 
 }  // namespace vda5050_fleet_adapter

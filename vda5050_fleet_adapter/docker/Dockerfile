@@ -1,16 +1,16 @@
 # Jazzy + Open-RMF + Paho MQTT C++ environment for the VDA5050 fleet adapter.
-# The workspace is MOUNTED at run time (see run.sh) so you can rebuild without
-# rebuilding the image.
+
 FROM ros:jazzy-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Open-RMF (fleet adapter + core nodes) and build/runtime deps.
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-jazzy-rmf-fleet-adapter \
       ros-jazzy-rmf-traffic-ros2 \
       ros-jazzy-rmf-task-ros2 \
       ros-jazzy-rmf-task-msgs \
+      ros-jazzy-nav2-msgs \
       libpaho-mqtt-dev \
       libpaho-mqttpp-dev \
       nlohmann-json3-dev \
@@ -23,18 +23,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── eiu_fleet_ui (PySide6/QML GUI) ──────────────────────────────────────────
-# Runs inside this Jazzy container instead of the host so it shares one ROS2
-# distro with the fleet adapter/RMF core — mixing Jazzy and Humble rclpy on
-# the same DDS domain corrupts message deserialization (CDR layout differs
-# between distros), which is what broke /fleet_states, /task_api_responses
-# and /dispatch_states on the host-Humble UI.
-#
-# PySide6 comes from pip (not apt) so every Qt6/QML module the UI needs
-# (QtQuick.Layouts, QtQuick.Controls, ...) is guaranteed present as one
-# matched set, instead of chasing individual qml6-module-* apt packages.
-# The xcb/GL libraries below are what Qt's "xcb" platform plugin needs to
-# actually open a window against an X11 DISPLAY forwarded from the host
-# (see docker/run.sh).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-pip \
       libgl1 \

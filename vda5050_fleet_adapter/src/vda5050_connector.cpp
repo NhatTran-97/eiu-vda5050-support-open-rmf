@@ -12,6 +12,14 @@ namespace vda5050_fleet_adapter {
 
 namespace proto = protocol;
 
+namespace {
+
+constexpr std::chrono::seconds kFactsheetFirstWait{5};
+constexpr std::chrono::seconds kFactsheetRetryWait{20};
+constexpr int kFactsheetRequestAttempts = 3;
+
+}  // namespace
+
 Vda5050Connector::Vda5050Connector(
   rclcpp::Logger logger, std::string broker_url, std::string interface_name,
   std::optional<std::string> username, std::optional<std::string> password)
@@ -91,7 +99,8 @@ void Vda5050Connector::subscribe_robot(const RobotContext& ctx)
   if (!_client->is_connected())
     return;
   for (const char* leaf :
-       {proto::TOPIC_STATE, proto::TOPIC_CONNECTION, proto::TOPIC_VISUALIZATION})
+       {proto::TOPIC_STATE, proto::TOPIC_CONNECTION, proto::TOPIC_VISUALIZATION,
+        proto::TOPIC_FACTSHEET})
   {
     _client->subscribe(
       proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, leaf), 1);
@@ -152,8 +161,7 @@ void Vda5050Connector::message_arrived(mqtt::const_message_ptr msg)
     if (!ctx->last_state->last_node_id.empty())
       ctx->last_node_id = ctx->last_state->last_node_id;
 
-    // Errors and pause were parsed and then dropped, so a faulted robot still
-    // looked healthy to RMF and nothing appeared in the log. Report on change.
+    // Log errors and pause state when they change.
     std::string errors_key;
     for (const auto& e : ctx->last_state->errors)
       errors_key += e.dump() + ";";
@@ -173,6 +181,47 @@ void Vda5050Connector::message_arrived(mqtt::const_message_ptr msg)
       }
       ctx->last_errors_key = errors_key;
     }
+
+    const std::string safety_key = ctx->last_state->safety_state.triggered()
+      ? "eStop=" + ctx->last_state->safety_state.e_stop +
+        (ctx->last_state->safety_state.field_violation ? " fieldViolation" : "")
+      : std::string{};
+    if (safety_key != ctx->last_safety_key)
+    {
+      if (safety_key.empty())
+      {
+        RCLCPP_INFO(_logger, "[VDA5050] %s: safety state cleared", ctx->name.c_str());
+      }
+      else
+      {
+        RCLCPP_ERROR(_logger, "[VDA5050] %s safety state active: %s",
+                     ctx->name.c_str(), safety_key.c_str());
+      }
+      ctx->last_safety_key = safety_key;
+    }
+
+    if (ctx->last_state->operating_mode != ctx->last_mode)
+    {
+      RCLCPP_INFO(_logger, "[VDA5050] %s operating mode: %s", ctx->name.c_str(),
+                  ctx->last_state->operating_mode.c_str());
+      ctx->last_mode = ctx->last_state->operating_mode;
+    }
+  } else if (ends_with(proto::TOPIC_FACTSHEET))
+  {
+    proto::ParsedFactsheet factsheet(payload);
+    if (factsheet.has_content())
+    {
+      std::string actions;
+      for (const auto& [type, info] : factsheet.agv_actions)
+      {
+        actions += (actions.empty() ? "" : ", ") + type;
+      }
+      RCLCPP_INFO(_logger, "[VDA5050] %s factsheet: series '%s', actions: %s",
+                  ctx->name.c_str(), factsheet.series_name.c_str(),
+                  actions.empty() ? "(none)" : actions.c_str());
+      ctx->factsheet = std::move(factsheet);
+      ctx->factsheet_requests = 0;
+    }
   } else if (ends_with(proto::TOPIC_CONNECTION)) 
   {
     const std::string conn = payload.value("connectionState", std::string{});
@@ -182,6 +231,8 @@ void Vda5050Connector::message_arrived(mqtt::const_message_ptr msg)
       if (online)
       {
         RCLCPP_INFO(_logger, "[VDA5050] %s ONLINE", ctx->name.c_str());
+        ctx->factsheet_requests = 0;
+        ctx->factsheet_wait_since = std::chrono::steady_clock::now();
       }
         
       else if (ctx->connected == true)
@@ -219,6 +270,7 @@ void Vda5050Connector::navigate(const std::string& name,
   std::string manufacturer, serial, interface_name;
   std::array<double, 3> dest{}, base{};
   int header_id = 0;
+  std::optional<double> edge_speed = speed_limit;
 
   {
     std::lock_guard<std::mutex> lock(_mutex);
@@ -239,6 +291,12 @@ void Vda5050Connector::navigate(const std::string& name,
       base = {*ctx.last_state->x, *ctx.last_state->y, *ctx.last_state->theta};
     }
 
+    if (ctx.speed_limit.has_value())
+    {
+      edge_speed = edge_speed.has_value() ? std::min(*edge_speed, *ctx.speed_limit)
+                                          : *ctx.speed_limit;
+    }
+
     order_id = proto::make_uuid();
     ctx.current_order_id = order_id;
     ctx.target_node_id = dest_node_id;
@@ -255,7 +313,7 @@ void Vda5050Connector::navigate(const std::string& name,
     proto::make_node(dest_node_id, 2, dest[0], dest[1], dest[2], map_id));
   nlohmann::json edges = nlohmann::json::array();
   edges.push_back(proto::make_edge("e_" + base_id + "_" + dest_node_id, 1,
-                                   base_id, dest_node_id, true, speed_limit));
+                                   base_id, dest_node_id, true, edge_speed));
 
   const auto order = proto::make_order(header_id, manufacturer, serial, nodes,
                                        edges, order_id, 0);
@@ -263,8 +321,7 @@ void Vda5050Connector::navigate(const std::string& name,
   const std::string order_topic = proto::topic(interface_name, manufacturer, serial, proto::TOPIC_ORDER);
   publish_raw(order_topic, order.dump());
   RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s' to node '%s' (%.2f, %.2f)",
-              name.c_str(), order_id.c_str(), dest_node_id.c_str(), dest[0],
-              dest[1]);
+              name.c_str(), order_id.c_str(), dest_node_id.c_str(), dest[0],dest[1]);
 }
 
 void Vda5050Connector::stop(const std::string& name)
@@ -279,10 +336,9 @@ void Vda5050Connector::stop(const std::string& name)
     RobotContext& ctx = *it->second;
 
     nlohmann::json actions = nlohmann::json::array();
-    actions.push_back(proto::cancel_order_action());
+    actions.push_back(proto::cancel_order_action("", blocking_type_for(ctx, "cancelOrder", "HARD")));
     msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, actions);
-    topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
-                         proto::TOPIC_INSTANT_ACTIONS);
+    topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,proto::TOPIC_INSTANT_ACTIONS);
     ctx.current_order_id.clear();
     ctx.target_node_id.clear();
   }
@@ -304,14 +360,35 @@ std::string Vda5050Connector::execute_instant_action(
       return {};
     RobotContext& ctx = *it->second;
 
-    const auto action = proto::make_action(action_type, "HARD", "", parameters);
+    const auto verdict = proto::check_instant_action(action_type, ctx.factsheet);
+    if (verdict.result == proto::ActionCheck::reject && _strict_validation)
+    {
+      RCLCPP_ERROR(_logger, "[VDA5050] %s: %s -- not sent", name.c_str(),
+                   verdict.message.c_str());
+      return {};
+    }
+    if (verdict.result != proto::ActionCheck::allowed)
+    {
+      RCLCPP_WARN(_logger, "[VDA5050] %s: %s -- sending it anyway", name.c_str(),
+                  verdict.message.c_str());
+    }
+
+    const std::string blocking = blocking_type_for(ctx, action_type, "HARD");
+    if (ctx.last_state.has_value())
+    {
+      for (const auto& conflict : proto::action_conflicts( action_type, blocking, ctx.last_state->driving,
+             ctx.last_state->action_states, ctx.factsheet))
+      {
+        RCLCPP_WARN(_logger, "[VDA5050] %s: %s", name.c_str(), conflict.c_str());
+      }
+    }
+
+    const auto action = proto::make_action(action_type, blocking, "", parameters);
     action_id = action.value("actionId", std::string{});
     nlohmann::json actions = nlohmann::json::array();
     actions.push_back(action);
-    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer,
-                                      ctx.serial, actions);
-    topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
-                         proto::TOPIC_INSTANT_ACTIONS);
+    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer,  ctx.serial, actions);
+    topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, proto::TOPIC_INSTANT_ACTIONS);
   }
   publish_raw(topic, msg.dump());
   return action_id;
@@ -330,25 +407,189 @@ void Vda5050Connector::request_state(const std::string& name)
 
     nlohmann::json actions = nlohmann::json::array();
     actions.push_back(proto::make_action("stateRequest", "NONE", "", {}));
-    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer,
-                                      ctx.serial, actions);
-    topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial,
-                         proto::TOPIC_INSTANT_ACTIONS);
+    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, actions);
+    topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, proto::TOPIC_INSTANT_ACTIONS);
   }
   publish_raw(topic, msg.dump());
 }
 
-void Vda5050Connector::publish_raw(const std::string& topic,
+bool Vda5050Connector::publish_raw(const std::string& topic,
                                    const std::string& payload)
 {
   if (!_client->is_connected()) {
     RCLCPP_WARN(_logger, "[VDA5050] not connected, dropping publish to %s",
                 topic.c_str());
-    return;
+    return false;
   }
-  auto m = mqtt::make_message(topic, payload);
-  m->set_qos(1);
-  _client->publish(m);
+  try
+  {
+    auto m = mqtt::make_message(topic, payload);
+    m->set_qos(1);
+    _client->publish(m);
+  }
+  catch (const mqtt::exception& e)
+  {
+    RCLCPP_ERROR(_logger, "[VDA5050] publish to %s failed: %s", topic.c_str(), e.what());
+    return false;
+  }
+  return true;
+}
+
+std::string Vda5050Connector::blocking_type_for(const RobotContext& ctx, const std::string& action_type,  const std::string& preferred)
+{
+  if (!ctx.factsheet.has_value())
+  {
+    return preferred;
+  }
+  return ctx.factsheet->blocking_type_for(action_type, preferred);
+}
+
+bool Vda5050Connector::send_instant_action(const std::string& name, const std::string& action_type,
+                                           const std::string& preferred_blocking, const char* label)
+{
+  std::string topic;
+  nlohmann::json msg;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it == _robots.end())
+    {
+      return false;
+    }
+    RobotContext& ctx = *it->second;
+    nlohmann::json actions = nlohmann::json::array();
+    actions.push_back(proto::make_action( action_type, blocking_type_for(ctx, action_type, preferred_blocking)));
+    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, actions);
+    topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, proto::TOPIC_INSTANT_ACTIONS);
+  }
+  const bool queued = publish_raw(topic, msg.dump());
+  if (queued)
+  {
+    RCLCPP_INFO(_logger, "[VDA5050] %s -> %s", name.c_str(), label);
+  }
+  else
+  {
+    RCLCPP_ERROR(_logger, "[VDA5050] %s -> %s NOT published", name.c_str(), label);
+  }
+  return queued;
+}
+
+void Vda5050Connector::set_strict_validation(bool strict)
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  _strict_validation = strict;
+}
+
+bool Vda5050Connector::pause(const std::string& name)
+{
+  return send_instant_action(name, "startPause", "NONE", "startPause");
+}
+
+bool Vda5050Connector::resume(const std::string& name)
+{
+  return send_instant_action(name, "stopPause", "NONE", "stopPause");
+}
+
+std::string Vda5050Connector::init_position(const std::string& name, double x,  double y, double theta,  const std::string& map_id)
+{
+  std::string topic;
+  nlohmann::json msg;
+  std::string action_id;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it == _robots.end())
+    {
+      RCLCPP_ERROR(_logger, "[VDA5050] init_position: unknown robot '%s'", name.c_str());
+      return {};
+    }
+    RobotContext& ctx = *it->second;
+
+    const auto pose = ctx.transform.to_robot(x, y, theta);
+    const auto action = proto::init_position_action( pose[0], pose[1], pose[2], map_id, blocking_type_for(ctx, "initPosition", "NONE"));
+    action_id = action.value("actionId", std::string{});
+    nlohmann::json actions = nlohmann::json::array();
+    actions.push_back(action);
+    msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer,  ctx.serial, actions);
+    topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, proto::TOPIC_INSTANT_ACTIONS);
+  }
+  if (!publish_raw(topic, msg.dump()))
+  {
+    RCLCPP_ERROR(_logger, "[VDA5050] %s -> initPosition NOT published", name.c_str());
+    return {};
+  }
+  RCLCPP_INFO(_logger, "[VDA5050] %s -> initPosition (%.2f, %.2f, %.2f) on '%s'", name.c_str(), x, y, theta, map_id.c_str());
+  return action_id;
+}
+
+bool Vda5050Connector::set_speed_limit(const std::string& name,
+                                       std::optional<double> limit)
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  auto it = _robots.find(name);
+  if (it == _robots.end())
+  {
+    return false;
+  }
+  it->second->speed_limit = limit;
+  return true;
+}
+
+std::optional<std::pair<std::string, std::string>>
+Vda5050Connector::get_action_result(const std::string& name, const std::string& action_id)
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  auto it = _robots.find(name);
+  if (it == _robots.end() || !it->second->last_state.has_value())
+  {
+    return std::nullopt;
+  }
+  for (const auto& a : it->second->last_state->action_states)
+  {
+    if (a.value("actionId", std::string{}) == action_id)
+    {
+      return std::make_pair(a.value("actionStatus", std::string{}), a.value("resultDescription", std::string{}));
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> Vda5050Connector::get_known_map(const std::string& name)
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  auto it = _robots.find(name);
+  if (it == _robots.end() || !it->second->last_state.has_value() || it->second->last_state->map_id.empty())
+  {
+    return std::nullopt;
+  }
+  return it->second->last_state->map_id;
+}
+
+void Vda5050Connector::poll(const std::string& name)
+{
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it == _robots.end())
+    {
+      return;
+    }
+    RobotContext& ctx = *it->second;
+
+    if (ctx.factsheet.has_value() || ctx.connected != true ||  ctx.factsheet_requests >= kFactsheetRequestAttempts)
+    {
+      return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const auto wait = ctx.factsheet_requests == 0 ? kFactsheetFirstWait : kFactsheetRetryWait;
+    if (now - ctx.factsheet_wait_since < wait)
+    {
+      return;
+    }
+    ctx.factsheet_wait_since = now;
+    ++ctx.factsheet_requests;
+  }
+  send_instant_action(name, "factsheetRequest", "NONE", "factsheetRequest (no factsheet received)");
 }
 
 // ─── AGV -> RMF (uplink) ────────────────────────────────────────────────────────
@@ -403,9 +644,7 @@ bool Vda5050Connector::is_command_completed(const std::string& name)
     return true;
   }
 
-  // The order has drained and the robot has stopped, so the only thing still
-  // failing is the final node check. That condition will never flip on its own,
-  // so name it once instead of letting the navigation hang without a word.
+  // The order has drained and the robot has stopped, but its lastNodeId differs from the target: report the mismatch once.
   if (s.node_states.empty() && s.edge_states.empty() &&
       !ctx.target_node_id.empty() && s.last_node_id != ctx.target_node_id)
   {
@@ -426,8 +665,7 @@ bool Vda5050Connector::is_command_completed(const std::string& name)
   return false;
 }
 
-std::optional<std::string> Vda5050Connector::get_action_state(
-  const std::string& name, const std::string& action_id)
+std::optional<std::string> Vda5050Connector::get_action_state( const std::string& name, const std::string& action_id)
 {
   std::lock_guard<std::mutex> lock(_mutex);
   auto it = _robots.find(name);
@@ -460,6 +698,51 @@ bool Vda5050Connector::is_online(const std::string& name, double state_timeout_s
   }
   const auto age = std::chrono::duration<double>(std::chrono::steady_clock::now() - ctx.last_state_time).count();
   return age <= state_timeout_s;
+}
+
+Readiness Vda5050Connector::readiness(const std::string& name, bool tolerate_pause)
+{
+  bool online = false;
+  std::optional<proto::ParsedState> state;
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it == _robots.end())
+    {
+      return {false, "unknown robot"};
+    }
+    const RobotContext& ctx = *it->second;
+    const auto age = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - ctx.last_state_time).count();
+    online = ctx.connected != false && ctx.last_state.has_value() && age <= 10.0;
+    state = ctx.last_state;
+  }
+  return evaluate_readiness(online, state, tolerate_pause);
+}
+
+std::string Vda5050Connector::current_order_id(const std::string& name)
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  auto it = _robots.find(name);
+  return it == _robots.end() ? std::string{} : it->second->current_order_id;
+}
+
+bool Vda5050Connector::has_active_order_to(const std::string& name,
+                                           const std::string& dest_node_id)
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  auto it = _robots.find(name);
+  if (it == _robots.end())
+  {
+    return false;
+  }
+  const RobotContext& ctx = *it->second;
+  if (ctx.current_order_id.empty() || ctx.target_node_id != dest_node_id ||
+      !ctx.last_state.has_value() || ctx.last_state->order_id != ctx.current_order_id)
+  {
+    return false;
+  }
+  return !ctx.last_state->order_finished(ctx.current_order_id, ctx.target_node_id);
 }
 
 }  // namespace vda5050_fleet_adapter

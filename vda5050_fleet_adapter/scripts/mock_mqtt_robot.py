@@ -12,7 +12,13 @@ Behaviour:
     streaming `state` (driving=true) and finally reporting arrival
     (lastNodeId = end node, driving=false, node/edge states cleared),
   * on `cancelOrder`, stops and clears the active order,
-  * publishes periodic `state`.
+  * on `startPause` / `stopPause`, holds and resumes the drive,
+  * on `initPosition`, moves the robot to the given pose,
+  * publishes a retained `factsheet` (and again on `factsheetRequest`),
+  * publishes periodic `state`,
+  * accepts test commands on `<base>/mock_control`, for example
+    {"eStop": "AUTOACK"}, {"operatingMode": "MANUAL"}, {"fieldViolation": true},
+    {"positionInitialized": false} or {"connection": "CONNECTIONBROKEN"}.
 
 The identity flags MUST match the adapter's `vda5050:` config block.
 
@@ -51,6 +57,11 @@ class MockRobot:
         self.edge_states = []
         self.action_states = []
         self.header = 0
+        self.paused = False
+        self.e_stop = "NONE"
+        self.field_violation = False
+        self.operating_mode = "AUTOMATIC"
+        self.position_initialized = True
 
         self.lock = threading.Lock()
         self._drive_thread = None
@@ -74,7 +85,9 @@ class MockRobot:
     def _on_connect(self, client, userdata, flags, rc):
         client.subscribe(f"{self.base}/order", qos=1)
         client.subscribe(f"{self.base}/instantActions", qos=1)
+        client.subscribe(f"{self.base}/mock_control", qos=1)
         self.publish_connection("ONLINE")
+        self.publish_factsheet()
         self.publish_state()
         print(f"[mock] connected — identity {self.base}", flush=True)
 
@@ -87,6 +100,8 @@ class MockRobot:
             self._handle_order(payload)
         elif msg.topic.endswith("/instantActions"):
             self._handle_instant_actions(payload)
+        elif msg.topic.endswith("/mock_control"):
+            self._handle_control(payload)
 
     # ── Publishers ─────────────────────────────────────────────────────────────
 
@@ -105,6 +120,29 @@ class MockRobot:
                             json.dumps(self._connection_payload(state)),
                             qos=1, retain=True)
 
+    def publish_factsheet(self):
+        if not self.args.actions:
+            return
+        actions = [{"actionType": a, "actionScopes": ["INSTANT"], "blockingTypes": ["NONE", "SOFT", "HARD"]}
+                   for a in self.args.actions.split(",") if a]
+        msg = {
+            "headerId": self._next_header(), "timestamp": iso_now(), "version": "2.1.0",
+            "manufacturer": self.args.manufacturer, "serialNumber": self.args.serial,
+            "typeSpecification": {"seriesName": "MockBot"},
+            "protocolFeatures": {"agvActions": actions},
+        }
+        self.client.publish(f"{self.base}/factsheet", json.dumps(msg), qos=1, retain=True)
+
+    def _handle_control(self, cmd: dict):
+        with self.lock:
+            self.e_stop = cmd.get("eStop", self.e_stop)
+            self.field_violation = cmd.get("fieldViolation", self.field_violation)
+            self.operating_mode = cmd.get("operatingMode", self.operating_mode)
+            self.position_initialized = cmd.get("positionInitialized", self.position_initialized)
+        if "connection" in cmd:
+            self.publish_connection(cmd["connection"])
+        self.publish_state()
+
     def publish_state(self):
         with self.lock:
             msg = {
@@ -121,15 +159,16 @@ class MockRobot:
                 "edgeStates": list(self.edge_states),
                 "actionStates": list(self.action_states),
                 "driving": self.driving,
-                "paused": False,
-                "operatingMode": "AUTOMATIC",
+                "paused": self.paused,
+                "operatingMode": self.operating_mode,
                 "batteryState": {"batteryCharge": 95.0, "charging": False},
                 "agvPosition": {
                     "x": self.x, "y": self.y, "theta": self.theta,
-                    "mapId": self.map_id, "positionInitialized": True,
+                    "mapId": self.map_id,
+                    "positionInitialized": self.position_initialized,
                 },
                 "errors": [], "information": [],
-                "safetyState": {"eStop": "NONE", "fieldViolation": False},
+                "safetyState": {"eStop": self.e_stop, "fieldViolation": self.field_violation},
             }
         self.client.publish(f"{self.base}/state", json.dumps(msg), qos=1)
 
@@ -185,6 +224,8 @@ class MockRobot:
         self.publish_state()
 
         for i in range(1, steps + 1):
+            while self.paused and not self._cancel.is_set():
+                time.sleep(0.05)
             if self._cancel.is_set():
                 with self.lock:
                     self.driving = False
@@ -213,6 +254,28 @@ class MockRobot:
             aid = a.get("actionId", "")
             if kind == "stateRequest":
                 self.publish_state()
+            elif kind == "factsheetRequest":
+                self.publish_factsheet()
+            elif kind in ("startPause", "stopPause"):
+                with self.lock:
+                    self.paused = kind == "startPause"
+                    self.action_states.append(
+                        {"actionId": aid, "actionType": kind,
+                         "actionStatus": "FINISHED"})
+                self.publish_state()
+                print(f"[mock] {kind}", flush=True)
+            elif kind == "initPosition":
+                params = {p["key"]: p["value"] for p in a.get("actionParameters", [])}
+                with self.lock:
+                    self.x = float(params.get("x", self.x))
+                    self.y = float(params.get("y", self.y))
+                    self.theta = float(params.get("theta", self.theta))
+                    self.position_initialized = True
+                    self.action_states.append(
+                        {"actionId": aid, "actionType": kind,
+                         "actionStatus": "FINISHED"})
+                self.publish_state()
+                print(f"[mock] initPosition ({self.x:.2f}, {self.y:.2f})", flush=True)
             elif kind == "cancelOrder":
                 self._cancel.set()
                 with self.lock:
@@ -256,6 +319,9 @@ def main():
     p.add_argument("--x", type=float, default=15.28)
     p.add_argument("--y", type=float, default=-8.80)
     p.add_argument("--theta", type=float, default=0.9)
+    p.add_argument("--actions",
+                   default="startPause,stopPause,cancelOrder,stateRequest,initPosition,dock",
+                   help="comma-separated actionTypes in the factsheet; empty = no factsheet")
     p.add_argument("--step-time", type=float, default=0.2,
                    help="seconds per simulated motion step")
     p.add_argument("--state-period", type=float, default=1.0,

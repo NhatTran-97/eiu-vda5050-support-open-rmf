@@ -53,9 +53,7 @@ std::string make_uuid()
   std::uniform_int_distribution<uint32_t> d;
   char buf[37];
   const uint32_t a = d(gen), b = d(gen), c = d(gen), e = d(gen);
-  std::snprintf(buf, sizeof(buf),"%08x-%04x-4%03x-%04x-%04x%08x",
-    a, (b >> 16) & 0xFFFF, b & 0x0FFF,
-    ((c >> 16) & 0x3FFF) | 0x8000, c & 0xFFFF, e);
+  std::snprintf(buf, sizeof(buf),"%08x-%04x-4%03x-%04x-%04x%08x", a, (b >> 16) & 0xFFFF, b & 0x0FFF, ((c >> 16) & 0x3FFF) | 0x8000, c & 0xFFFF, e);
   return buf;
 }
 
@@ -153,9 +151,57 @@ nlohmann::json make_instant_actions(int header_id,
   return msg;
 }
 
-nlohmann::json cancel_order_action(const std::string& action_id)
+nlohmann::json make_typed_action(const std::string& action_type,
+                                 const std::string& blocking_type,
+                                 const nlohmann::json& parameters,
+                                 const std::string& action_id)
 {
-  return make_action("cancelOrder", "HARD", action_id);
+  nlohmann::json action =
+  {
+    {"actionType", action_type},
+    {"actionId", action_id.empty() ? make_uuid() : action_id},
+    {"blockingType", blocking_type},
+  };
+
+  if (parameters.is_object() && !parameters.empty())
+  {
+    nlohmann::json params = nlohmann::json::array();
+    for (auto it = parameters.begin(); it != parameters.end(); ++it)
+    {
+      params.push_back({{"key", it.key()}, {"value", it.value()}});
+    }
+    action["actionParameters"] = params;
+  }
+  return action;
+}
+
+nlohmann::json cancel_order_action(const std::string& action_id,
+                                   const std::string& blocking_type)
+{
+  return make_action("cancelOrder", blocking_type, action_id);
+}
+
+nlohmann::json start_pause_action(const std::string& blocking_type)
+{
+  return make_action("startPause", blocking_type);
+}
+
+nlohmann::json stop_pause_action(const std::string& blocking_type)
+{
+  return make_action("stopPause", blocking_type);
+}
+
+nlohmann::json factsheet_request_action(const std::string& blocking_type)
+{
+  return make_action("factsheetRequest", blocking_type);
+}
+
+nlohmann::json init_position_action(double x, double y, double theta,
+                                    const std::string& map_id,
+                                    const std::string& blocking_type)
+{
+  return make_typed_action("initPosition", blocking_type,
+                           {{"x", x}, {"y", y}, {"theta", theta}, {"mapId", map_id}});
 }
 
 // ─── ParsedState ──────────────────────────────────────────────────────────────
@@ -198,6 +244,14 @@ ParsedState::ParsedState(const nlohmann::json& raw)
       battery_soc = *charge / 100.0;  // VDA5050 %: 0–100 -> SoC 0.0–1.0
   }
 
+  if (raw.contains("safetyState") && raw["safetyState"].is_object())
+  {
+    const auto& safety = raw["safetyState"];
+    safety_state.e_stop = safety.value("eStop", std::string{"NONE"});
+    safety_state.field_violation = safety.value("fieldViolation", false);
+  }
+  operating_mode = raw.value("operatingMode", std::string{"AUTOMATIC"});
+
   order_id = raw.value("orderId", std::string{});
   order_update_id = get_opt<int>(raw, "orderUpdateId");
   last_node_id = raw.value("lastNodeId", std::string{});
@@ -214,6 +268,30 @@ bool ParsedState::has_position() const
 {
   return x.has_value() && y.has_value() && theta.has_value() &&
          position_initialized;
+}
+
+bool ParsedState::SafetyState::triggered() const
+{
+  return field_violation || (!e_stop.empty() && e_stop != "NONE");
+}
+
+bool ParsedState::operable() const
+{
+  return operating_mode == "AUTOMATIC" || operating_mode == "SEMIAUTOMATIC";
+}
+
+std::string ParsedState::first_fatal_error() const
+{
+  for (const auto& e : errors)
+  {
+    if (!e.is_object() || e.value("errorLevel", std::string{}) != "FATAL")
+    {
+      continue;
+    }
+    const std::string type = e.value("errorType", std::string{});
+    return type.empty() ? "(unnamed FATAL error)" : type;
+  }
+  return {};
 }
 
 bool ParsedState::order_finished(const std::string& oid,

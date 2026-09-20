@@ -12,9 +12,13 @@
 #include <yaml-cpp/yaml.h>
 
 #include <rclcpp/rclcpp.hpp>
+#include <rmf_fleet_adapter/StandardNames.hpp>
 #include <rmf_fleet_adapter/agv/Adapter.hpp>
 #include <rmf_fleet_adapter/agv/EasyFullControl.hpp>
 
+#include <rmf_fleet_msgs/msg/lane_request.hpp>
+
+#include "vda5050_fleet_adapter/operator_interface.hpp"
 #include "vda5050_fleet_adapter/robot_adapter.hpp"
 #include "vda5050_fleet_adapter/transform.hpp"
 #include "vda5050_fleet_adapter/vda5050_connector.hpp"
@@ -67,7 +71,7 @@ int main(int argc, char** argv)
 
   if (args.config_file.empty() || args.nav_graph.empty()) 
   {
-    RCLCPP_FATAL(logger, "Required: -c <config.yaml> -n <nav_graph.yaml>");
+    RCLCPP_FATAL(logger, "Required: -c <fleet_config.yaml> -n <nav_graph.yaml>");
     return 1;
   }
 
@@ -83,12 +87,8 @@ int main(int argc, char** argv)
     return 1;
   }
 
-  // RMF still validates the initial RobotState battery value when building a
-  // task assignment. When battery accounting is disabled for development,
-  // report a healthy SoC to RMF until the VDA5050 client publishes trustworthy
-  // battery telemetry. Otherwise batteryCharge=0 prevents every task bid.
-  const bool account_for_battery_drain =
-    fleet_config->account_for_battery_drain();
+ 
+  const bool account_for_battery_drain = fleet_config->account_for_battery_drain();
   if (!account_for_battery_drain)
   {
     RCLCPP_WARN(
@@ -101,10 +101,9 @@ int main(int argc, char** argv)
   // ── VDA5050 / MQTT settings (the `vda5050:` block, read by this adapter) ──
   const YAML::Node root = YAML::LoadFile(args.config_file);
   const YAML::Node vda = root["vda5050"];
-  const std::string interface_name =
-    vda["interface_name"] ? vda["interface_name"].as<std::string>() : "uagv";
+  const std::string interface_name = vda["interface_name"] ? vda["interface_name"].as<std::string>() : "uagv";
   const double update_rate_hz =
-    vda["update_rate_hz"] ? vda["update_rate_hz"].as<double>() : 10.0;
+  vda["update_rate_hz"] ? vda["update_rate_hz"].as<double>() : 10.0;
   if (!(update_rate_hz > 0.0))
   {
     RCLCPP_FATAL(logger, "vda5050.update_rate_hz must be > 0 (got %f)",
@@ -116,31 +115,56 @@ int main(int argc, char** argv)
   const std::string host =
     (mqtt && mqtt["host"]) ? mqtt["host"].as<std::string>() : "localhost";
   const int port = (mqtt && mqtt["port"]) ? mqtt["port"].as<int>() : 1883;
-  const std::string broker_url =
-    "tcp://" + host + ":" + std::to_string(port);
+  const std::string broker_url = "tcp://" + host + ":" + std::to_string(port);
   std::optional<std::string> user, pass;
   if (mqtt && mqtt["username"] && !mqtt["username"].IsNull())
+  {
     user = mqtt["username"].as<std::string>();
+  }
+    
   if (mqtt && mqtt["password"] && !mqtt["password"].IsNull())
+  {
     pass = mqtt["password"].as<std::string>();
+  }
+    
 
   using vda5050_fleet_adapter::RobotAdapter;
   using vda5050_fleet_adapter::Transform;
   using vda5050_fleet_adapter::Vda5050Connector;
 
-  auto connector = std::make_shared<Vda5050Connector>(
-    logger, broker_url, interface_name, user, pass);
+  auto connector = std::make_shared<Vda5050Connector>(logger, broker_url, interface_name, user, pass);
+  connector->set_strict_validation(vda["strict_validation"] ? vda["strict_validation"].as<bool>() : true);
   connector->start();
+
+  // Apply lane closures and openings requested from the operator UI.
+  const std::string fleet_name = fleet_config->fleet_name();
+  const auto lane_request_sub = adapter->node()->create_subscription<rmf_fleet_msgs::msg::LaneRequest>(
+      rmf_fleet_adapter::LaneClosureRequestTopicName,
+      rclcpp::QoS(10).reliable().transient_local(),[fleet, fleet_name](rmf_fleet_msgs::msg::LaneRequest::UniquePtr msg)
+      {
+        if (msg->fleet_name != fleet_name)
+        {
+          return;
+        }
+        if (!msg->close_lanes.empty())
+        {
+          fleet->more()->close_lanes(
+            std::vector<std::size_t>(msg->close_lanes.begin(), msg->close_lanes.end()));
+        }
+        if (!msg->open_lanes.empty())
+        {
+          fleet->more()->open_lanes(
+            std::vector<std::size_t>(msg->open_lanes.begin(), msg->open_lanes.end()));
+        }
+      });
 
   const YAML::Node robots_cfg = vda["robots"];
   std::map<std::string, std::shared_ptr<RobotAdapter>> robots;
   for (const auto& name : fleet_config->known_robots()) 
   {
     const YAML::Node rc = robots_cfg ? robots_cfg[name] : YAML::Node();
-    const std::string manufacturer =
-      (rc && rc["manufacturer"]) ? rc["manufacturer"].as<std::string>() : "unknown";
-    const std::string serial =
-      (rc && rc["serial"]) ? rc["serial"].as<std::string>() : name;
+    const std::string manufacturer = (rc && rc["manufacturer"]) ? rc["manufacturer"].as<std::string>() : "unknown";
+    const std::string serial =(rc && rc["serial"]) ? rc["serial"].as<std::string>() : name;
 
     Transform tf;
     if (rc && rc["transform"]) 
@@ -161,6 +185,15 @@ int main(int argc, char** argv)
     robots[name] = std::make_shared<RobotAdapter>(logger, name, *connector);
   }
 
+  // Operator controls: init_position, pause, resume and a per-robot speed cap.
+  std::map<std::string, vda5050_fleet_adapter::RobotHooks> hooks;
+  for (const auto& [name, robot] : robots)
+  {
+    hooks[name] = vda5050_fleet_adapter::RobotHooks{[robot = robot]() { return robot->pause(); },
+                                                    [robot = robot]() { return robot->resume(); }};
+  }
+  vda5050_fleet_adapter::OperatorInterface operator_interface( *adapter->node(), *connector, std::move(hooks));
+
   // ── Update loop: VDA5050 state -> RMF ────────────────────────────────────
   std::atomic<bool> running{true};
   const auto period = std::chrono::duration<double>(1.0 / update_rate_hz);
@@ -173,38 +206,38 @@ int main(int argc, char** argv)
         try 
         {
 
+          // A robot that is offline, unsafe or without a pose takes no new tasks.
+          const auto readiness = connector->readiness(name, robot->pause_expected());
+          robot->apply_readiness(readiness);
+
           if (!connector->is_online(name))
           {
             if (robot->added())
             {
-              RCLCPP_WARN_THROTTLE(
-                logger, *adapter->node()->get_clock(), 10000,
+              RCLCPP_WARN_THROTTLE( logger, *adapter->node()->get_clock(), 10000,
                 "Robot '%s' is offline - no recent VDA5050 state", name.c_str());
             }
             continue;
           }
+          connector->poll(name);
 
           const auto data = connector->get_data(name);
           if (!data)
+          {
             continue;  
-          const double rmf_battery_soc = account_for_battery_drain
-            ? data->battery_soc
-            : 1.0;
-          EasyFullControl::RobotState state(
-            data->map_name,
-            Eigen::Vector3d(data->position[0], data->position[1],
-                            data->position[2]),
-            rmf_battery_soc);
+          }
+            
+          const double rmf_battery_soc = account_for_battery_drain ? data->battery_soc : 1.0;
+          EasyFullControl::RobotState state(data->map_name,
+            Eigen::Vector3d(data->position[0], data->position[1],  data->position[2]), rmf_battery_soc);
 
           if (!robot->added()) 
           {
-            auto handle = fleet->add_robot(
-              name, state,
-              *fleet_config->get_known_robot_configuration(name),
-              robot->make_callbacks());
+            auto handle = fleet->add_robot( name, state, *fleet_config->get_known_robot_configuration(name), robot->make_callbacks());
             if (handle) 
             {
               robot->set_update_handle(handle);
+              robot->apply_readiness(readiness);
               RCLCPP_INFO(logger, "Robot '%s' added to RMF fleet", name.c_str());
             }
           } else 
@@ -213,12 +246,10 @@ int main(int argc, char** argv)
           }
         } catch (const std::exception& e) 
         {
-          RCLCPP_ERROR(logger, "update_loop error for '%s': %s", name.c_str(),
-                       e.what());
+          RCLCPP_ERROR(logger, "update_loop error for '%s': %s", name.c_str(), e.what());
         }
       }
-      std::this_thread::sleep_for(
-        std::chrono::duration_cast<std::chrono::milliseconds>(period));
+      std::this_thread::sleep_for( std::chrono::duration_cast<std::chrono::milliseconds>(period));
     }
   });
 

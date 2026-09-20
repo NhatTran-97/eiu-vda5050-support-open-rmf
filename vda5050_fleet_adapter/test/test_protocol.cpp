@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <map>
+
 #include "vda5050_fleet_adapter/vda5050_protocol.hpp"
 
 namespace proto = vda5050_fleet_adapter::protocol;
@@ -106,4 +108,59 @@ int main(int argc, char** argv)
 {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
+}
+
+TEST(Protocol, ParseStateSafetyModeAndFatalError)
+{
+  const auto raw = nlohmann::json::parse(R"({
+    "operatingMode": "MANUAL",
+    "safetyState": {"eStop": "MANUAL", "fieldViolation": false},
+    "errors": [
+      {"errorType": "lowBattery", "errorLevel": "WARNING"},
+      {"errorType": "motorFault", "errorLevel": "FATAL"}
+    ]
+  })");
+  const proto::ParsedState s(raw);
+  EXPECT_EQ(s.operating_mode, "MANUAL");
+  EXPECT_FALSE(s.operable());
+  EXPECT_TRUE(s.safety_state.triggered());
+  EXPECT_EQ(s.first_fatal_error(), "motorFault");
+}
+
+TEST(Protocol, ParseStateDefaultsAreHealthy)
+{
+  const proto::ParsedState s(nlohmann::json::parse("{}"));
+  EXPECT_TRUE(s.operable());
+  EXPECT_FALSE(s.safety_state.triggered());
+  EXPECT_TRUE(s.first_fatal_error().empty());
+}
+
+TEST(Protocol, FieldViolationTriggersSafety)
+{
+  const proto::ParsedState s(nlohmann::json::parse(
+    R"({"safetyState": {"eStop": "NONE", "fieldViolation": true}})"));
+  EXPECT_TRUE(s.safety_state.triggered());
+}
+
+TEST(Protocol, InitPositionKeepsNumericTypes)
+{
+  const auto a = proto::init_position_action(1.5, -2.0, 0.25, "tb3_world");
+  EXPECT_EQ(a["actionType"], "initPosition");
+  EXPECT_EQ(a["blockingType"], "NONE");
+  std::map<std::string, nlohmann::json> params;
+  for (const auto& p : a["actionParameters"])
+  {
+    params[p["key"]] = p["value"];
+  }
+  EXPECT_TRUE(params["x"].is_number());
+  EXPECT_DOUBLE_EQ(params["theta"], 0.25);
+  EXPECT_EQ(params["mapId"], "tb3_world");
+}
+
+TEST(Protocol, PauseAndFactsheetActions)
+{
+  EXPECT_EQ(proto::start_pause_action()["actionType"], "startPause");
+  EXPECT_EQ(proto::stop_pause_action()["actionType"], "stopPause");
+  EXPECT_EQ(proto::factsheet_request_action()["actionType"], "factsheetRequest");
+  EXPECT_EQ(proto::cancel_order_action("", "SOFT")["blockingType"], "SOFT");
 }
