@@ -11,14 +11,14 @@ ROS 2 bridge node that connects `vda5050_client_adapter` to the TurtleBot3 / Nav
 - Detects manual joystick/keyboard takeover via `twist_mux`/`/diagnostics` and reports it as `operating_mode`.
 - Survives out-of-order startup (bridge before Nav2), goal preemption races, and process restarts (order progress persisted to disk).
 - Retries a failed Nav2 goal instead of failing the order on the first hiccup.
-- `initPosition` re-localization via AMCL, refused while a goal is active.
+- `initPosition` re-localization via AMCL, refused while a goal drives from a valid pose.
 
 See [Startup & Robustness](#startup--robustness) below for the operational detail, and [docs/architecture.md](docs/architecture.md) for how each of these is implemented.
 
 ## Package Structure
 
 | File | Role |
-|---|---|
+|:---:|---|
 | `src/bridge_node.cpp` | ROS orchestration: owns all publishers/subscribers and the Nav2 action client. Translates between the ROS interface and the session/state-machine. |
 | `src/order_session.cpp` | `plan_next_work()` traversal algorithm: released action-only nodes are consumed immediately; navigable nodes are sent to Nav2; unreleased nodes trigger WAITING_FOR_RELEASE. |
 | `src/bridge_state_machine.cpp` | Centralizes mode transitions and derives `driving` / `paused` flags. Prevents contradictory states. |
@@ -40,7 +40,7 @@ for exactly how.
 ### Subscribed
 
 | Topic | Type | Purpose |
-|---|---|---|
+|:---:|:---:|---|
 | `${odom_topic}` | `nav_msgs/Odometry` | Robot position and velocity |
 | `${amcl_pose_topic}` | `geometry_msgs/PoseWithCovarianceStamped` | AMCL localization pose |
 | `${battery_topic}` | `sensor_msgs/BatteryState` | Battery charge |
@@ -52,7 +52,7 @@ for exactly how.
 ### Published
 
 | Topic | Type | Purpose |
-|---|---|---|
+|:---:|:---:|---|
 | `${adapter_ns}/agv_position` | `vda5050_msgs/AgvPosition` | Robot position |
 | `${adapter_ns}/velocity` | `vda5050_msgs/Velocity` | Robot velocity |
 | `${adapter_ns}/battery_state` | `vda5050_msgs/BatteryState` | Battery feedback — an unusable `/battery_state` reading (no percentage or voltage) republishes the last known-good value instead of fabricating one |
@@ -74,7 +74,7 @@ for exactly how.
 Config file: [`config/bridge_params.yaml`](config/bridge_params.yaml)
 
 | Parameter | Default | Description |
-|---|---|---|
+|:---:|:---:|---|
 | `adapter_ns` | `/vda5050_client_adapter` | Adapter topic prefix |
 | `odom_topic` | `/odom` | Odometry input |
 | `amcl_pose_topic` | `/amcl_pose` | AMCL pose input |
@@ -85,7 +85,7 @@ Config file: [`config/bridge_params.yaml`](config/bridge_params.yaml)
 | `position_covariance_threshold` | `0.5` | Threshold for `position_initialized` flag |
 | `order_state_path` | `$HOME/.ros/tb3_vda5050_bridge_order_state.txt` | Order progress persisted across restarts |
 | `nav2_dispatch_timeout_sec` | `120.0` | Max wait for Nav2 before failing a stuck order |
-| `initial_pose_topic` | `/initialpose` | Where `initPosition` publishes AMCL's new pose. Refused (`FAILED`) while an order is active |
+| `initial_pose_topic` | `/initialpose` | Where `initPosition` publishes AMCL's new pose. Refused (`FAILED`) while a goal is active and the pose is valid; if the pose is lost the goal is stopped first |
 | `supported_action_types` | `[]` | VDA5050 action types actually implemented (e.g. `initPosition`) |
 | `amcl_pose_timeout_sec` | `10.0` | Max age of the last AMCL pose before it stops being trusted — unless the robot hasn't moved since, see `pose_stale_move_tolerance_m` |
 | `pose_stale_move_tolerance_m` | `0.15` | Only checked once the robot has driven since the last AMCL confirmation — a stale AMCL pose is still trusted as long as odometry shows no more than this much movement since |

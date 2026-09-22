@@ -24,7 +24,7 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 **Purpose:** Send a `stateRequest` instant action — adapter must respond immediately with current state, without waiting for the 30s timer.
 
 | Step | Terminal | Role | Command |
-|------|----------|------|---------|
+|:---:|:---:|---|---|
 | 1 | T1 | Client adapter output — waiting for state response | `mosquitto_sub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/state" -C 1 \| jq '{orderId,driving,paused,operatingMode}'` |
 | 2 | T2 | Simulated Fleet MC — sends `stateRequest` instant action | `mosquitto_pub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/instantActions" -m '{"headerId":1,"timestamp":"2026-05-28T00:00:00Z","version":"2.1.0","manufacturer":"ROBOTIS","serialNumber":"0001","actions":[{"actionId":"ia-sr-001","actionType":"stateRequest","blockingType":"NONE"}]}'` |
 
@@ -42,7 +42,7 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 **Purpose:** Send a `startPause` instant action — adapter must set `paused: true` after robot confirms via ROS2 topic.
 
 | Step | Terminal | Role | Command |
-|------|----------|------|---------|
+|:---:|:---:|---|---|
 | 1 | T1 | Simulated Robot — confirms pause via ROS2 *(choose one)* | **Host:** `ros2 topic pub /vda5050_client_adapter/paused std_msgs/msg/Bool '{data: true}' --once` |
 |   |    |  | **Docker:** `docker exec vda5050-adapter bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 topic pub /vda5050_client_adapter/paused std_msgs/msg/Bool '{data: true}' --once"` |
 | 2 | T2 | Client adapter output — waiting for updated state | `mosquitto_sub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/state" -C 1 \| jq '{paused}'` |
@@ -62,7 +62,7 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 **Purpose:** Send a `stopPause` instant action — adapter must set `paused: false` after robot confirms via ROS2 topic.
 
 | Step | Terminal | Role | Command |
-|------|----------|------|---------|
+|:---:|:---:|---|---|
 | 1 | T1 | Simulated Robot — confirms resume via ROS2 *(choose one)* | **Host:** `ros2 topic pub /vda5050_client_adapter/paused std_msgs/msg/Bool '{data: false}' --once` |
 |   |    |  | **Docker:** `docker exec vda5050-adapter bash -c "source /opt/ros/jazzy/setup.bash && source /ros2_ws/install/setup.bash && ros2 topic pub /vda5050_client_adapter/paused std_msgs/msg/Bool '{data: false}' --once"` |
 | 2 | T2 | Client adapter output — waiting for updated state | `mosquitto_sub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/state" -C 1 \| jq '{paused}'` |
@@ -82,7 +82,7 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 **Purpose:** Send an order to the adapter — adapter must load the route and reflect it in state (`nodeStates`, `edgeStates`).
 
 | Step | Terminal | Role | Command |
-|------|----------|------|---------|
+|:---:|:---:|---|---|
 | 1 | T1 | Client adapter output — waiting for state with order info | `mosquitto_sub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/state" -C 1 \| jq '{orderId,nodeStates:.nodeStates\|length,edgeStates:.edgeStates\|length}'` |
 | 2 | T2 | Simulated Fleet MC — sends order with 2 nodes, 1 edge | `mosquitto_pub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/order" -m '{"headerId":6,"timestamp":"2026-05-28T00:00:00Z","version":"2.1.0","manufacturer":"ROBOTIS","serialNumber":"0001","orderId":"order-001","orderUpdateId":0,"nodes":[{"nodeId":"n1","sequenceId":0,"released":true,"nodePosition":{"x":0.0,"y":0.0,"mapId":"map","theta":0.0},"actions":[]},{"nodeId":"n2","sequenceId":2,"released":true,"nodePosition":{"x":1.0,"y":0.0,"mapId":"map","theta":0.0},"actions":[]}],"edges":[{"edgeId":"e1","sequenceId":1,"released":true,"startNodeId":"n1","endNodeId":"n2","actions":[]}]}'` |
 
@@ -100,7 +100,7 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 **Purpose:** Send a `cancelOrder` instant action — adapter must reset `orderId` to empty and clear all node/edge states.
 
 | Step | Terminal | Role | Command |
-|------|----------|------|---------|
+|:---:|:---:|---|---|
 | 1 | T1 | Simulated Fleet MC — sends order `order-002` (setup) | `mosquitto_pub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/order" -m '{"headerId":6,"timestamp":"2026-05-28T00:00:00Z","version":"2.1.0","manufacturer":"ROBOTIS","serialNumber":"0001","orderId":"order-002","orderUpdateId":0,"nodes":[{"nodeId":"n1","sequenceId":0,"released":true,"nodePosition":{"x":0.0,"y":0.0,"mapId":"map","theta":0.0},"actions":[]},{"nodeId":"n2","sequenceId":2,"released":true,"nodePosition":{"x":1.0,"y":0.0,"mapId":"map","theta":0.0},"actions":[]}],"edges":[{"edgeId":"e1","sequenceId":1,"released":true,"startNodeId":"n1","endNodeId":"n2","actions":[]}]}'` |
 | 2 | T2 | Client adapter output — waiting for state after cancel | `mosquitto_sub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/state" -C 1 \| jq '{orderId,nodeStates:.nodeStates\|length,edgeStates:.edgeStates\|length}'` |
 | 3 | T3 | Simulated Fleet MC — sends `cancelOrder` instant action | `mosquitto_pub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/instantActions" -m '{"headerId":7,"timestamp":"2026-05-28T00:00:00Z","version":"2.1.0","manufacturer":"ROBOTIS","serialNumber":"0001","actions":[{"actionId":"ia-cancel-002","actionType":"cancelOrder","blockingType":"NONE"}]}'` |
@@ -119,7 +119,7 @@ export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 **Purpose:** Kill the adapter abruptly — broker automatically delivers a pre-registered disconnect message (`CONNECTIONBROKEN`) to all subscribers on the `/connection` topic.
 
 | Step | Terminal | Role | Command |
-|------|----------|------|---------|
+|:---:|:---:|---|---|
 | 1 | T1 | Client adapter output — listening on `/connection` topic | `mosquitto_sub -h localhost -p 1883 -t "TB3/v2/ROBOTIS/0001/connection" \| jq .` |
 | 2 | T2 | Kill adapter — simulates abrupt connection loss | `docker kill --signal=KILL vda5050-adapter` |
 
@@ -141,7 +141,7 @@ docker compose start vda5050-adapter
 ## Results Summary
 
 | # | Test Case | Purpose | Result |
-|---|-----------|---------|--------|
+|:---:|:---:|---|:---:|
 | 1 | stateRequest | On-demand state publish | ✅ Pass |
 | 2 | startPause | Robot pause confirmed | ✅ Pass |
 | 3 | stopPause | Robot resume confirmed | ✅ Pass |

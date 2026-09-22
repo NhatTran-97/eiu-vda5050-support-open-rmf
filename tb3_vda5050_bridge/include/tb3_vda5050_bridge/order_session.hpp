@@ -40,91 +40,48 @@ struct DispatchPlan {
   std::optional<NavigationTarget> target;
 };
 
-/**
- * @brief Track an order cursor, merge updates, and plan the next route step.
- */
+// Tracks the order cursor, merges updates and plans the next route step.
 class OrderSession {
 public:
-  /**
-   * @brief Start a new order or resume from a prior checkpoint.
-   * @param order The VDA5050 order to start.
-   * @param resume_cursor Node index to resume from (0 = start at beginning).
-   */
+  // Starts an order, resuming from `resume_cursor`.
   void start(const vda5050_msgs::msg::Order& order, std::size_t resume_cursor = 0);
 
-  /**
-   * @brief Merge an updated order into the current one.
-   * @param order The updated order (must have order_id matching current).
-   * @return false if order_update_id is not strictly newer (stale/duplicate), true on success.
-   */
+  // Merges an update of the current order; false if its update id is not newer.
   bool update(const vda5050_msgs::msg::Order& order);
 
-  /**
-   * @brief Clear the active order session and reset state.
-   */
+  // Ends the order and resets the cursor.
   void clear();
 
-  // ── State queries ──────────────────────────────────────────────────────
-
-  /**
-   * @brief Check if an order is currently active.
-   * @return true if order_id is non-empty.
-   */
+  // Whether an order is active.
   bool has_order() const;
 
-  /**
-   * @brief Get the current order ID.
-   * @return Order ID string, empty if no active order.
-   */
   const std::string& order_id() const { return current_order_id_; }
 
-  /**
-   * @brief Get the index of the next node to process.
-   * @return Cursor position in nodes vector.
-   */
+  // Index of the next node to process.
   std::size_t current_node_index() const { return current_node_index_; }
 
-  /**
-   * @brief Get the generation counter (incremented on start/clear).
-   * @return Generation number used to invalidate stale callbacks.
-   */
+  // Counter bumped on start and clear, used to drop stale callbacks.
   uint64_t generation() const { return generation_; }
 
-  /**
-   * @brief Get the current order's nodes.
-   * @return Const reference to nodes vector.
-   */
   const std::vector<vda5050_msgs::msg::Node>& nodes() const { return current_order_.nodes; }
 
-  // ── Dispatch planning ──────────────────────────────────────────────────
-
-  /**
-   * @brief Plan the next work: emit events, navigate, or wait.
-   * @return DispatchPlan with kind (NAVIGATE/WAITING_FOR_RELEASE/COMPLETED) and optional target.
-   */
+  // Plans the next step: emit events, navigate, or wait for release.
   DispatchPlan plan_next_work();
 
-  /**
-   * @brief Complete navigation to a node after reaching it.
-   * @param node_index Index of the reached node.
-   * @return Traversal events (edge_completed, node_reached) if index matches cursor, empty otherwise.
-   */
+  // Marks the node at `node_index` reached; empty if it is not the cursor node.
   std::vector<TraversalEvent> complete_navigation(std::size_t node_index);
 
-  /**
-   * @brief Check if next node is position-less and requires pose validation before auto-completion.
-   * @return true if next node is released but has no position set.
-   */
+  // Whether the next node is released but has no position, so only the robot pose can confirm it.
   bool next_node_requires_pose_to_complete() const;
 
 private:
-  // Convert VDA5050 Node (node) to NodeState for publication.
+  // NodeState of `node`.
   static vda5050_msgs::msg::NodeState make_node_state(const vda5050_msgs::msg::Node& node);
-  // Find edge in order (order) preceding node (node) by sequence_id; return nullopt if not found.
+  // Edge of `order` that ends at `node`.
   static std::optional<vda5050_msgs::msg::Edge> find_incoming_edge(
     const vda5050_msgs::msg::Order& order,
     const vda5050_msgs::msg::Node& node);
-  // Build EdgeState (from order's edge) for node (node); used to publish edge_entered/edge_completed events.
+  // EdgeState of the edge that ends at `node`, for edge_entered and edge_completed events.
   static std::optional<vda5050_msgs::msg::EdgeState> make_incoming_edge_state(
     const vda5050_msgs::msg::Order& order,
     const vda5050_msgs::msg::Node& node);

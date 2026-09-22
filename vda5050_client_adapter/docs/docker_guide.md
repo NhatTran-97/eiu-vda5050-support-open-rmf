@@ -148,6 +148,6 @@ mosquitto_pub -h localhost -p 1883 \
 ## Services Summary
 
 | Service | Image | Port | Description |
-|---------|-------|------|-------------|
+|:---:|:---:|:---:|---|
 | `mqtt-broker` | eclipse-mosquitto:2.0 | 1883 (MQTT), 9001 (WS) | MQTT broker |
 | `vda5050-adapter` | vda5050-client-adapter:latest | — | VDA5050 adapter node |

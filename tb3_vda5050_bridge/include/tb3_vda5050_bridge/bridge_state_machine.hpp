@@ -19,92 +19,43 @@ struct BridgeStatus {
   bool paused{false};
 };
 
-/**
- * @brief Derive driving and paused status from bridge mode transitions.
- */
+// Derives the driving and paused flags from mode transitions.
 class BridgeStateMachine {
 public:
   BridgeStateMachine() = default;
 
-  // ── State transitions ──────────────────────────────────────────────────────
-
-  /**
-   * @brief Transition to DISPATCHING when a new order is received.
-   */
+  // New order received: DISPATCHING.
   void on_order_started();
-
-  /**
-   * @brief Transition to DISPATCHING when planning or retrying dispatch.
-   */
+  // Planning or retrying dispatch: DISPATCHING.
   void on_dispatching();
-
-  /**
-   * @brief Transition to NAVIGATING when Nav2 accepts a goal.
-   */
+  // Nav2 accepted a goal: NAVIGATING.
   void on_navigation_active();
-
-  /**
-   * @brief Transition to WAITING_FOR_RELEASE when next node is not yet released.
-   */
+  // Next node not released yet: WAITING_FOR_RELEASE.
   void on_waiting_for_release();
-
-  /**
-   * @brief Transition to PAUSED on pause request.
-   */
+  // Pause requested: PAUSED.
   void on_pause_requested();
-
-  /**
-   * @brief Transition back to DISPATCHING on resume from pause.
-   */
+  // Resume requested: DISPATCHING.
   void on_resume_requested();
-
-  /**
-   * @brief Transition to IDLE on cancel or order completion.
-   */
+  // Cancel or order end: IDLE.
   void on_cancel_requested();
-
-  /**
-   * @brief Transition to FAULTED when navigation fails and cannot recover.
-   */
+  // Navigation failed for good: FAULTED.
   void on_navigation_failed();
-
-  /**
-   * @brief Transition to IDLE when all route work is complete.
-   */
+  // All route work done: IDLE.
   void on_all_work_completed();
 
-  // ── State queries ──────────────────────────────────────────────────────────
-
-  /**
-   * @brief Get current BridgeStatus (mode + derived driving/paused flags).
-   * @return BridgeStatus struct with mode and flags.
-   */
+  // Mode with the driving and paused flags derived from it.
   BridgeStatus status() const;
-
-  /**
-   * @brief Get current bridge mode.
-   * @return Current BridgeMode enum value.
-   */
   BridgeMode mode() const { return mode_; }
-
-  /**
-   * @brief Check if bridge is in PAUSED mode.
-   * @return true if mode == PAUSED.
-   */
   bool is_paused() const { return mode_ == BridgeMode::PAUSED; }
 
 private:
-  // ── Internal helpers ───────────────────────────────────────────────────────
-
-  // Convert BridgeMode (mode) to BridgeStatus with appropriate driving/paused flags.
+  // Driving and paused flags of a mode.
   static BridgeStatus status_from_mode(BridgeMode mode);
-
-  // ── State ──────────────────────────────────────────────────────────────────
 
   BridgeMode mode_{BridgeMode::IDLE};
 };
 
-// Convert BridgeMode (mode) to string representation for logging.
+// Mode name for logs.
 std::string to_string(BridgeMode mode);
 
 }  // namespace tb3_vda5050_bridge

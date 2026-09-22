@@ -6,7 +6,7 @@ namespace tb3_vda5050_bridge {
 
 namespace {
 
-// Merge incoming  into current  by sequence_id: upsert, drop unreleased missing entries, protect old entries.
+// Merges `incoming` into `current` by sequence id: upserts entries, drops missing unreleased ones, keeps traversed ones.
 template <typename T>
 void merge_by_sequence_id(
   std::vector<T>& current, const std::vector<T>& incoming,
@@ -37,7 +37,7 @@ void merge_by_sequence_id(
 
 }  // namespace
 
-// Store new order, set cursor (resume from checkpoint or start at 0), increment generation.
+// Stores the order, sets the cursor (resume point or 0) and bumps the generation.
 void OrderSession::start(const vda5050_msgs::msg::Order& order, std::size_t resume_cursor) {
   current_order_ = order;
   current_order_id_ = order.order_id;
@@ -45,7 +45,7 @@ void OrderSession::start(const vda5050_msgs::msg::Order& order, std::size_t resu
   ++generation_;
 }
 
-// Merge a newer order update without changing traversed nodes.
+// Merges a newer update without changing traversed nodes.
 bool OrderSession::update(const vda5050_msgs::msg::Order& order) {
   if (order.order_update_id <= current_order_.order_update_id) {
     return false;
@@ -61,7 +61,7 @@ bool OrderSession::update(const vda5050_msgs::msg::Order& order) {
   return true;
 }
 
-// Reset order session: clear order, order_id, cursor; increment generation.
+// Clears the order and cursor and bumps the generation.
 void OrderSession::clear() {
   current_order_ = vda5050_msgs::msg::Order{};
   current_order_id_.clear();
@@ -69,12 +69,12 @@ void OrderSession::clear() {
   ++generation_;
 }
 
-// Return true if order_id is non-empty (order is active).
+// Whether an order is active.
 bool OrderSession::has_order() const {
   return !current_order_id_.empty();
 }
 
-// Plan next work: emit immediate events for position-less nodes, or return navigate/wait/completed dispatch plan.
+// Emits events for position-less nodes, then returns the next step: navigate, wait or completed.
 DispatchPlan OrderSession::plan_next_work() {
   DispatchPlan plan;
 
@@ -120,7 +120,7 @@ DispatchPlan OrderSession::plan_next_work() {
   return plan;
 }
 
-// Return true if current node is released but position-less (requires robot pose for auto-complete).
+// Whether the cursor node is released but has no position, so the robot pose must confirm it.
 bool OrderSession::next_node_requires_pose_to_complete() const {
   if (!has_order() || current_node_index_ >= current_order_.nodes.size()) {
     return false;
@@ -129,7 +129,7 @@ bool OrderSession::next_node_requires_pose_to_complete() const {
   return node.released && !node.node_position_set;
 }
 
-// Advance the cursor and emit traversal events for the reached node.
+// Advances the cursor and returns the traversal events of the reached node.
 std::vector<TraversalEvent> OrderSession::complete_navigation(std::size_t node_index) {
   std::vector<TraversalEvent> events;
 
@@ -151,7 +151,7 @@ std::vector<TraversalEvent> OrderSession::complete_navigation(std::size_t node_i
   return events;
 }
 
-// Convert Node (node) to NodeState: copy id/sequence_id/description/released/position fields.
+// NodeState of `node`.
 vda5050_msgs::msg::NodeState OrderSession::make_node_state(const vda5050_msgs::msg::Node& node) {
   vda5050_msgs::msg::NodeState state;
   state.node_id = node.node_id;
@@ -166,7 +166,7 @@ vda5050_msgs::msg::NodeState OrderSession::make_node_state(const vda5050_msgs::m
   return state;
 }
 
-// Find the incoming edge for a node by sequence ID.
+// Edge of the order that ends at `node`, by sequence id.
 std::optional<vda5050_msgs::msg::Edge> OrderSession::find_incoming_edge(
   const vda5050_msgs::msg::Order& order,
   const vda5050_msgs::msg::Node& node)
@@ -187,7 +187,7 @@ std::optional<vda5050_msgs::msg::Edge> OrderSession::find_incoming_edge(
   return *it;
 }
 
-// Build EdgeState from order's edge preceding node (node); return nullopt if edge not found.
+// EdgeState of the edge that ends at `node`; nullopt if there is none.
 std::optional<vda5050_msgs::msg::EdgeState> OrderSession::make_incoming_edge_state(const vda5050_msgs::msg::Order& order, const vda5050_msgs::msg::Node& node)
 {
   const auto edge = find_incoming_edge(order, node);

@@ -111,7 +111,7 @@ stateDiagram-v2
 ### Mode semantics
 
 | Mode | driving | paused | Meaning |
-|---|---|---|---|
+|:---:|:---:|:---:|---|
 | `IDLE` | false | false | No active work |
 | `DISPATCHING` | false | false | Planning or sending next step |
 | `NAVIGATING` | true | false | Active Nav2 goal |
@@ -134,14 +134,11 @@ stateDiagram-v2
 
 ### Order updates (`OrderSession::update`)
 
-A VDA5050 order update (same `orderId`, higher `orderUpdateId`) restates the route from
-the stitch node onward, but isn't guaranteed to repeat every node/edge already known, or
-to arrive in the same vector order as before. `update()` upserts the incoming nodes/edges
-by `sequence_id` into the existing list, re-sorts by `sequence_id`, and drops any
-already-known node/edge that is **not released** (still horizon) and is absent from the
-update — VDA5050 lets Master Control freely reshape the horizon this way. A **released**
-node/edge is never dropped even if the update omits it, since release commits the AGV and
-can't be undone. See implementation notes.
+An order update (same `orderId`, higher `orderUpdateId`) restates the route from the
+stitch node onward, not necessarily repeating every node/edge or in the same order.
+`update()` upserts incoming nodes/edges by `sequence_id`, re-sorts, and drops an
+already-known **unreleased** node/edge absent from the update (VDA5050 lets Master
+Control reshape the horizon this way); a **released** node/edge is never dropped.
 
 ### Action-only node handling
 
@@ -156,22 +153,20 @@ This keeps the bridge compatible with the adapter's `OrderManager` and `ActionMa
 
 ### Skipping Nav2 when already at the target (`try_complete_in_place`)
 
-Before sending a navigable node to Nav2, `dispatch_next_work()` first calls
-`try_complete_in_place()`. If the robot's current AMCL pose is already within the node's
-`allowedDeviationXy` (default 0.5 m if unset) **and**, when the node's heading is actually
-constrained (`theta_set` and `allowedDeviationTheta` below ~3 rad — i.e. not the "don't
-care" value the fleet adapter sends for most nodes), within `allowedDeviationTheta` of
-`node_position.theta` too, the node is marked reached immediately without ever going
-through Nav2. This avoids a pointless rotate-in-place when a hold-in-place order's start
-and end coincide. If the position is in tolerance but the heading isn't, it falls through
-to Nav2 instead, which issues a pure in-place rotation (goal position == current position).
+Before sending a navigable node to Nav2, `dispatch_next_work()` calls
+`try_complete_in_place()`. If the AMCL pose is already within the node's
+`allowedDeviationXy` (default 0.5 m), and within `allowedDeviationTheta` too
+when heading is actually constrained, the node is marked reached without
+going through Nav2 — this skips a pointless rotate-in-place. If the
+position is in tolerance but the heading isn't, it falls through to Nav2,
+which does the in-place rotation instead.
 
 ### Real driven distance (`OdomDistanceTracker`)
 
-Accumulates the actual path length from consecutive `/odom` positions (not
-straight-line distance to the target), reset each time a node is reached.
-Stamped onto `node_reached`'s `distance_driven` field and also streamed
-live via `~/distance_since_last_node` between nodes, so a curved or
+Tracks the actual path walked between consecutive `/odom` positions, not
+the straight-line distance to the target, and resets it each time a node
+is reached. This goes into `node_reached`'s `distance_driven` field and is
+also streamed live on `~/distance_since_last_node`, so a curved or
 obstacle-avoiding leg reports its real length instead of undercounting it.
 
 ---
@@ -227,63 +222,36 @@ This prevents an old canceled goal from mutating the current order state.
 
 ## 6b. Order Replacement & Nav2 Readiness
 
-### Replacing an active order (Nav2 preemption, not explicit cancel)
+### Replacing an active order
 
-When a brand-new order arrives while the robot is navigating, the bridge does **not**
-call `async_cancel_goal` on the active goal and then immediately send the replacement in
-the same tick. On the single-goal `NavigateToPose` server those two async calls race, and
-Nav2 can silently drop the new goal (accepted, but the result callback never fires) —
-stranding the order forever because its route is never consumed.
-
-Instead, `on_order` for a new order:
-
-1. Bumps the navigation token (`invalidate_navigation_context`) so the old goal's
-   preemption result is ignored.
-2. Sends the replacement goal and lets Nav2 **preempt** the old one (standard single-goal
-   behavior — no race).
-3. Only if a replacement goal was **not actually handed to Nav2** this cycle does it
-   explicitly `async_cancel_goal` the previous goal to stop the robot.
-
-The explicit `cancel:` instant action (a true cancel with no replacement) still calls
-`cancel_navigation()` to stop the robot.
+A new order while navigating does not `async_cancel_goal` then send the
+replacement — those two calls race on the single-goal `NavigateToPose`
+server. Instead `on_order` bumps
+the navigation token and sends the replacement, letting Nav2 preempt the
+old goal; it only cancels explicitly if no replacement goal actually went
+out. An explicit `cancel:` instant action still calls `cancel_navigation()`.
 
 ### Re-localization (`initPosition`)
 
-`initPosition` (dispatched as an instant action) publishes the given
-x/y/theta to `initial_pose_topic` (AMCL) so an operator can recover a robot
-that was moved by hand or has drifted. Rejected outright while a Nav2 goal
-is active — the guard is the live goal, not order-session state, since an
-order stuck for unrelated reasons (process restart, Nav2 unavailable) has
-nothing driving it and re-localizing is exactly how an operator recovers
-from that too. Any order still tracked at the moment of a successful
-re-localization is dropped: it was planned from the pose that just got
-overwritten, so it's cleared and reported via `order_dropped` rather than
-left to run from a start point that's no longer real.
+See [README § Configuration](../README.md#configuration),
+`initial_pose_topic` — refused only while a goal drives from a still-valid
+pose; a lost pose cancels the goal first. A dropped order is cleared and
+reported via `order_dropped`.
 
-### Nav2 not ready yet (startup order independence)
+### Nav2 not ready yet, and failed goals are retried
 
-`send_navigation_goal` checks `action_server_is_ready()` (non-blocking). If Nav2 is not up
-yet — e.g. the bridge started before Nav2 — the order is **held, not failed**: the bridge
-stays in `DISPATCHING` and arms a 2 s retry timer that re-attempts the dispatch. The goal
-goes out as soon as Nav2 appears. The timer is cancelled once a goal is sent, the order
-completes, or it is cancelled. This makes robot-side startup order irrelevant.
-
-### A failed navigation is retried, not given up on immediately
-
-Nav2 reporting a goal as failed (obstacle, transient AMCL/planner hiccup) re-attempts the
-same node on the same 2 s timer / `nav2_dispatch_timeout_sec` budget as the "Nav2 not ready
-yet" case above, instead of stalling the order on the first hiccup. Only once that budget
-is exhausted does the order actually fail (`navigationError`, order cleared and persisted
-as terminal).
+`send_navigation_goal` checks `action_server_is_ready()`; if Nav2 isn't up
+yet, or a goal fails, the order is held (not failed) and a 2 s timer
+retries dispatch until `nav2_dispatch_timeout_sec` runs out — so bridge/Nav2
+startup order doesn't matter and one bad goal doesn't fail the order.
 
 ### Restart doesn't replay a finished order
 
-Order progress (`order_id`, node cursor, terminal flag) is persisted to disk
-(`order_state_path`) and checked before acting on what looks like a new order, so a
-`transient_local` order retained by a still-running publisher (e.g. a UI panel, a separate
-systemd unit from bringup) can't make a restarted bridge re-drive a route it already
-completed or that was cancelled. An order still genuinely in progress resumes at its last
-cursor instead of restarting from node 0.
+Order progress (`order_id`, node cursor, terminal flag) is persisted to
+`order_state_path` and checked before acting on what looks like a new
+order, so a retained order message can't make a restarted bridge re-drive
+a route already completed or cancelled; a genuinely unfinished order
+resumes at its last cursor.
 
 ---
 
@@ -295,7 +263,7 @@ Default: `/vda5050_client_adapter`
 ### Subscribed
 
 | Topic | Type | Purpose |
-|---|---|---|
+|:---:|:---:|---|
 | `${odom_topic}` | `nav_msgs/Odometry` | Publish `AgvPosition` and `Velocity` |
 | `${amcl_pose_topic}` | `geometry_msgs/PoseWithCovarianceStamped` | AMCL localization pose (staleness/trust checks, §7b) |
 | `${battery_topic}` | `sensor_msgs/BatteryState` | Publish VDA5050 battery state |
@@ -307,7 +275,7 @@ Default: `/vda5050_client_adapter`
 ### Published
 
 | Topic | Type | Purpose |
-|---|---|---|
+|:---:|:---:|---|
 | `${adapter_ns}/agv_position` | `vda5050_msgs/AgvPosition` | Robot position |
 | `${adapter_ns}/velocity` | `vda5050_msgs/Velocity` | Robot velocity |
 | `${adapter_ns}/battery_state` | `vda5050_msgs/BatteryState` | Battery feedback |
@@ -327,16 +295,11 @@ Default: `/vda5050_client_adapter`
 ## 7b. Manual Override Detection (`operating_mode`)
 
 `twist_mux` arbitrates joystick/keyboard/Nav2 by priority and reports each
-source's masked/unmasked state via `/diagnostics`. The bridge treats any
-non-`navigation` source reporting `unmasked` as a human takeover, publishing
-`operating_mode` as `MANUAL` (else `AUTOMATIC`), only on change. (Its "current
-priority" field tracks locks, not this arbitration -- unusable here.)
-
-`AgvPosition`/`Velocity` stay accurate during a manual override regardless
-(both come from real odometry/AMCL, not from what Nav2 commanded) — this
-only adds the missing signal that Master Control needs to know a human,
-not the current order, is driving right now. `SEMIAUTOMATIC` / `SERVICE` /
-`TEACHIN` have no corresponding real state on this robot and are never used.
+source's masked/unmasked state via `/diagnostics`. Any non-`navigation`
+source reporting `unmasked` is a human takeover: `operating_mode` publishes
+`MANUAL` (else `AUTOMATIC`), only on change. `AgvPosition`/`Velocity` stay
+accurate either way (real odometry/AMCL, not what Nav2 commanded).
+`SEMIAUTOMATIC`/`SERVICE`/`TEACHIN` are never used — no such state on this robot.
 
 ---
 

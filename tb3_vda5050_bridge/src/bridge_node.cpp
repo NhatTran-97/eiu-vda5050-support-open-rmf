@@ -27,7 +27,7 @@ double normalize_angle(double angle)
   return angle;
 }
 
-// Get the path where we save order state, defaults to $HOME/.ros.
+// Order state file, under $HOME/.ros by default.
 std::string default_order_state_path()
 {
   const char* home = std::getenv("HOME");
@@ -35,7 +35,7 @@ std::string default_order_state_path()
   return base + "/tb3_vda5050_bridge_order_state.txt";
 }
 
-// Look up a parameter value in an action, return empty string if not found.
+// Value of an action parameter, or empty if absent.
 std::string find_action_parameter(const vda5050_msgs::msg::Action& action, const std::string& key)
 {
   for (const auto& parameter : action.action_parameters) {
@@ -115,7 +115,7 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options)
     nav2_action_name_.c_str());
 }
 
-// Receive odometry (msg) and send velocity updates to adapter, accumulate real distance driven.
+// Publishes velocity and accumulates the distance driven.
 void BridgeNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
   vda5050_msgs::msg::Velocity vel;
@@ -137,7 +137,7 @@ void BridgeNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg)
   distance_since_last_node_pub_->publish(dist_msg);
 }
 
-// Receive AMCL pose (msg), update cached position and confidence, republish to adapter.
+// Caches the AMCL pose, checks its covariance and publishes the position.
 void BridgeNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
 {
   tf2::Quaternion q;
@@ -208,12 +208,12 @@ bool BridgeNode::robot_pose_valid() const
   return moved_since < pose_stale_move_tolerance_m_;
 }
 
-// Read battery (msg) in either TB3 or ROS format, normalize to 0-100%, publish.
+// Publishes the battery charge as 0-100 %.
 void BridgeNode::on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg)
 {
   vda5050_msgs::msg::BatteryState batt;
 
-  // TB3 OpenCR publishes percentage as 0–100; standard ROS sensor_msgs uses 0.0–1.0 — handle both.
+  // TB3 OpenCR reports 0-100, standard ROS 0-1.
   const float pct = msg->percentage;
   float battery_charge;
   bool have_reading = true;
@@ -342,7 +342,7 @@ void BridgeNode::on_order(const vda5050_msgs::msg::Order::SharedPtr msg)
   }
 }
 
-// Parse action_cancel (msg) payload ("pause:", "resume:", "cancel:") and dispatch accordingly.
+// Handles the pause, resume and cancel commands.
 void BridgeNode::on_action_cancel(const std_msgs::msg::String::SharedPtr msg)
 {
   const std::string& data = msg->data;
@@ -384,7 +384,7 @@ void BridgeNode::on_action_cancel(const std_msgs::msg::String::SharedPtr msg)
   RCLCPP_WARN(get_logger(), "Unknown action_cancel payload: %s", data.c_str());
 }
 
-// Process action (msg): handle initPosition, no-op others; returns success/failure feedback.
+// Runs an instant action and reports its result.
 void BridgeNode::on_action_execute(const vda5050_msgs::msg::Action::SharedPtr msg)
 {
   RCLCPP_INFO(get_logger(),"Action execute: id=%s type=%s",msg->action_id.c_str(), msg->action_type.c_str());
@@ -409,15 +409,20 @@ void BridgeNode::on_action_execute(const vda5050_msgs::msg::Action::SharedPtr ms
   publish_action_feedback(*msg, "FINISHED", "Completed (no-op handler)");
 }
 
-// Send operator's x/y/theta (from action) to AMCL for initial pose; fails while Nav2 is driving.
+// Sets the AMCL initial pose from the action's x, y, theta; refused while a goal drives from a valid pose.
 void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
 {
-  // Re-localize only when no Nav2 goal is driving from the current pose.
+  // A confident pose is not overridden while a goal drives from it; a lost pose ends the goal first.
   if (current_goal_handle_) {
+    if (robot_pose_confident_) {
       RCLCPP_WARN(get_logger(),"initPosition (id=%s) rejected: robot is executing a navigation goal",
-                                    action.action_id.c_str());
-                                    publish_action_feedback( action, "FAILED","initPosition refused while the robot is navigating — cancel or finish ""the current order first");
+                  action.action_id.c_str());
+      publish_action_feedback(action, "FAILED", "initPosition refused while the robot is navigating with a valid pose — "
+                                                "cancel or finish the current order first");
       return;
+    }
+    RCLCPP_INFO(get_logger(), "initPosition (id=%s): pose is lost, stopping the navigation goal first", action.action_id.c_str());
+    cancel_navigation();
   }
 
   double x = 0.0, y = 0.0, theta = 0.0;
@@ -475,7 +480,7 @@ void BridgeNode::apply_speed_limit(double max_speed)
   }
 }
 
-// Internal: drive order forward, no return value; keeps retrying until success/timeout.
+// Advances the order; retries until a goal is sent or the timeout expires.
 void BridgeNode::dispatch_next_work()
 {
   if (state_machine_.is_paused()) {
@@ -541,7 +546,7 @@ void BridgeNode::dispatch_next_work()
 }
 
 
-// Check if robot is near target (target): returns true if close enough; completes node locally.
+// Completes the node without Nav2 when the robot is already within tolerance.
 bool BridgeNode::try_complete_in_place(const NavigationTarget& target)
 {
   if (!robot_pose_valid()) {
@@ -606,8 +611,7 @@ void BridgeNode::send_navigation_goal(const NavigationTarget& target)
   goal.pose.pose.position.x = target.node.node_position.x;
   goal.pose.pose.position.y = target.node.node_position.y;
 
-  // When heading isn't constrained, aims the goal yaw along the bearing to this node so
-  // the robot arrives already facing it, skipping an unnecessary Nav2 rotate-in-place.
+  // With no heading constraint, aim the goal yaw along the bearing to avoid a rotate-in-place.
   const bool theta_constrained = target.node.node_position.theta_set && target.node.node_position.allowed_deviation_theta < kUnconstrainedThetaRad;
 
   double goal_yaw = target.node.node_position.theta;
@@ -701,7 +705,7 @@ void BridgeNode::send_navigation_goal(const NavigationTarget& target)
   nav2_client_->async_send_goal(goal, send_goal_options);
 }
 
-// Publish traversal events (events) with distance stamped, reset distance counter.
+// Publishes the traversal events with the distance driven and resets the counter.
 void BridgeNode::publish_traversal_events(const std::vector<TraversalEvent>& events)
 {
   for (const auto& event : events) {
@@ -762,10 +766,10 @@ void BridgeNode::publish_bridge_status()
   const auto status = state_machine_.status();
   const bool was_driving = last_driving_.has_value() && *last_driving_;
   if (status.driving) {
-    // Real drive happened; robot_pose_valid()'s stale check now cares about it.
+    // Driving started; the stale-pose check now applies.
     has_driven_since_last_amcl_pose_ = true;
   } else if (was_driving && last_odom_position_valid_) {
-    // Just came to a stop — re-anchors the baseline instead of waiting for the next AMCL confirmation.
+    // Stopped: re-anchor the baseline without waiting for the next AMCL pose.
     odom_x_at_last_amcl_pose_ = last_odom_x_;
     odom_y_at_last_amcl_pose_ = last_odom_y_;
     odom_at_last_amcl_pose_valid_ = true;
@@ -786,7 +790,7 @@ std::string BridgeNode::adapter_topic(const std::string& leaf) const
   return adapter_ns_ + "/" + leaf;
 }
 
-// Cancel current Nav2 goal if active, no return value.
+// Cancels the current Nav2 goal, if any.
 void BridgeNode::cancel_navigation()
 {
   if (!current_goal_handle_) {
@@ -800,14 +804,14 @@ void BridgeNode::cancel_navigation()
   RCLCPP_INFO(get_logger(), "Navigation cancel requested");
 }
 
-// Increment navigation_token_ to invalidate pending Nav2 results.
+// Invalidates pending Nav2 results and the current goal handle.
 void BridgeNode::invalidate_navigation_context()
 {
   ++navigation_token_;
   current_goal_handle_.reset();
 }
 
-// Start retry timer: calls dispatch_next_work() every 2s until timeout, no return value.
+// Retries dispatch every 2 s until a goal is sent or the timeout expires.
 void BridgeNode::arm_nav2_retry()
 {
   const auto generation = order_session_.generation();
@@ -850,7 +854,7 @@ void BridgeNode::arm_nav2_retry()
     });
 }
 
-// Cancel retry timer if active, no return value.
+// Stops the dispatch retry timer.
 void BridgeNode::cancel_nav2_retry()
 {
   if (nav2_retry_timer_) {
@@ -859,7 +863,7 @@ void BridgeNode::cancel_nav2_retry()
   }
 }
 
-// Publish driving state (driving) only on change, no return value.
+// Publishes driving on change only.
 void BridgeNode::set_driving(bool driving)
 {
   if (last_driving_.has_value() && *last_driving_ == driving) {
@@ -872,7 +876,7 @@ void BridgeNode::set_driving(bool driving)
   driving_pub_->publish(msg);
 }
 
-// Publish paused state (paused) only on change, no return value.
+// Publishes paused on change only.
 void BridgeNode::set_paused(bool paused)
 {
   if (last_paused_.has_value() && *last_paused_ == paused) {
@@ -885,7 +889,7 @@ void BridgeNode::set_paused(bool paused)
   paused_pub_->publish(msg);
 }
 
-// Write order state (order_id, cursor, terminal) to file, no return value.
+// Saves order progress for recovery after a restart.
 void BridgeNode::persist_order_state(
   const std::string& order_id, std::size_t cursor, bool terminal)
 {
@@ -905,7 +909,7 @@ void BridgeNode::persist_order_state(
   }
 }
 
-// Fail active order with reason (reason), publish error, persist as complete, no return.
+// Fails the active order with `reason` and persists it as finished.
 void BridgeNode::fail_stuck_order(const std::string& reason)
 {
   if (!order_session_.has_order()) {
@@ -922,7 +926,7 @@ void BridgeNode::fail_stuck_order(const std::string& reason)
   notify_order_dropped(order_id);
 }
 
-// Tell the adapter order (order_id) was dropped outside the cancelOrder flow.
+// Tells the adapter the order was dropped outside cancelOrder.
 void BridgeNode::notify_order_dropped(const std::string& order_id)
 {
   std_msgs::msg::String msg;
@@ -930,7 +934,7 @@ void BridgeNode::notify_order_dropped(const std::string& order_id)
   order_dropped_pub_->publish(msg);
 }
 
-// Read order state from file into (order_id, cursor, terminal); return false if absent/broken.
+// Loads saved order progress; false if the file is absent or unreadable.
 bool BridgeNode::load_order_state(
   std::string& order_id, std::size_t& cursor, bool& terminal) const
 {

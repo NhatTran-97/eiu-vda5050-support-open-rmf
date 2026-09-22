@@ -16,7 +16,7 @@ ROS 2 adapter node that connects a VDA5050 master control (or Open-RMF fleet ada
 ## Package Structure
 
 | File | Role |
-|---|---|
+|:---:|---|
 | `src/vda5050_node.cpp` | Main ROS node: owns publishers/subscribers, wires MQTT callbacks to logic managers, publishes all outbound VDA5050 messages |
 | `src/adapter_state_machine.cpp` | Top-level adapter mode, connectivity state, control-action confirmation, fault handling |
 | `src/order_manager.cpp` | VDA5050 order stitch validation, base/horizon tracking, `newBaseRequest` trigger |
@@ -35,7 +35,7 @@ ROS 2 adapter node that connects a VDA5050 master control (or Open-RMF fleet ada
 ### Subscribed (robot driver → adapter)
 
 | Topic | Type | Purpose |
-|---|---|---|
+|:---:|:---:|---|
 | `~/agv_position` | `vda5050_msgs/AgvPosition` | Position |
 | `~/velocity` | `vda5050_msgs/Velocity` | Velocity |
 | `~/battery_state` | `vda5050_msgs/BatteryState` | Battery charge |
@@ -52,7 +52,7 @@ ROS 2 adapter node that connects a VDA5050 master control (or Open-RMF fleet ada
 ### Published (adapter → robot driver)
 
 | Topic | Type | Purpose |
-|---|---|---|
+|:---:|:---:|---|
 | `~/order` | `vda5050_msgs/Order` | Validated order to robot driver. `transient_local` — a (re)starting bridge gets the current order immediately |
 | `~/action_execute` | `vda5050_msgs/Action` | External action request |
 | `~/action_cancel` | `std_msgs/String` | `pause:*` / `resume:*` / `cancel:*` signal |
@@ -62,7 +62,7 @@ ROS 2 adapter node that connects a VDA5050 master control (or Open-RMF fleet ada
 Config file: [`config/vda5050_params.yaml`](config/vda5050_params.yaml)
 
 | Parameter | Default | Description |
-|---|---|---|
+|:---:|:---:|---|
 | `mqtt.broker_url` | `tcp://localhost:1883` | MQTT broker address |
 | `mqtt.client_id` | `vda5050_client_adapter` | Must be unique per AGV connected to the broker — a duplicate disconnects the other one |
 | `mqtt.username` / `mqtt.password` | `""` | Broker auth, if required |
@@ -102,7 +102,7 @@ colcon test-result --verbose
 ```
 
 | Suite | Tests | Coverage |
-|---|---|---|
+|:---:|:---:|---|
 | `test_adapter_state_machine` | 4 | Mode transitions, confirmations, fault/shutdown, pending-action supersede |
 | `test_order_manager` | 36 | Accept, stitch, newBaseRequest, cancel, reject, zone_set_id clear, edge_entered ordering, order replacement, stale-echo absorption |
 | `test_action_manager` | 30 | NONE/SOFT/HARD blocking, pause/resume/cancel, status transition guard, HARD-wait timeout |

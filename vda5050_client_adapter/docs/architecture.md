@@ -29,7 +29,7 @@ flowchart LR
 ## 2. MQTT Topics (VDA5050 §9) — 6/6 Implemented
 
 | Topic | Direction | QoS | Retained |
-|---|---|---|---|
+|:---:|:---:|:---:|:---:|
 | `.../order` | MC → AGV | 0 | No |
 | `.../instantActions` | MC → AGV | 0 | No |
 | `.../state` | AGV → MC | 0 | No |
@@ -273,7 +273,7 @@ sequenceDiagram
 ## 9. Data Model (vda5050_types.hpp)
 
 | Struct | Description |
-|---|---|
+|:---:|---|
 | `Header` | headerId, timestamp, version, manufacturer, serialNumber |
 | `Order` | Navigation order: nodes, edges, actions |
 | `InstantActions` | Set of immediately executed actions |
@@ -292,7 +292,7 @@ sequenceDiagram
 ## 10. JSON Schema Compliance (VDA5050 v2.1.0)
 
 | Schema | Status |
-|---|---|
+|:---:|:---:|
 | `order.schema.json` | ✅ Compliant |
 | `instantActions.schema.json` | ✅ Compliant |
 | `state.schema.json` | ✅ Compliant |
@@ -366,7 +366,7 @@ was actually happening on the robot.
 ## 12. ActionManager — Blocking Semantics
 
 | Blocking Type | Behavior |
-|---|---|
+|:---:|---|
 | `NONE` | Runs concurrently with all other actions |
 | `SOFT` | Stops driving; NONE actions still run in parallel |
 | `HARD` | Pauses all running actions, runs alone; resumes others when finished |
@@ -381,7 +381,7 @@ Dispatch rules:
 ## 13. Test Coverage — 116 Tests (all pass)
 
 | Suite | Tests | Coverage |
-|---|---|---|
+|:---:|:---:|---|
 | `test_adapter_state_machine` | 4 | Top-level mode transitions, control confirmations, fault/shutdown, pending-action supersede |
 | `test_order_manager` | 36 | Accept, stitch, newBaseRequest, cancel, reject cases, zone_set_id clear, edge_entered ordering, order replacement, stale-echo absorption |
 | `test_action_manager` | 30 | NONE/SOFT/HARD blocking, pause/resume/cancel, sync, status transition guard, HARD-wait timeout |
@@ -392,7 +392,7 @@ Dispatch rules:
 ## 14. Component Responsibilities
 
 | Component | Responsibility |
-|---|---|
+|:---:|---|
 | `VDA5050Node` | ROS/MQTT wiring, state publish, side effects |
 | `AdapterStateMachine` | Top-level runtime mode, control-action confirmation, fault/connectivity state |
 | `MqttClient` | Transport: connect, publish/subscribe, reconnect, QoS, retained |

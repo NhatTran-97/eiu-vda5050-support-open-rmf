@@ -28,9 +28,7 @@ TEST(OdomDistanceTracker, StraightLineAccumulatesExactDistance)
   EXPECT_DOUBLE_EQ(tracker.take(), 3.0);
 }
 
-// The real point of this class: an L-shaped move (2 m then 3 m = 5 m actually
-// driven) must not collapse to the straight-line distance between the
-// endpoints (hypot(2, 3) ~= 3.6 m) -- that was the bug distance_driven fixes.
+// An L-shaped move (2 m then 3 m) counts the 5 m driven, not the 3.6 m straight line.
 TEST(OdomDistanceTracker, LShapedMoveSumsLegsNotStraightLine)
 {
   OdomDistanceTracker tracker;
@@ -64,8 +62,7 @@ TEST(OdomDistanceTracker, TakeResetsAccumulatorButKeepsBaseline)
   EXPECT_DOUBLE_EQ(tracker.take(), 1.0);
   EXPECT_DOUBLE_EQ(tracker.take(), 0.0);
 
-  // Baseline survives take() -- the next delta is measured from the last
-  // known position, not from a cold start.
+  // The baseline survives take(): the next delta starts from the last position.
   tracker.update(1.0, 1.0);
   EXPECT_DOUBLE_EQ(tracker.take(), 1.0);
 }

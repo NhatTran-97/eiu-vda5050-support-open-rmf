@@ -41,23 +41,17 @@
 
 namespace tb3_vda5050_bridge {
 
-/**
- * @brief Convert VDA5050 orders into Nav2 goals and report TB3 state to the adapter.
- */
+// Turns VDA5050 orders into Nav2 goals and reports the TB3 state to the adapter.
 class BridgeNode : public rclcpp::Node
 {
 public:
-  /**
-   * @brief Initialize bridge node: load config, setup ROS interfaces, create Nav2 action client.
-   * @param options ROS2 node options.
-   */
   explicit BridgeNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
 private:
   using NavigateToPose = nav2_msgs::action::NavigateToPose;
   using GoalHandle     = rclcpp_action::ClientGoalHandle<NavigateToPose>;
 
-  // ── Parameters ─────────────────────────────────────────────────────────────
+  // Parameters
   std::string map_id_;          // VDA5050 logical map name (reported in agv_position)
   std::string nav2_frame_id_;   // TF frame for Nav2 goals (global_costmap.global_frame)
   double      position_covariance_threshold_;
@@ -71,19 +65,17 @@ private:
   std::string order_state_path_;  // where order progress is persisted across restarts
   double      nav2_dispatch_timeout_sec_;  // max time to wait for Nav2 before failing the order
   std::string speed_limit_topic_;  // Nav2 controller_server's speed override input
-  double      pose_stale_move_tolerance_m_{0.15};  // odometry drift allowed before a stale AMCL pose is distrusted
-
-  // ── Subscribers (TB3 / Adapter → Bridge) ──────────────────────────────────
+  double      pose_stale_move_tolerance_m_{0.15}; 
+  // Subscribers
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr                          odom_sub_;
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr    amcl_pose_sub_;
   rclcpp::Subscription<sensor_msgs::msg::BatteryState>::SharedPtr                   battery_sub_;
   rclcpp::Subscription<vda5050_msgs::msg::Order>::SharedPtr         order_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr            action_cancel_sub_;
   rclcpp::Subscription<vda5050_msgs::msg::Action>::SharedPtr        action_execute_sub_;
-  // Global topic (diagnostic_updater), not adapter_topic()-namespaced.
   rclcpp::Subscription<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr diagnostics_sub_;
 
-  // ── Publishers (Bridge → Adapter) ──────────────────────────────────────────
+  // Publishers
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initial_pose_pub_;
   rclcpp::Publisher<nav2_msgs::msg::SpeedLimit>::SharedPtr          speed_limit_pub_;
   rclcpp::Publisher<vda5050_msgs::msg::AgvPosition>::SharedPtr      agv_position_pub_;
@@ -99,9 +91,9 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr               order_dropped_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr              distance_since_last_node_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr               operating_mode_pub_;
-  std::string last_operating_mode_{"AUTOMATIC"};  // gates operating_mode_pub_ to changes only
+  std::string last_operating_mode_{"AUTOMATIC"}; 
 
-  // ── Nav2 action client ──────────────────────────────────────────────────────
+  // Nav2 action client
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
 
   rclcpp::TimerBase::SharedPtr nav2_retry_timer_;  // retries the pending Nav2 dispatch until success or timeout
@@ -110,95 +102,91 @@ private:
   uint64_t              nav2_retry_generation_{0};
   std::size_t           nav2_retry_node_index_{0};
 
-  // ── State ───────────────────────────────────────────────────────────────────
-  // Not mutex-protected: safe only because this node spins single-threaded.
+  // State; not mutex-protected because the node spins single-threaded.
   GoalHandle::SharedPtr current_goal_handle_;
-  GoalHandle::SharedPtr goal_pending_preemption_;  // goal a fresh dispatch is meant to replace; cancelled if the replacement is rejected
+  GoalHandle::SharedPtr goal_pending_preemption_;  // goal to cancel if its replacement is rejected
   BridgeStateMachine    state_machine_;
   OrderSession          order_session_;
   uint64_t              navigation_token_{0};
-  std::optional<bool>   last_driving_;  // unset until the first publish_bridge_status() call
+  std::optional<bool>   last_driving_;  // unset until the first publish
   std::optional<bool>   last_paused_;
   double                robot_x_{0.0}, robot_y_{0.0}, robot_yaw_{0.0};
-  bool                  robot_pose_confident_{false};  // last AMCL pose had finite coords and covariance under threshold
+  bool                  robot_pose_confident_{false};  // last AMCL pose was finite with covariance under the threshold
   std::chrono::steady_clock::time_point last_amcl_pose_at_;
   double                amcl_pose_timeout_sec_{10.0};
   double                odom_x_at_last_amcl_pose_{0.0};  // odom snapshot at the last confident AMCL pose
   double                odom_y_at_last_amcl_pose_{0.0};
   bool                  odom_at_last_amcl_pose_valid_{false};
-  bool                  has_driven_since_last_amcl_pose_{false};  // whether the robot has driven since the odom snapshot above
-  bool                  goal_sent_this_dispatch_{false};  // set when a goal is handed to Nav2 this dispatch cycle
+  bool                  has_driven_since_last_amcl_pose_{false};  // driven since the odom snapshot
+  bool                  goal_sent_this_dispatch_{false};  // a goal went to Nav2 this dispatch cycle
   OdomDistanceTracker   odom_distance_tracker_;  // VDA5050 distanceSinceLastNode telemetry
-  double                last_odom_x_{0.0}, last_odom_y_{0.0};  // for robot_pose_valid()'s stale-but-stationary check
+  double                last_odom_x_{0.0}, last_odom_y_{0.0};  // for the stale-but-stationary pose check
   bool                  last_odom_position_valid_{false};
   float                 last_battery_charge_{0.0f};  // last known-good battery reading
   bool                  last_battery_valid_{false};
 
-  // ── Callbacks ───────────────────────────────────────────────────────────────
-  // Handle incoming odometry (msg): extract position/velocity, track distance driven.
+  // Publishes velocity and accumulates the distance driven.
   void on_odom(const nav_msgs::msg::Odometry::SharedPtr msg);
-  // Handle AMCL pose (msg): update cached robot pose, check covariance confidence, publish position to adapter.
+  // Caches the AMCL pose, checks its covariance and publishes the position.
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
-  // Handle battery state (msg): normalize reading (handle both TB3 0-100 and ROS 0-1 formats), publish to adapter.
+  // Publishes the battery charge, accepting 0-100 and 0-1 readings.
   void on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg);
-  // Read twist_mux's own diagnostics (msg) to detect a joystick/keyboard override; publish operating_mode on change.
+  // Detects a manual override from twist_mux diagnostics and publishes operating_mode on change.
   void on_diagnostics(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg);
-  // Handle new/updated order (msg): start order or merge update, reject if stale, persist progress, dispatch work.
+  // Starts an order or merges an update, then dispatches.
   void on_order(const vda5050_msgs::msg::Order::SharedPtr msg);
-  // Parse action_cancel (msg) payload ("pause:", "resume:", "cancel:") and dispatch accordingly.
+  // Handles the pause, resume and cancel commands.
   void on_action_cancel(const std_msgs::msg::String::SharedPtr msg);
-  // Process action (msg): handle initPosition, report success/failure, no-op unsupported types.
+  // Runs an instant action and reports its result.
   void on_action_execute(const vda5050_msgs::msg::Action::SharedPtr msg);
-  // Send an initPosition action to AMCL when no Nav2 goal is active.
+  // Sets the AMCL initial pose; refused while a goal drives from a valid pose.
   void init_position(const vda5050_msgs::msg::Action& action);
 
   // Caps Nav2's speed at max_speed (m/s); max_speed < 0 lifts any previous cap.
   void apply_speed_limit(double max_speed);
 
-  // Whether the last AMCL pose is confident and recent enough to trust for navigation.
+  // Whether the last AMCL pose is confident and recent enough to navigate on.
   bool robot_pose_valid() const;
 
-  // ── Nav2 helpers ────────────────────────────────────────────────────────────
-  // Cancel current Nav2 goal if active, invalidate pending results.
+  // Cancels the current Nav2 goal and ignores its pending result.
   void cancel_navigation();
-  // Drive order forward: plan next work, dispatch navigation or handle no-op/release waits, retry on failure.
+  // Advances the order: navigates, completes nodes locally or waits for release.
   void dispatch_next_work();
-  // Start retry timer: polls dispatch_next_work() every 2s until timeout exhausted or goal succeeds.
+  // Retries dispatch every 2 s until a goal is sent or the timeout expires.
   void arm_nav2_retry();
-  // Cancel active retry timer, no-op if not armed.
+  // Stops the dispatch retry timer.
   void cancel_nav2_retry();
-  // Fail active order with reason (reason), publish error, persist as complete.
+  // Fails the active order with `reason` and persists it as finished.
   void fail_stuck_order(const std::string& reason);
-  // Tell the adapter order (order_id) was dropped outside the cancelOrder flow.
+  // Tells the adapter the order was dropped outside cancelOrder.
   void notify_order_dropped(const std::string& order_id);
-  // Check if robot is already within target tolerances; if so, complete node locally without Nav2.
+  // Completes the node without Nav2 when the robot is already within tolerance.
   bool try_complete_in_place(const NavigationTarget& target);
-  // Send Nav2 goal for target (target), or arm retry if Nav2 action server not ready yet.
+  // Sends the Nav2 goal for `target`, or arms a retry if Nav2 is not ready.
   void send_navigation_goal(const NavigationTarget& target);
-  // Publish edge_entered, edge_completed, node_reached events from traversal (events), reset distance counter.
+  // Publishes the traversal events and resets the distance counter.
   void publish_traversal_events(const std::vector<TraversalEvent>& events);
-  // Publish ActionState feedback for action (action) with status/description.
+  // Publishes the ActionState of `action`.
   void publish_action_feedback(const vda5050_msgs::msg::Action& action,
                                const std::string& status,
                                const std::string& description = "");
-  // Publish VDA5050 navigationError with description and optional node_id reference.
+  // Publishes a VDA5050 navigationError.
   void publish_navigation_error(const std::string& description,
                                 const std::string& node_id = "");
-  // Publish current driving/paused state to adapter, re-anchor odometry baseline on transitions.
+  // Publishes driving and paused, re-anchoring the odometry baseline on transitions.
   void publish_bridge_status();
-  // Resolve adapter namespace + leaf topic name; e.g. "/vda5050_client_adapter/order".
+  // Full adapter topic name, e.g. "/vda5050_client_adapter/order".
   std::string adapter_topic(const std::string& leaf) const;
-  // Increment navigation_token_ to discard pending Nav2 results; reset current goal handle.
+  // Discards pending Nav2 results and the current goal handle.
   void invalidate_navigation_context();
-  // Publish driving state (driving) only on change.
+  // Publishes driving on change only.
   void set_driving(bool driving);
-  // Publish paused state (paused) only on change.
+  // Publishes paused on change only.
   void set_paused(bool paused);
 
-  // ── Order progress persistence ─────────────────────────────────────────────
-  // Write order state (order_id, cursor, terminal) to file for crash recovery.
+  // Saves order progress for recovery after a restart.
   void persist_order_state(const std::string& order_id, std::size_t cursor, bool terminal);
-  // Read order state from file into (order_id, cursor, terminal); return false if absent/broken.
+  // Loads saved order progress; false if the file is absent or unreadable.
   bool load_order_state(std::string& order_id, std::size_t& cursor, bool& terminal) const;
 };
 

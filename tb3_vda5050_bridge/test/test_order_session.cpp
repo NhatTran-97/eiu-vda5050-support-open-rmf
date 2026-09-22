@@ -140,8 +140,7 @@ TEST(OrderSessionTest, UpdateReleasingHorizonNodeResumesWithoutResettingProgress
   const auto index_before = session.current_node_index();
   const auto generation_before = session.generation();
 
-  // Order update (same orderId): the stitch node n0 is echoed back and n1 is now
-  // released. Progress and generation must be preserved (in-flight nav untouched).
+  // Update of the same order: n0 is echoed back and n1 is now released; progress and generation stay.
   vda5050_msgs::msg::Order update;
   update.order_id = "ord-u1";
   update.order_update_id = 1;
@@ -220,8 +219,7 @@ TEST(OrderSessionTest, UpdateWithNonNewerUpdateIdIsRejectedAndIgnored) {
   ASSERT_TRUE(plan.target.has_value());
   session.complete_navigation(plan.target->node_index);
 
-  // A duplicate of the same updateId, and one that's actually older, must
-  // both be rejected without touching state — n1 stays un-released.
+  // A duplicate or older update id is rejected without touching state; n1 stays unreleased.
   vda5050_msgs::msg::Order duplicate = order;
   duplicate.nodes[1].released = true;
   EXPECT_FALSE(session.update(duplicate));
@@ -262,8 +260,7 @@ TEST(OrderSessionTest, UpdateCannotRewriteContentOfAnAlreadyTraversedNode) {
   session.complete_navigation(plan.target->node_index);
   ASSERT_EQ(session.current_node_index(), 1u);
 
-  // A buggy/stale update echoes n0 back with different content under the
-  // same sequence_id — this must not silently rewrite already-driven history.
+  // An update that echoes n0 with different content must not rewrite the traversed history.
   vda5050_msgs::msg::Order update;
   update.order_id = "ord-base";
   update.order_update_id = 1;
@@ -320,8 +317,7 @@ TEST(OrderSessionTest, NextNodeRequiresPoseToCompleteReflectsCurrentNode) {
   const auto plan = session.plan_next_work();
   ASSERT_EQ(plan.kind, DispatchKind::NAVIGATE);
   EXPECT_EQ(plan.target->node.node_id, "n1");
-  // Cursor advanced past the position-less node onto one that has a
-  // position — nothing left that would be auto-completed on trust alone.
+  // The cursor moved past the position-less node onto one with a position.
   EXPECT_FALSE(session.next_node_requires_pose_to_complete());
 }
 
