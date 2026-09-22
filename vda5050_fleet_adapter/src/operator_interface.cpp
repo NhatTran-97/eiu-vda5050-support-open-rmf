@@ -96,8 +96,7 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, Vda5050Connector &conne
       apply_speed_limit(name, initial);
     }
 
-    RCLCPP_INFO(_node.get_logger(),
-          "Operator interface for '%s': %s/%s/{init_position, pause, resume}, " "parameter %s",
+    RCLCPP_INFO(_node.get_logger(), "Operator interface for '%s': %s/%s/{init_position, pause, resume}, " "parameter %s",
           name.c_str(), _node.get_name(), name.c_str(), speed_limit_parameter(name).c_str());
   }
 
@@ -198,10 +197,8 @@ void OperatorInterface::on_init_position(
   const auto map_name = _connector.get_known_map(robot_name);
   if (!map_name.has_value())
   {
-    RCLCPP_WARN(_node.get_logger(),
-          "init_position for '%s' ignored: the AGV has never reported a VDA5050 "
-          "state, so it is not reachable yet",
-          robot_name.c_str());
+    RCLCPP_WARN(_node.get_logger(), "init_position for '%s' ignored: the AGV has never reported a VDA5050 "
+          "state, so it is not reachable yet", robot_name.c_str());
     publish_result("error: no VDA5050 state from the robot yet -- is it online?");
     return;
   }

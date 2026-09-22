@@ -162,10 +162,7 @@ void RobotStateMachine::on_action(const std::string& category,
   if (action_id.empty())
   {
     
-    RCLCPP_ERROR(_logger,
-                 "[%s] action '%s' was not published - robot is not registered "
-                 "with the VDA5050 connector; staying IDLE",
-                 _name.c_str(), category.c_str());
+    RCLCPP_ERROR(_logger, "[%s] action '%s' was not published - robot is not registered " "with the VDA5050 connector; staying IDLE", _name.c_str(), category.c_str());
     return;
   }
 

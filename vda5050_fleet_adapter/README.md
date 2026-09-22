@@ -2,17 +2,19 @@
 
 Open-RMF **EasyFullControl** fleet adapter that drives VDA5050 AGVs over MQTT. Acts as the VDA5050 master control: receives tasks from Open-RMF, converts each navigation goal into a VDA5050 `order`, and feeds robot `state` back into RMF.
 
-EasyFullControl issues navigation **one destination at a time**, so one VDA5050 order is one destination (base node = current pose, end node = destination) with a fresh `orderId`. This is the simpler, lower-barrier path; multi-node orders, horizon release and stitching live in [`vda5050_fleet_adapter_full_control`](../vda5050_fleet_adapter_full_control/README.md).
+EasyFullControl issues navigation **one destination at a time**, so one VDA5050 order is one base node + one destination node. A replan while that order is still live can either mint a fresh `orderId` (default) or, with `stitch_on_replan: true`, keep the same `orderId` and bump `orderUpdateId` instead of cancelling. This is the simpler, lower-barrier path; multi-node orders and horizon release live in [`vda5050_fleet_adapter_full_control`](../vda5050_fleet_adapter_full_control/README.md).
 
 See [docs/architecture.md](docs/architecture.md) for diagrams, flows, and the config reference.
 
 ## Features
 
 | Area | What it does |
-|---|---|
+|:---:|---|
 | Navigation | One order per destination; RMF waits for completion before the next. The operator speed cap goes into the edge's `maxSpeed` |
+| Order validation | Every order is checked against the factsheet and the AGV's known maps before it is sent: a non-finite pose, an unknown map, or more nodes/edges than the AGV declares rejects the order (`strict_validation`); sending faster than `minOrderInterval` only warns |
+| Order updates | A replan onto a still-live order stitches (same `orderId`, incremented `orderUpdateId`) instead of cancelling when `stitch_on_replan: true`; off by default, it cancels the live order first |
 | Actions | `PerformAction` (for example `dock`) is sent as a VDA5050 instant action and tracked to FINISHED or FAILED |
-| Factsheet | The retained `factsheet` sets each action's blocking type; custom actions missing from it are rejected (`strict_validation`). A missing factsheet is requested with `factsheetRequest`. An action that conflicts with the AGV's motion or a running HARD-only action is logged as a warning |
+| Factsheet | The retained `factsheet` sets each action's blocking type; custom actions missing from it are rejected (`strict_validation`). A missing factsheet is requested with `factsheetRequest`, retried up to 3 times. An action that conflicts with the AGV's motion or a running HARD-only action is logged as a warning |
 | Commissioning | A robot that is offline, has no valid pose, is in a non-automatic operating mode, reports an eStop or field violation, has a FATAL error, or is paused by someone else is decommissioned in RMF and recommissioned when it recovers |
 | Pause instead of cancel | When RMF stops a robot the order is paused; a new command reuses or replaces it, and only a hold with no command for 10 s cancels it |
 | Operator interface | `<node>/<robot>/init_position` (`PoseWithCovarianceStamped`) with the result on `init_position_result`, services `<node>/<robot>/pause` and `resume`, parameter `speed_limit.<robot>` (m/s, 0 = no cap) |
@@ -103,13 +105,16 @@ The mock robots reuse the identities of the real robots, so the mock scripts ref
 ## Reviewer recommendations
 
 | Recommendation | Status |
-|---|---|
+|:---:|---|
 | Port the factsheet and per-action blocking | ✅ Done — [`factsheet.cpp`](src/factsheet.cpp), blocking type chosen in [`vda5050_connector.cpp`](src/vda5050_connector.cpp) |
 | Decommission on disconnect | ✅ Done — [`readiness.cpp`](src/readiness.cpp) and [`RobotAdapter::apply_readiness`](src/robot_adapter.cpp) |
 | Pause and resume instead of cancel | ✅ Done — `HOLDING` state in [`robot_state_machine.cpp`](src/robot_state_machine.cpp) |
 | Port `initPosition` | ✅ Done — [`operator_interface.cpp`](src/operator_interface.cpp) |
 | Lane closures, eStop, operating mode, speed override | ✅ Done — lane subscription in [`main.cpp`](src/main.cpp), eStop and mode in the commission decision, speed cap in the connector |
-| Multi-node orders, horizon, stitching | ➖ Not ported — EasyFullControl hands over one destination at a time; see `vda5050_fleet_adapter_full_control` |
+| Request and gate on the factsheet | ✅ Done — `factsheetRequest` polling and reject-on-missing-action gating in [`vda5050_connector.cpp`](src/vda5050_connector.cpp) (`poll`, `execute_instant_action`) |
+| Severity-split order validation | ✅ Done — [`factsheet.cpp`](src/factsheet.cpp)'s `check_order`, wired into [`Vda5050Connector::navigate`](src/vda5050_connector.cpp) |
+| Stitch order updates onto a replan | ✅ Done, opt-in — `stitch_on_replan` in [`Vda5050Connector::navigate`](src/vda5050_connector.cpp); off by default cancels the live order instead |
+| Multi-node orders, horizon release | ➖ Not ported — EasyFullControl hands over one destination at a time; see `vda5050_fleet_adapter_full_control` |
 
 ## Related
 

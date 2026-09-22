@@ -78,12 +78,10 @@ int main(int argc, char** argv)
   adapter->start();
 
   // ── EasyFullControl fleet from the rmf_fleet block of config + nav graph ──
-  auto fleet_config = EasyFullControl::FleetConfiguration::from_config_files(
-    args.config_file, args.nav_graph);
+  auto fleet_config = EasyFullControl::FleetConfiguration::from_config_files(args.config_file, args.nav_graph);
   if (!fleet_config) 
   {
-    RCLCPP_FATAL(logger, "Failed to parse fleet configuration from %s",
-                 args.config_file.c_str());
+    RCLCPP_FATAL(logger, "Failed to parse fleet configuration from %s", args.config_file.c_str());
     return 1;
   }
 
@@ -92,8 +90,7 @@ int main(int argc, char** argv)
   if (!account_for_battery_drain)
   {
     RCLCPP_WARN(
-      logger,
-      "Battery accounting is disabled; reporting battery SoC=1.0 to RMF");
+      logger,"Battery accounting is disabled; reporting battery SoC=1.0 to RMF");
   }
 
   auto fleet = adapter->add_easy_fleet(*fleet_config);
@@ -112,8 +109,7 @@ int main(int argc, char** argv)
   }
 
   const YAML::Node mqtt = vda["mqtt"];
-  const std::string host =
-    (mqtt && mqtt["host"]) ? mqtt["host"].as<std::string>() : "localhost";
+  const std::string host = (mqtt && mqtt["host"]) ? mqtt["host"].as<std::string>() : "localhost";
   const int port = (mqtt && mqtt["port"]) ? mqtt["port"].as<int>() : 1883;
   const std::string broker_url = "tcp://" + host + ":" + std::to_string(port);
   std::optional<std::string> user, pass;
@@ -134,6 +130,7 @@ int main(int argc, char** argv)
 
   auto connector = std::make_shared<Vda5050Connector>(logger, broker_url, interface_name, user, pass);
   connector->set_strict_validation(vda["strict_validation"] ? vda["strict_validation"].as<bool>() : true);
+  connector->set_stitch_on_replan(vda["stitch_on_replan"] ? vda["stitch_on_replan"].as<bool>() : false);
   connector->start();
 
   // Apply lane closures and openings requested from the operator UI.

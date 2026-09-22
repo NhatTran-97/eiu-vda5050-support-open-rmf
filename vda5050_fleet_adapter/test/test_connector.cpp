@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <limits>
+
 #include <mqtt/message.h>
 #include <rclcpp/logger.hpp>
 
@@ -117,6 +119,75 @@ TEST_F(ConnectorTest, ActiveOrderIsMatchedByDestinationAndOrderId)
 
   feed_state({{"orderId", order_id}, {"lastNodeId", "B"}, {"driving", false}});
   EXPECT_FALSE(connector.has_active_order_to("r", "B"));
+}
+
+TEST_F(ConnectorTest, RejectsOrderWithNonFinitePose)
+{
+  connector.navigate("r", "B", std::numeric_limits<double>::quiet_NaN(), 6.0, 0.0, "m");
+  EXPECT_TRUE(connector.current_order_id("r").empty());
+}
+
+TEST_F(ConnectorTest, RejectsOrderOnUnknownMap)
+{
+  feed_state({{"maps", nlohmann::json::array({{{"mapId", "m"}}})}});
+  connector.navigate("r", "B", 5.0, 6.0, 0.0, "other_map");
+  EXPECT_TRUE(connector.current_order_id("r").empty());
+}
+
+TEST_F(ConnectorTest, SoftViolationWarnsButStillSends)
+{
+  feed("factsheet", {{"protocolLimits", {{"timing", {{"minOrderInterval", 5.0}}}}}});
+  connector.navigate("r", "A", 1.0, 1.0, 0.0, "m");
+  ASSERT_FALSE(connector.current_order_id("r").empty());
+  // Sent again immediately, under minOrderInterval -- soft, not rejected.
+  connector.navigate("r", "B", 2.0, 2.0, 0.0, "m");
+  EXPECT_FALSE(connector.current_order_id("r").empty());
+}
+
+TEST_F(ConnectorTest, WithoutStitchingAFreshDestinationMintsANewOrder)
+{
+  connector.navigate("r", "A", 1.0, 1.0, 0.0, "m");
+  const std::string first = connector.current_order_id("r");
+  feed_state({{"orderId", first}, {"driving", true}});
+
+  connector.navigate("r", "B", 2.0, 2.0, 0.0, "m");
+  EXPECT_NE(connector.current_order_id("r"), first);
+  EXPECT_EQ(connector.current_order_update_id("r"), 0);
+}
+
+TEST_F(ConnectorTest, StitchingReplansOntoTheLiveOrderInstead)
+{
+  connector.set_stitch_on_replan(true);
+
+  connector.navigate("r", "A", 1.0, 1.0, 0.0, "m");
+  const std::string first = connector.current_order_id("r");
+  ASSERT_FALSE(first.empty());
+  feed_state({{"orderId", first}, {"driving", true}});
+
+  connector.navigate("r", "B", 2.0, 2.0, 0.0, "m");
+  EXPECT_EQ(connector.current_order_id("r"), first);
+  EXPECT_EQ(connector.current_order_update_id("r"), 1);
+
+  // A second replan while still live bumps the update id again.
+  feed_state({{"orderId", first}, {"driving", true}});
+  connector.navigate("r", "C", 3.0, 3.0, 0.0, "m");
+  EXPECT_EQ(connector.current_order_id("r"), first);
+  EXPECT_EQ(connector.current_order_update_id("r"), 2);
+}
+
+TEST_F(ConnectorTest, StitchingDeclinesWithoutAValidPose)
+{
+  connector.set_stitch_on_replan(true);
+
+  connector.navigate("r", "A", 1.0, 1.0, 0.0, "m");
+  const std::string first = connector.current_order_id("r");
+  // AGV acknowledges the order but has no initialized pose.
+  feed("state", {{"orderId", first}, {"driving", true},
+                 {"agvPosition", {{"positionInitialized", false}}}});
+
+  connector.navigate("r", "B", 2.0, 2.0, 0.0, "m");
+  EXPECT_NE(connector.current_order_id("r"), first);
+  EXPECT_EQ(connector.current_order_update_id("r"), 0);
 }
 
 int main(int argc, char** argv)

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include "vda5050_fleet_adapter/factsheet.hpp"
 
 namespace proto = vda5050_fleet_adapter::protocol;
@@ -91,4 +93,65 @@ TEST(Factsheet, RunningHardOnlyActionConflictsWithOthers)
 TEST(Factsheet, NoFactsheetAllowsEverything)
 {
   EXPECT_EQ(proto::check_instant_action("drop", std::nullopt).result, proto::ActionCheck::allowed);
+}
+
+TEST(OrderValidation, NonFiniteAndUnknownMapAreHard)
+{
+  proto::OrderShape shape;
+  shape.map_id = "m2";
+  shape.base_pose = {0.0, 0.0, 0.0};
+  shape.dest_pose = {1.0, std::nan(""), 0.0};
+  const auto violations = proto::check_order(shape, std::nullopt, {"m1"});
+  EXPECT_TRUE(proto::has_hard_violation(violations));
+  EXPECT_EQ(violations.size(), 2u);
+  for (const auto& v : violations)
+  {
+    EXPECT_EQ(v.severity, proto::Severity::hard);
+  }
+}
+
+TEST(OrderValidation, MapAmongKnownMapsIsAllowed)
+{
+  proto::OrderShape shape;
+  shape.map_id = "m1";
+  shape.base_pose = {0.0, 0.0, 0.0};
+  shape.dest_pose = {1.0, 1.0, 0.0};
+  EXPECT_TRUE(proto::check_order(shape, std::nullopt, {"m1", "m2"}).empty());
+  // An empty known-maps list means the AGV never reported any -- nothing to check against.
+  EXPECT_TRUE(proto::check_order(shape, std::nullopt, {}).empty());
+}
+
+TEST(OrderValidation, OverArrayLimitsIsHardAndUnderMinIntervalIsSoft)
+{
+  const auto tight_limits = proto::ParsedFactsheet(nlohmann::json::parse(R"({
+    "protocolLimits": {"maxArrayLens": {"order.nodes": 1, "order.edges": 1},
+                        "timing": {"minOrderInterval": 2.0}}
+  })"));
+  proto::OrderShape shape;
+  shape.map_id = "";
+  shape.base_pose = {0.0, 0.0, 0.0};
+  shape.dest_pose = {1.0, 1.0, 0.0};
+  shape.seconds_since_last_order = 0.5;
+
+  const auto violations = proto::check_order(shape, tight_limits, {});
+  ASSERT_EQ(violations.size(), 2u);
+  EXPECT_EQ(violations[0].severity, proto::Severity::hard);  // over maxArrayLens['order.nodes']
+  EXPECT_EQ(violations[1].severity, proto::Severity::soft);  // under minOrderInterval
+  EXPECT_TRUE(proto::has_hard_violation(violations));
+
+  shape.seconds_since_last_order = 5.0;
+  const auto spaced_out = proto::check_order(shape, tight_limits, {});
+  EXPECT_EQ(spaced_out.size(), 1u);  // only the array-limit violation remains
+}
+
+TEST(OrderValidation, RoomyFactsheetAllowsTheOrder)
+{
+  const auto roomy = proto::ParsedFactsheet(nlohmann::json::parse(R"({
+    "protocolLimits": {"maxArrayLens": {"order.nodes": 10, "order.edges": 10}}
+  })"));
+  proto::OrderShape shape;
+  shape.map_id = "";
+  shape.base_pose = {0.0, 0.0, 0.0};
+  shape.dest_pose = {1.0, 1.0, 0.0};
+  EXPECT_TRUE(proto::check_order(shape, roomy, {}).empty());
 }

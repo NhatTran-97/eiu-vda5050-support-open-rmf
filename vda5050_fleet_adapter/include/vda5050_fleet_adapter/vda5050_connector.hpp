@@ -71,8 +71,11 @@ public:
   /// waiting for the next periodic state (avoids "no robots" on early dispatch).
   void request_state(const std::string& name);
 
-  /// Reject custom actions missing from the factsheet (default); off only warns.
+  /// Reject custom actions and orders that fail a hard check (default); off only warns.
   void set_strict_validation(bool strict);
+
+  /// Extend a still-live order with a new destination (same orderId, bumped orderUpdateId) instead of cancelling it and sending a fresh one.
+  void set_stitch_on_replan(bool enabled);
 
   /// Publish startPause; false when nothing was queued.
   bool pause(const std::string& name);
@@ -111,6 +114,10 @@ public:
   /// The orderId last published for `name`; empty when none is tracked.
   std::string current_order_id(const std::string& name);
 
+  /// The orderUpdateId last published for `name`'s current order; 0 for a
+  /// fresh order that was never stitched onto.
+  int current_order_update_id(const std::string& name);
+
   /// True while `name` still runs an unfinished order to `dest_node_id`.
   bool has_active_order_to(const std::string& name, const std::string& dest_node_id);
 
@@ -128,12 +135,15 @@ private:
     std::string interface_name;
     Transform transform;
     // VDA5050 defines headerId per topic (monotonically +1 per message sent
-    // on that topic); order and instantActions are separate topics, so they
-    // need separate counters or each stream develops gaps in its own
-    // sequence.
+    // on that topic); order and instantActions are separate topics, so they need separate counters or each stream develops gaps in its own sequence.
     int order_header_id = 0;
     int instant_actions_header_id = 0;
     std::string current_order_id;
+    int order_update_id = 0;
+    // Base node of the currently live order, kept fixed across stitched updates.
+    std::string base_node_id;
+    std::array<double, 3> base_pose{};
+    std::chrono::steady_clock::time_point last_order_time{};
     std::string target_node_id;
     std::optional<protocol::ParsedState> last_state;
     std::string last_node_id;
@@ -145,8 +155,7 @@ private:
     std::chrono::steady_clock::time_point factsheet_wait_since{};
     std::optional<double> speed_limit;
 
-    // Log throttles: remember what was last reported so a 10 Hz state stream
-    // produces one line per change instead of one line per tick.
+    // Log throttles: remember what was last reported so a 10 Hz state stream produces one line per change instead of one line per tick.
     std::string last_incomplete_key;
     std::string last_errors_key;
     std::string last_safety_key;
@@ -156,21 +165,16 @@ private:
     int next_instant_actions_header() { return instant_actions_header_id++; }
   };
 
-  /// Subscribe to a robot's uplink topics. Call OUTSIDE _mutex: paho client
-  /// calls can deadlock against the message-arrived callback if the lock is held.
+  /// Subscribe to a robot's uplink topics. Call OUTSIDE _mutex: paho client calls can deadlock against the message-arrived callback if the lock is held.
   void subscribe_robot(const RobotContext& ctx);
-  /// Publish a fully-formed payload to a topic; false when it was not queued.
-  /// Call OUTSIDE _mutex.
+  /// Publish a fully-formed payload to a topic; false when it was not queued. Call OUTSIDE _mutex.
   bool publish_raw(const std::string& topic, const std::string& payload);
 
   /// Blocking type for an action: the factsheet's choice, else `preferred`.
-  static std::string blocking_type_for(const RobotContext& ctx,
-                                       const std::string& action_type,
-                                       const std::string& preferred);
+  static std::string blocking_type_for(const RobotContext& ctx, const std::string& action_type, const std::string& preferred);
 
   /// Publish one instant action; false when it was not queued.
-  bool send_instant_action(const std::string& name, const std::string& action_type,
-                           const std::string& preferred_blocking, const char* label);
+  bool send_instant_action(const std::string& name, const std::string& action_type, const std::string& preferred_blocking, const char* label);
   RobotContext* match_robot(const std::string& topic);  // call under _mutex
 
   rclcpp::Logger _logger;
@@ -182,6 +186,7 @@ private:
   std::map<std::string, std::unique_ptr<RobotContext>> _robots;
   std::atomic<bool> _shutdown{false};
   bool _strict_validation = true;
+  bool _stitch_on_replan = false;
 };
 
 }  // namespace vda5050_fleet_adapter

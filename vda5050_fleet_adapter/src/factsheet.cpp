@@ -1,6 +1,7 @@
 #include "vda5050_fleet_adapter/factsheet.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 
 namespace vda5050_fleet_adapter::protocol {
@@ -41,6 +42,15 @@ std::vector<std::string> get_string_array(const nlohmann::json& j, const char* k
   return out;
 }
 
+std::optional<std::uint32_t> get_uint(const nlohmann::json& j, const char* key)
+{
+  if (j.contains(key) && j.at(key).is_number_unsigned())
+  {
+    return j.at(key).get<std::uint32_t>();
+  }
+  return std::nullopt;
+}
+
 }  // namespace
 
 ParsedFactsheet::ParsedFactsheet(const nlohmann::json& raw)
@@ -79,6 +89,21 @@ ParsedFactsheet::ParsedFactsheet(const nlohmann::json& raw)
       }
     }
   }
+
+  if (raw.contains("protocolLimits") && raw["protocolLimits"].is_object())
+  {
+    const auto& limits = raw["protocolLimits"];
+    if (limits.contains("maxArrayLens") && limits["maxArrayLens"].is_object())
+    {
+      const auto& arr = limits["maxArrayLens"];
+      max_order_nodes = get_uint(arr, "order.nodes");
+      max_order_edges = get_uint(arr, "order.edges");
+    }
+    if (limits.contains("timing") && limits["timing"].is_object())
+    {
+      min_order_interval = get_number(limits["timing"], "minOrderInterval");
+    }
+  }
 }
 
 bool ParsedFactsheet::supports_action(const std::string& action_type) const
@@ -105,7 +130,8 @@ std::string ParsedFactsheet::blocking_type_for(const std::string& action_type,
 
 bool ParsedFactsheet::has_content() const
 {
-  return !series_name.empty() || speed_max.has_value() || !agv_actions.empty();
+  return !series_name.empty() || speed_max.has_value() || !agv_actions.empty() ||
+         max_order_nodes.has_value() || max_order_edges.has_value() || min_order_interval.has_value();
 }
 
 bool is_core_action(const std::string& action_type)
@@ -171,6 +197,59 @@ std::vector<std::string> action_conflicts(const std::string& action_type,
     }
   }
   return out;
+}
+
+std::vector<Violation> check_order(const OrderShape& order,
+                                   const std::optional<ParsedFactsheet>& factsheet,
+                                   const std::vector<std::string>& known_maps)
+{
+  std::vector<Violation> out;
+
+  for (const auto* pose : {&order.base_pose, &order.dest_pose})
+  {
+    if (!std::isfinite((*pose)[0]) || !std::isfinite((*pose)[1]) || !std::isfinite((*pose)[2]))
+    {
+      out.push_back({Severity::hard, "order pose (" + std::to_string((*pose)[0]) + ", " +
+                     std::to_string((*pose)[1]) + ", " + std::to_string((*pose)[2]) + ") is not finite"});
+    }
+  }
+
+  if (!order.map_id.empty() && !known_maps.empty() &&
+      std::find(known_maps.begin(), known_maps.end(), order.map_id) == known_maps.end())
+  {
+    out.push_back({Severity::hard, "mapId '" + order.map_id + "' is not among the maps the AGV reports"});
+  }
+
+  if (factsheet.has_value())
+  {
+    const auto& fs = *factsheet;
+    // The order always has one base node, one destination node and one edge.
+    if (fs.max_order_nodes.has_value() && 2 > *fs.max_order_nodes)
+    {
+      out.push_back({Severity::hard, "order has 2 node(s), over the AGV's declared maxArrayLens['order.nodes'] (" +
+                     std::to_string(*fs.max_order_nodes) + ")"});
+    }
+    if (fs.max_order_edges.has_value() && 1 > *fs.max_order_edges)
+    {
+      out.push_back({Severity::hard, "order has 1 edge(s), over the AGV's declared maxArrayLens['order.edges'] (" +
+                     std::to_string(*fs.max_order_edges) + ")"});
+    }
+    if (fs.min_order_interval.has_value() && order.seconds_since_last_order.has_value() &&
+        *order.seconds_since_last_order < *fs.min_order_interval)
+    {
+      out.push_back({Severity::soft, "order sent " + std::to_string(*order.seconds_since_last_order) +
+                     "s after the previous one, under the AGV's minOrderInterval (" +
+                     std::to_string(*fs.min_order_interval) + "s)"});
+    }
+  }
+
+  return out;
+}
+
+bool has_hard_violation(const std::vector<Violation>& violations)
+{
+  return std::any_of(violations.begin(), violations.end(),
+                     [](const Violation& v) { return v.severity == Severity::hard; });
 }
 
 }  // namespace vda5050_fleet_adapter::protocol

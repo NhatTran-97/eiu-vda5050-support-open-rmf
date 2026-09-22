@@ -62,10 +62,10 @@ flowchart TB
 ```
 
 | File | Role |
-|---|---|
+|:---:|---|
 | `src/main.cpp` | Entry point: parse config, create the Adapter and fleet, build the robots, lane closures, run the update loop |
 | `vda5050_protocol.*` | Pure message layer: build `order` / `instantActions`, parse `state` into `ParsedState` (pose, order progress, safety, operating mode, errors). No MQTT, no RMF |
-| `factsheet.*` | Pure: factsheet parser (actions, blocking types, speed), custom-action check, action conflict check |
+| `factsheet.*` | Pure: factsheet parser (actions, blocking types, speed, array limits), custom-action check, action conflict check, order validation (`check_order`) |
 | `readiness.*` | Pure: whether an AGV can take tasks, from connectivity and state |
 | `transform.hpp` | 2D affine transform between the RMF frame and the robot map frame |
 | `vda5050_connector.*` | Owns one paho MQTT connection and one `RobotContext` per robot. Downlink: `navigate`, `stop`, `pause`, `resume`, `init_position`, `execute_instant_action`, `poll` (factsheetRequest). Uplink: `get_data`, `readiness`, `is_command_completed`, `get_action_state` |
@@ -90,7 +90,8 @@ sequenceDiagram
 
     RMF->>SM: navigate(destination, execution)
     SM->>CN: navigate() — one order, speed capped by the operator limit
-    CN->>Robot: order (MQTT)
+    CN->>CN: check_order() — reject a hard violation, warn on a soft one
+    CN->>Robot: order (MQTT) — stitched onto a live order if stitch_on_replan
     loop every update tick
         Robot-->>CN: state (lastNodeId, driving, errors...)
         RA->>CN: get_data() · readiness()
@@ -106,11 +107,11 @@ RMF's `stop` does not cancel the order. The robot is paused and the order
 kept, so a replan that keeps the destination costs nothing.
 
 | State | Trigger in | Trigger out |
-|---|---|---|
+|:---:|:---:|---|
 | `IDLE` | startup / `finished()` / cancel | `on_navigate` → NAVIGATING, `on_action` → EXECUTING_ACTION |
 | `NAVIGATING` | `on_navigate` | `is_command_completed` fires `finished()` → IDLE; `on_stop` → HOLDING |
 | `EXECUTING_ACTION` | `on_action` | action FINISHED/FAILED → IDLE |
-| `HOLDING` | `on_stop` (`startPause` sent) | `on_navigate` to the same destination → `stopPause`; to another → new order + `stopPause`; no command within `kHoldTimeoutSec` (10 s) → `cancelOrder` + `stopPause` → IDLE |
+| `HOLDING` | `on_stop` (`startPause` sent) | `on_navigate` to the same destination → `stopPause`; to another → order update or new order (`stitch_on_replan`) + `stopPause`; no command within `kHoldTimeoutSec` (10 s) → `cancelOrder` + `stopPause` → IDLE |
 
 - A pause requested by the operator is never released by the hold logic.
 - For a few seconds after the adapter's own `stopPause`, a pause still
@@ -132,7 +133,7 @@ process (`config_tb3.yaml` → `tb3_fleet`, `config_amr.yaml` → `amr_fleet`) �
 see [README.md](../README.md#multiple-fleets). The keys below apply to either file.
 
 | Key | Default | Effect |
-|---|---|---|
+|:---:|:---:|---|
 | `rmf_fleet.name` | — | RMF fleet name |
 | `rmf_fleet.robots.<name>.charger` | — | Charger waypoint name for the robot |
 | `vda5050.interface_name` | `uagv` | VDA5050 topic prefix segment |
@@ -140,13 +141,14 @@ see [README.md](../README.md#multiple-fleets). The keys below apply to either fi
 | `vda5050.robots.<name>.manufacturer/serial` | `unknown` / robot name | Robot identity in the topics |
 | `vda5050.robots.<name>.transform` | identity | RMF frame → robot map frame (`rotation`, `scale`, `translation`) |
 | `vda5050.update_rate_hz` | 10 | RMF update-loop frequency; must be > 0 |
-| `vda5050.strict_validation` | true | Reject custom actions missing from the factsheet |
+| `vda5050.strict_validation` | true | Reject custom actions and orders that fail a hard check (factsheet, pose, map, array limits) |
+| `vda5050.stitch_on_replan` | false | Replan onto a live order via an update (`orderUpdateId`+1) instead of cancelling it first |
 | `rmf_fleet.account_for_battery_drain` | false | Off = report SoC 1.0 to RMF regardless of the real battery |
 
 ## Process boundaries
 
 | Boundary | Crossed by | Protocol |
-|---|---|---|
+|:---:|---|:---:|
 | This adapter ↔ RMF core | `RobotCallbacks` / `EasyRobotUpdateHandle` (EasyFullControl) | In-process RMF API |
 | This adapter ↔ robot | `order`, `state`, `connection`, `instantActions`, `factsheet`, `visualization` | MQTT |
 | This adapter ← operator / UI | `<node>/<robot>/pause`, `resume`, `init_position`, parameter `speed_limit.<robot>` | ROS 2, same domain |

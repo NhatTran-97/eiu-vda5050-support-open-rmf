@@ -56,6 +56,8 @@ vda5050:
   update_rate_hz: 10.0
   # Reject orders and actions that break the factsheet.
   strict_validation: true
+  # Extend a still-live order with a new destination instead of cancelling it.
+  stitch_on_replan: false
   mqtt:
     host: "192.168.10.97"
     port: 1883

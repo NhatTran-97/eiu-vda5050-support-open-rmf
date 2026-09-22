@@ -26,9 +26,8 @@ RobotAdapter::EasyFullControl::RobotCallbacks RobotAdapter::make_callbacks()
       _sm.on_stop(std::move(activity));
     },
 
-    [this](const std::string& category, const nlohmann::json& description,
-           RobotUpdateHandle::ActionExecution execution) 
-           {
+    [this](const std::string& category, const nlohmann::json& description, RobotUpdateHandle::ActionExecution execution) 
+    {
       _sm.on_action(category, description, std::move(execution));
     });
 }
@@ -80,8 +79,7 @@ void RobotAdapter::apply_readiness(const Readiness& readiness)
   }
   else
   {
-    RCLCPP_WARN(_logger, "[%s] %s -- decommissioned, RMF will not dispatch new tasks to it",
-                _name.c_str(), readiness.reason.c_str());
+    RCLCPP_WARN(_logger, "[%s] %s -- decommissioned, RMF will not dispatch new tasks to it", _name.c_str(), readiness.reason.c_str());
   }
   _ready = readiness.ready;
 }

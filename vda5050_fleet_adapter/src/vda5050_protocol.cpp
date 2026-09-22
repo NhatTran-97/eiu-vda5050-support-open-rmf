@@ -262,6 +262,7 @@ ParsedState::ParsedState(const nlohmann::json& raw)
   edge_states = get_array(raw, "edgeStates");
   action_states = get_array(raw, "actionStates");
   errors = get_array(raw, "errors");
+  maps = get_array(raw, "maps");
 }
 
 bool ParsedState::has_position() const

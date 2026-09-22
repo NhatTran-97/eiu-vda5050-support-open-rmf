@@ -53,8 +53,7 @@ nlohmann::json make_order(int header_id,
                           const std::string& order_id = "",
                           int order_update_id = 0);
 
-/// Build a single VDA5050 action. blocking_type: NONE | SOFT | HARD.
-/// Empty action_id -> a fresh UUID. `parameters` is a flat key->string map.
+/// Build a single VDA5050 action. blocking_type: NONE | SOFT | HARD. Empty action_id -> a fresh UUID. `parameters` is a flat key->string map.
 nlohmann::json make_action(
   const std::string& action_type,
   const std::string& blocking_type = "HARD",
@@ -88,8 +87,7 @@ nlohmann::json factsheet_request_action(const std::string& blocking_type = "NONE
 
 /// Set the AGV's pose on `map_id`, in the robot frame.
 nlohmann::json init_position_action(double x, double y, double theta,
-                                    const std::string& map_id,
-                                    const std::string& blocking_type = "NONE");
+                                    const std::string& map_id, const std::string& blocking_type = "NONE");
 
 /// Generate a UUID-v4 string (used for orderId / actionId).
 std::string make_uuid();
@@ -135,6 +133,7 @@ public:
   std::vector<nlohmann::json> edge_states;
   std::vector<nlohmann::json> action_states;
   std::vector<nlohmann::json> errors;
+  std::vector<nlohmann::json> maps;  // AGV-reported {mapId, mapVersion, ...} entries
 
   /// True when a valid, initialized AGV position is present.
   bool has_position() const;
@@ -145,11 +144,8 @@ public:
   /// The first FATAL error type, or an empty string when none exists.
   std::string first_fatal_error() const;
 
-  /// True when `order_id` has been fully executed at `target_node_id` (no
-  /// pending node/edge states, not driving). An empty target skips the final
-  /// node check.
-  bool order_finished(const std::string& order_id,
-                      const std::string& target_node_id = "") const;
+  /// True when `order_id` has been fully executed at `target_node_id` (no pending node/edge states, not driving). An empty target skips the final node check.
+  bool order_finished(const std::string& order_id, const std::string& target_node_id = "") const;
 };
 
 }  // namespace vda5050_fleet_adapter::protocol

@@ -270,12 +270,15 @@ void Vda5050Connector::navigate(const std::string& name,
   std::string manufacturer, serial, interface_name;
   std::array<double, 3> dest{}, base{};
   int header_id = 0;
+  int order_update_id = 0;
+  bool stitched = false;
+  std::string cancel_topic, cancel_payload;
   std::optional<double> edge_speed = speed_limit;
 
   {
     std::lock_guard<std::mutex> lock(_mutex);
     auto it = _robots.find(name);
-    if (it == _robots.end()) 
+    if (it == _robots.end())
     {
       RCLCPP_ERROR(_logger, "[VDA5050] navigate: unknown robot '%s'",
                    name.c_str());
@@ -284,12 +287,6 @@ void Vda5050Connector::navigate(const std::string& name,
     RobotContext& ctx = *it->second;
 
     dest = ctx.transform.to_robot(x, y, theta);
-    base = dest;
-    base_id = ctx.last_node_id.empty() ? (ctx.serial + "_start") : ctx.last_node_id;
-    if (ctx.last_state.has_value() && ctx.last_state->has_position()) 
-    {
-      base = {*ctx.last_state->x, *ctx.last_state->y, *ctx.last_state->theta};
-    }
 
     if (ctx.speed_limit.has_value())
     {
@@ -297,15 +294,110 @@ void Vda5050Connector::navigate(const std::string& name,
                                           : *ctx.speed_limit;
     }
 
-    order_id = proto::make_uuid();
+    // A live order is one the AGV has acknowledged and not yet finished.
+    const bool has_live_order = !ctx.current_order_id.empty() &&
+      ctx.last_state.has_value() && ctx.last_state->order_id == ctx.current_order_id &&
+      !ctx.last_state->order_finished(ctx.current_order_id, ctx.target_node_id);
+    const bool can_stitch = _stitch_on_replan && has_live_order &&
+      ctx.last_state->has_position();
+
+    if (can_stitch)
+    {
+      base_id = ctx.base_node_id;
+      base = ctx.base_pose;
+    }
+    else
+    {
+      base_id = ctx.last_node_id.empty() ? (ctx.serial + "_start") : ctx.last_node_id;
+      base = dest;
+      if (ctx.last_state.has_value() && ctx.last_state->has_position())
+      {
+        base = {*ctx.last_state->x, *ctx.last_state->y, *ctx.last_state->theta};
+      }
+    }
+
+    std::vector<std::string> known_maps;
+    if (ctx.last_state.has_value())
+    {
+      for (const auto& m : ctx.last_state->maps)
+      {
+        const std::string id = m.value("mapId", std::string{});
+        if (!id.empty())
+        {
+          known_maps.push_back(id);
+        }
+      }
+    }
+
+    proto::OrderShape shape;
+    shape.map_id = map_id;
+    shape.base_pose = base;
+    shape.dest_pose = dest;
+    if (ctx.last_order_time != std::chrono::steady_clock::time_point{})
+    {
+      shape.seconds_since_last_order = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - ctx.last_order_time).count();
+    }
+
+    bool reject = false;
+    for (const auto& v : proto::check_order(shape, ctx.factsheet, known_maps))
+    {
+      const bool hard = v.severity == proto::Severity::hard;
+      if (hard)
+      {
+        RCLCPP_ERROR(_logger, "[VDA5050] %s: %s", name.c_str(), v.message.c_str());
+      }
+      else
+      {
+        RCLCPP_WARN(_logger, "[VDA5050] %s: %s", name.c_str(), v.message.c_str());
+      }
+      reject = reject || (hard && _strict_validation);
+    }
+    if (reject)
+    {
+      RCLCPP_ERROR(_logger, "[VDA5050] %s: order NOT sent -- it violates the AGV's declared limits",
+                   name.c_str());
+      return;
+    }
+
+    if (can_stitch)
+    {
+      order_id = ctx.current_order_id;
+      order_update_id = ++ctx.order_update_id;
+      stitched = true;
+    }
+    else
+    {
+      if (has_live_order)
+      {
+        nlohmann::json actions = nlohmann::json::array();
+        actions.push_back(proto::cancel_order_action("", blocking_type_for(ctx, "cancelOrder", "HARD")));
+        const auto msg = proto::make_instant_actions(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, actions);
+        cancel_topic = proto::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, proto::TOPIC_INSTANT_ACTIONS);
+        cancel_payload = msg.dump();
+      }
+      order_id = proto::make_uuid();
+      order_update_id = 0;
+      ctx.order_update_id = 0;
+      ctx.base_node_id = base_id;
+      ctx.base_pose = base;
+    }
+
     ctx.current_order_id = order_id;
     ctx.target_node_id = dest_node_id;
+    ctx.last_order_time = std::chrono::steady_clock::now();
     header_id = ctx.next_order_header();
     manufacturer = ctx.manufacturer;
     serial = ctx.serial;
     interface_name = ctx.interface_name;
   }
 
+  if (!cancel_topic.empty())
+  {
+    RCLCPP_INFO(_logger, "[VDA5050] %s: superseding an order still in progress -- "
+                "cancelling it before publishing the replacement", name.c_str());
+    publish_raw(cancel_topic, cancel_payload);
+  }
 
   nlohmann::json nodes = nlohmann::json::array();
   nodes.push_back(proto::make_node(base_id, 0, base[0], base[1], base[2], map_id));
@@ -316,12 +408,13 @@ void Vda5050Connector::navigate(const std::string& name,
                                    base_id, dest_node_id, true, edge_speed));
 
   const auto order = proto::make_order(header_id, manufacturer, serial, nodes,
-                                       edges, order_id, 0);
+                                       edges, order_id, order_update_id);
 
   const std::string order_topic = proto::topic(interface_name, manufacturer, serial, proto::TOPIC_ORDER);
   publish_raw(order_topic, order.dump());
-  RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s' to node '%s' (%.2f, %.2f)",
-              name.c_str(), order_id.c_str(), dest_node_id.c_str(), dest[0],dest[1]);
+  const std::string suffix = stitched ? (" update " + std::to_string(order_update_id)) : std::string{};
+  RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s'%s to node '%s' (%.2f, %.2f)",
+              name.c_str(), order_id.c_str(), suffix.c_str(), dest_node_id.c_str(), dest[0],dest[1]);
 }
 
 void Vda5050Connector::stop(const std::string& name)
@@ -478,6 +571,12 @@ void Vda5050Connector::set_strict_validation(bool strict)
 {
   std::lock_guard<std::mutex> lock(_mutex);
   _strict_validation = strict;
+}
+
+void Vda5050Connector::set_stitch_on_replan(bool enabled)
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  _stitch_on_replan = enabled;
 }
 
 bool Vda5050Connector::pause(const std::string& name)
@@ -652,13 +751,10 @@ bool Vda5050Connector::is_command_completed(const std::string& name)
     if (ctx.last_incomplete_key != key)
     {
       ctx.last_incomplete_key = key;
-      RCLCPP_WARN(_logger,
-                  "[VDA5050] %s drained order '%s' but reports lastNodeId '%s' "
+      RCLCPP_WARN(_logger,"[VDA5050] %s drained order '%s' but reports lastNodeId '%s' "
                   "while the order targeted '%s'. Navigation cannot complete "
                   "until the robot echoes the nodeId this adapter sends.",
-                  name.c_str(), ctx.current_order_id.c_str(),
-                  s.last_node_id.empty() ? "(empty)" : s.last_node_id.c_str(),
-                  ctx.target_node_id.c_str());
+                  name.c_str(), ctx.current_order_id.c_str(), s.last_node_id.empty() ? "(empty)" : s.last_node_id.c_str(),  ctx.target_node_id.c_str());
     }
   }
 
@@ -725,6 +821,13 @@ std::string Vda5050Connector::current_order_id(const std::string& name)
   std::lock_guard<std::mutex> lock(_mutex);
   auto it = _robots.find(name);
   return it == _robots.end() ? std::string{} : it->second->current_order_id;
+}
+
+int Vda5050Connector::current_order_update_id(const std::string& name)
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  auto it = _robots.find(name);
+  return it == _robots.end() ? 0 : it->second->order_update_id;
 }
 
 bool Vda5050Connector::has_active_order_to(const std::string& name,
