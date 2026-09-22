@@ -66,7 +66,9 @@ adapter + Nav2 stack and talks to that container over MQTT.
 ### All demo videos
 
 > Click a thumbnail to watch on YouTube (GitHub doesn't allow embedded/playable
-> video from external sites, only a static preview).
+> video from external sites, only a static preview), or watch the
+> [full playlist](https://www.youtube.com/playlist?list=PL7WgDt1mGvJZdPyar7xpHH4HDRZpteAp4)
+> on YouTube.
 
 <table>
 <tr>
@@ -128,8 +130,9 @@ Multi-robot demo — two robots deconflicting via RMF
 
 <table width="100%" style="width:100%; table-layout:fixed">
 <tr><th width="22%">Package</th><th width="13%">Layer</th><th>Description</th></tr>
-<tr><td><code>eiu_fleet_ui</code></td><td>Dashboard</td><td style="text-align: justify">PySide6 + QML desktop app. Monitors robot status, dispatches/cancels tasks, draws no-go zones, and gives direct per-robot control (pause/resume/speed/re-localize). Supports multiple fleet adapters at once.</td></tr>
-<tr><td><code>vda5050_fleet_adapter_full_control</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>RobotCommandHandle</code>/<code>FleetUpdateHandle</code> (full control, not EasyFullControl) — sends a planned multi-waypoint route as one VDA5050 order. Different robot types (TB3/AMR) run as separate config files and processes.</td></tr>
+<tr><td><code>eiu_fleet_ui</code></td><td>Dashboard</td><td style="text-align: justify">PySide6 + QML desktop app. Monitors robot status, dispatches/cancels tasks (a specific robot or let RMF choose), draws no-go zones, edits the nav graph, and gives direct per-robot control (pause/resume/speed/re-localize). Shows each robot's live VDA5050 order and message traffic, and each fleet adapter's health/metrics. Notifies when a new robot appears on the broker and registers — or restores — it into a fleet after the fleet adapter has checked it. Supports multiple fleet adapters at once.</td></tr>
+<tr><td><code>vda5050_fleet_adapter_full_control</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>RobotCommandHandle</code>/<code>FleetUpdateHandle</code> (full control, not EasyFullControl) — sends a planned multi-waypoint route as one VDA5050 order. Different robot types (TB3/AMR) run as separate config files and processes. Robots can be added to, removed from, and restored to a running fleet (checked against the fleet's type, limits, nav graph and chargers) and are saved for the next start.</td></tr>
+<tr><td><code>vda5050_fleet_adapter</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>EasyFullControl</code> — one VDA5050 order per destination. The simpler path: same factsheet, commissioning, pause/resume, re-localize and lane-closure handling, but no multi-node orders, horizon release or stitching. TB3 and AMR run as separate config files and processes.</td></tr>
 <tr><td><code>fleet_bringup</code></td><td>Ground-station bringup</td><td style="text-align: justify">One launch file for the whole ground-station side: <code>rmf_traffic_schedule</code>, <code>rmf_task_dispatcher</code>, the fleet adapter, mock dispenser/ingestor, and <code>eiu_fleet_ui</code> — all in one process group.</td></tr>
 <tr><td><code>vda5050_client_adapter</code></td><td>Robot</td><td style="text-align: justify">Receives VDA5050 MQTT orders, exposes them as ROS 2 <code>vda5050_msgs</code> topics, and publishes robot state/connection back to MQTT.</td></tr>
 <tr><td><code>tb3_vda5050_bridge</code></td><td>Robot</td><td style="text-align: justify">Converts <code>vda5050_client_adapter</code> order topics into Nav2 <code>NavigateToPose</code> goals for the TurtleBot3, and feeds odometry, battery, and navigation progress back.</td></tr>
@@ -143,6 +146,7 @@ Multi-robot demo — two robots deconflicting via RMF
 ros2_ws/src/
   eiu_fleet_ui/                        # Dashboard UI (PySide6 + QML)
   vda5050_fleet_adapter_full_control/  # Fleet adapter (one process per robot type)
+  vda5050_fleet_adapter/              # Fleet adapter (EasyFullControl, one destination per order)
   fleet_bringup/                       # Ground-station bringup (single launch file)
   vda5050_client_adapter/              # Robot side — VDA5050 <-> ROS 2
   tb3_vda5050_bridge/                  # Robot side — Nav2 bridge (TurtleBot3)
@@ -194,7 +198,7 @@ flowchart TB
 The robot side exposes two interfaces:
 
 | Interface | Protocol | Direction | Description |
-|-----------|----------|-----------|-------------|
+|:---:|:---:|:---:|---|
 | **Northbound** | MQTT — VDA5050 v2.1.0 | Fleet adapter ↔ `vda5050_client_adapter` | order, instantActions, state, visualization, connection, factsheet |
 | **Southbound** | ROS 2 topics (`vda5050_msgs`) | `vda5050_client_adapter` ↔ bridge/driver | order dispatch, action feedback, AGV position, battery, node/edge progress |
 
@@ -207,7 +211,7 @@ unchanged.
 Topic pattern: `{interface_name}/v2/{manufacturer}/{serial_number}/{topic}`
 
 | Topic | Direction | Description |
-|-------|-----------|-------------|
+|:---:|:---:|---|
 | `.../order` | MC → Robot | Navigation order |
 | `.../instantActions` | MC → Robot | Instant commands (pause, cancel…) |
 | `.../state` | Robot → MC | Full robot state (every 30 s, plus on movement) |
@@ -291,7 +295,8 @@ unique per robot connected to the broker.
 
 - [EIU Fleet UI](eiu_fleet_ui/README.md)
 - [VDA5050 Fleet Adapter (Full Control)](vda5050_fleet_adapter_full_control/README.md) · [Architecture](vda5050_fleet_adapter_full_control/docs/architecture.md)
+- [VDA5050 Fleet Adapter (EasyFullControl)](vda5050_fleet_adapter/README.md) · [Architecture](vda5050_fleet_adapter/docs/architecture.md)
 - [Fleet Bringup](fleet_bringup/README.md)
 - [VDA5050 Client Adapter](vda5050_client_adapter/README.md) · [Architecture](vda5050_client_adapter/docs/architecture.md)
 - [TB3 VDA5050 Bridge](tb3_vda5050_bridge/README.md) · [Architecture](tb3_vda5050_bridge/docs/architecture.md)
-- [MQTT Test Guide](vda5050_client_adapter/docs/mqtt_test_guide.md)
+- [MQTT Test Guide](vda5050_client_adapter/docs/mqtt_test_guide.md) · [Docker Guide](vda5050_client_adapter/docs/docker_guide.md)
