@@ -205,6 +205,69 @@ class CommandFlowTest(unittest.TestCase):
         self.assertEqual(self.bridge._tasks[0]["state"], "underway")
         self.assertEqual(self.settle(), [])
 
+    # Task errors.
+
+    def test_error_detail_reads_json_encoded_and_plain_entries(self):
+        self.assertEqual(ros_bridge._error_detail({"detail": "no route", "category": "negotiation"}), "no route")
+        self.assertEqual(ros_bridge._error_detail({"category": "negotiation"}), "negotiation")
+        self.assertEqual(ros_bridge._error_detail(
+            json.dumps({"category": "negotiation", "affected_tasks": ["task.1-13"]})), "negotiation")
+        self.assertEqual(ros_bridge._error_detail("plain text"), "plain text")
+
+    def test_dispatch_state_error_shows_the_detail_not_raw_json(self):
+        self.start_task()
+        # Still bidding -- no robot assigned yet -- so the error is live, not stale.
+        state = SimpleNamespace(task_id="task.1", status=3,
+                                assignment=SimpleNamespace(is_assigned=False, expected_robot_name=""),
+                                errors=[json.dumps({"category": "negotiation", "detail": "no route",
+                                                    "affected_tasks": ["task.1-13"]})])
+        self.bridge._on_dispatch_states(SimpleNamespace(active=[state], finished=[]))
+        self.assertEqual(self.bridge._tasks[0]["error"], "no route")
+
+        # The next update reports no errors -- the stale one is cleared, not kept.
+        state.errors = []
+        self.bridge._on_dispatch_states(SimpleNamespace(active=[state], finished=[]))
+        self.assertEqual(self.bridge._tasks[0]["error"], "")
+
+    def test_dispatch_state_error_does_not_survive_a_robot_assignment(self):
+        self.start_task()
+        state = SimpleNamespace(task_id="task.1", status=3,
+                                assignment=SimpleNamespace(is_assigned=False, expected_robot_name=""),
+                                errors=[json.dumps({"category": "negotiation", "detail": "planner retry"})])
+        self.bridge._on_dispatch_states(SimpleNamespace(active=[state], finished=[]))
+        self.assertEqual(self.bridge._tasks[0]["error"], "planner retry")
+
+        # A robot gets assigned -- the earlier bidding error is stale from here on,
+        # even though RMF keeps reporting it for the task's whole lifetime.
+        state.assignment = SimpleNamespace(is_assigned=True, expected_robot_name="robot_a")
+        self.bridge._on_dispatch_states(SimpleNamespace(active=[state], finished=[]))
+        self.assertEqual(self.bridge._tasks[0]["error"], "")
+
+        self.bridge._on_dispatch_states(SimpleNamespace(active=[state], finished=[]))
+        self.assertEqual(self.bridge._tasks[0]["error"], "")
+
+    def test_task_response_state_update_clears_a_stale_error_on_completion(self):
+        self.start_task()
+        self.bridge._tasks[0]["error"] = "[TaskPlanner] Failed to compute assignments for task_id [task.1]"
+        self.bridge._on_task_response(response("x", {
+            "type": "task_state_update",
+            "task": {"booking": {"id": "task.1"}, "status": "completed"},
+        }))
+        self.assertEqual(self.bridge._tasks[0]["state"], "completed")
+        self.assertEqual(self.bridge._tasks[0]["error"], "")
+
+    def test_a_stale_error_does_not_survive_into_a_completed_task(self):
+        self.start_task()
+        self.bridge.apply_task_state_update({
+            "booking": {"id": "task.1"}, "status": "underway",
+            "dispatch": {"errors": [{"category": "negotiation", "detail": "retrying"}]},
+        })
+        self.assertEqual(self.bridge._tasks[0]["error"], "retrying")
+
+        self.bridge.apply_task_state_update({"booking": {"id": "task.1"}, "status": "completed"})
+        self.assertEqual(self.bridge._tasks[0]["state"], "completed")
+        self.assertEqual(self.bridge._tasks[0]["error"], "")
+
     # Task cache.
 
     def test_a_damaged_task_cache_gives_an_empty_table(self):

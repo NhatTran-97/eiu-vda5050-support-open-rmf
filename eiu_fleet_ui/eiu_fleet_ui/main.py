@@ -10,6 +10,11 @@ from types import SimpleNamespace
 
 # Select the Qt Quick backend before importing Qt.
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
+# Pin to physical pixels by default; the host's reported display DPI is
+# inconsistent across launches and otherwise leaves the window size to chance.
+# EIU_UI_SCALE still overrides this.
+os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
+os.environ.setdefault("QT_SCALE_FACTOR", "1")
 
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication

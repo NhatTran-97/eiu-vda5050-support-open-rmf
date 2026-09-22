@@ -1,11 +1,15 @@
+import json
 import os
+import time
 import unittest
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QUrl
 
 from eiu_fleet_ui.config import FleetConfig, FleetSettings, RobotIdentity
+from eiu_fleet_ui import mqtt_client as mqtt_client_module
 from eiu_fleet_ui.mqtt_client import MqttClient
 from eiu_fleet_ui.ros_control import RosControl
 
@@ -68,6 +72,30 @@ class FollowedRobotsTest(unittest.TestCase):
         self.assertNotIn("tb3_3", mqtt._telemetry)
         self.assertIsNone(mqtt._robot_for_topic("AMR/v2/ROBOTIS/0003/state"))
         mqtt.remove_robot("tb3_3")   # a second removal is harmless
+
+    def test_stale_telemetry_reads_offline_even_without_a_final_offline_message(self):
+        mqtt = MqttClient(config(identity("tb3_1", "0001")))
+        robot = mqtt._robots[0]
+
+        def send(leaf, payload):
+            msg = SimpleNamespace(topic=robot.topic(leaf), payload=json.dumps(payload).encode())
+            mqtt._on_message(None, None, msg)
+
+        send("connection", {"connectionState": "ONLINE"})
+        send("state", {})
+        mqtt._flush()
+        self.assertEqual(json.loads(mqtt.robotsOnlineJson), {"tb3_1": True})
+
+        # The process died without ever publishing OFFLINE -- telemetry just goes quiet.
+        mqtt._last_state_rx["tb3_1"] -= mqtt_client_module.STATE_STALE_AFTER_SEC + 1
+        mqtt._flush()
+        self.assertEqual(json.loads(mqtt.robotsOnlineJson), {"tb3_1": False})
+        self.assertTrue(mqtt._online["tb3_1"], "the raw connection state is untouched, only what QML sees changes")
+
+        # Fresh telemetry brings it back.
+        send("state", {})
+        mqtt._flush()
+        self.assertEqual(json.loads(mqtt.robotsOnlineJson), {"tb3_1": True})
 
     def test_control_queues_endpoint_changes_for_the_ros_thread(self):
         control = RosControl(config(identity("tb3_1", "0001")))

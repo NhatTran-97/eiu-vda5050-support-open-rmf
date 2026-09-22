@@ -69,6 +69,18 @@ def _fmt_time(ts) -> str:
     return datetime.datetime.utcfromtimestamp(ts).strftime("%I:%M:%S %p")
 
 
+def _error_detail(e) -> str:
+    """Human-readable text for one RMF task/dispatch error entry."""
+    if isinstance(e, str):
+        try:
+            e = json.loads(e)
+        except Exception:
+            return e
+    if isinstance(e, dict):
+        return str(e.get("detail") or e.get("category") or e)
+    return str(e)
+
+
 def _finish_from_path(path) -> str:
     """Return the UTC finish time from the last RMF path waypoint."""
     if not path:
@@ -605,8 +617,7 @@ class RosBridge(QObject):
             is_cancel_answer = msg.request_id in self._cancel_requests
         if is_cancel_answer and isinstance(data, dict):
             errors = data.get("errors") or []
-            detail = "; ".join(str(e.get("detail") or e.get("category") or e) if isinstance(e, dict) else str(e)
-                               for e in errors)
+            detail = "; ".join(_error_detail(e) for e in errors)
             self._finish_cancel(msg.request_id, bool(data.get("success", False)), detail)
             return
 
@@ -661,6 +672,10 @@ class RosBridge(QObject):
                             task["end"] = finish_str; updated = True
                         if state_label in ("completed", "failed", "cancelled") and task.get("end", "—") == "—":
                             task["end"] = datetime.datetime.now().strftime("%I:%M:%S %p")
+                            updated = True
+                        # A stale bidding/planning error does not survive the task finishing.
+                        if state_label in ("completed", "cancelled") and task.get("error"):
+                            task["error"] = ""
                             updated = True
                         break
                 else:
@@ -723,11 +738,16 @@ class RosBridge(QObject):
                     task["robot"] = robot_name
                     updated = True
 
-                if state.errors:
-                    error_text = "; ".join(state.errors)
-                    if task.get("error") != error_text:
-                        task["error"] = error_text
-                        updated = True
+                # RMF keeps every bidding/planning error task_id ever hit, for its whole
+                # lifetime -- stale once a robot has actually been assigned to run it.
+                has_robot = bool(robot_name) or task.get("robot", "—") != "—"
+                if has_robot:
+                    error_text = ""
+                else:
+                    error_text = "; ".join(_error_detail(e) for e in state.errors) if state.errors else ""
+                if task.get("error", "") != error_text:
+                    task["error"] = error_text
+                    updated = True
 
                 if label in ("failed", "cancelled") and task.get("end", "—") == "—":
                     task["end"] = datetime.datetime.now().strftime("%I:%M:%S %p")
@@ -749,8 +769,7 @@ class RosBridge(QObject):
         finish_str = _fmt_time(data.get("unix_millis_finish_time"))
 
         errors = (data.get("dispatch") or {}).get("errors") or []
-        error_text = "; ".join(
-            e.get("detail") or e.get("category", "") for e in errors if isinstance(e, dict))
+        error_text = "; ".join(_error_detail(e) for e in errors)
 
         # Derive remaining rounds from completed phases.
         completed_phases = data.get("completed") or []
@@ -774,8 +793,10 @@ class RosBridge(QObject):
                     task["state"] = label; updated = True
                 if finish_str and task.get("end", "—") == "—":
                     task["end"] = finish_str; updated = True
-                if error_text and task.get("error") != error_text:
-                    task["error"] = error_text; updated = True
+                # Errors from the active dispatch round; a completed/cancelled task keeps none.
+                cur_error = "" if label in ("completed", "cancelled") else error_text
+                if task.get("error", "") != cur_error:
+                    task["error"] = cur_error; updated = True
 
                 new_phase = "" if label in ("completed", "failed", "cancelled") else phase_label
                 if task.get("phase", "") != new_phase:

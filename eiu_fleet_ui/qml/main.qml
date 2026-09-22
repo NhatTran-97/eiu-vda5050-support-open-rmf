@@ -1217,12 +1217,12 @@ ApplicationWindow {
                         ColumnLayout {
                             id: fleetPanel
                             objectName: "fleetPanel"
-                            // Map : robot panel split is 60 : 40 by default.
-                            readonly property real panelRatio: 0.4
+                            // Map : robot panel split is 72 : 28 by default.
+                            readonly property real panelRatio: 0.28
                             readonly property bool smallFleet: root.displayRobots.length <= 3
                             SplitView.preferredWidth: dashboardSplit.width * panelRatio
                             SplitView.minimumWidth: smallFleet ? 420 : 640
-                            SplitView.maximumWidth: dashboardSplit.width * 0.5
+                            SplitView.maximumWidth: dashboardSplit.width * 0.38
                             spacing: 16
 
                             // Scale typography with the robot panel width.

@@ -838,7 +838,8 @@ Rectangle {
 
                                 Text {
                                     Layout.preferredWidth: 78 * Math.min(1.15, root.uiScale)
-                                    text: root.displayTask && root.displayTask.error
+                                    text: root.displayTaskState !== "completed"
+                                          && root.displayTask && root.displayTask.error
                                           ? root.displayTask.error
                                           : (root.displayTaskState === "completed"
                                              ? "ARRIVED"
@@ -846,7 +847,8 @@ Rectangle {
                                                 ? root.taskDistanceRemaining.toFixed(1)
                                                   + " m LEFT"
                                                 : root.taskKey(root.displayTask)))
-                                    color: root.displayTask && root.displayTask.error
+                                    color: root.displayTaskState !== "completed"
+                                           && root.displayTask && root.displayTask.error
                                            ? C.err : root.displayTaskColor
                                     font.family: fontMono
                                     font.pixelSize: 8 * root.uiScale

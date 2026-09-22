@@ -104,6 +104,7 @@ class MqttClient(QObject):
         try:
             self._flush_timer.stop()
             self._client.disconnect()
+            
             self._client.loop_stop()
         except Exception:
             pass
@@ -224,15 +225,20 @@ class MqttClient(QObject):
         now = time.monotonic()
         # Copy what changed under the lock; serialising it happens after the MQTT thread is free again.
         with self._lock:
-            online = dict(self._online) if self._online_dirty else None
-            self._online_dirty = False
-
             # Check telemetry age on every refresh tick.
             stale_now = {name: (now - self._last_state_rx.get(name, 0.0)) > STATE_STALE_AFTER_SEC
                          for name in self._telemetry}
-            if stale_now != self._stale_reported:
+            stale_changed = stale_now != self._stale_reported
+            if stale_changed:
                 self._stale_reported = stale_now
                 self._telemetry_dirty = True
+
+            # A robot reads offline once its telemetry goes stale, even if its connection
+            # topic never got a final OFFLINE (dead process, no broker LWT to catch it).
+            online = None
+            if self._online_dirty or stale_changed:
+                online = {name: v and not stale_now.get(name, False) for name, v in self._online.items()}
+            self._online_dirty = False
 
             telemetry = None
             if self._telemetry_dirty:
