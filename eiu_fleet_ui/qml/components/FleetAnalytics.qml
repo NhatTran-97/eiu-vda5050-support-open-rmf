@@ -28,7 +28,16 @@ Rectangle {
     property real availableHeight: 1e9
     readonly property real widthScale: Math.max(0.7, Math.min(1.35, width / 760))
     property real uiScale: widthScale
+    // Smooths out the residual adjustments fitScale() still makes while settling.
+    Behavior on uiScale {
+        NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+    }
     implicitHeight: rootColumn.implicitHeight
+
+    // uiScale resizing rootColumn's content changes its implicitHeight, which re-triggers
+    // this -- pixel rounding and non-linear content can keep that from ever settling, so
+    // cap the correction chain instead of adjusting forever.
+    property int _fitSettleGuard: 0
 
     // Scale the content to fit the panel height.
     function fitScale() {
@@ -36,8 +45,14 @@ Rectangle {
         if (need <= 0)
             return
         var s = Math.max(0.7, Math.min(widthScale, uiScale * availableHeight / need))
-        if (Math.abs(s - uiScale) > 0.004)
-            uiScale = s
+        // A wider dead-band means fewer correction attempts before this settles;
+        // a 1% scale gap is a sub-pixel font-size difference, invisible either way.
+        if (Math.abs(s - uiScale) <= 0.01 || _fitSettleGuard >= 4) {
+            _fitSettleGuard = 0
+            return
+        }
+        _fitSettleGuard++
+        uiScale = s
     }
     onWidthScaleChanged: Qt.callLater(fitScale)
     onAvailableHeightChanged: Qt.callLater(fitScale)

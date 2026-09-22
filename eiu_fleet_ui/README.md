@@ -223,3 +223,9 @@ for the full protocol boundary table, including per-robot control topics.
 | `completed` | Green | Task finished successfully |
 | `cancelled` | Red | Cancelled by user or system |
 | `failed` | Red | Task failed (obstacle, timeout, etc.) |
+
+## Reviewer recommendations
+
+| Recommendation | Status |
+|:---:|---|
+| 🔵 UI: surface the VDA5050 traffic | ✅ Done — [`VdaOrderPanel.qml`](qml/components/VdaOrderPanel.qml) shows the selected robot's live order (route tiles, order/update id, running action, per-action blocking on a clicked node), and [`VdaTrafficPanel.qml`](qml/components/VdaTrafficPanel.qml) is a filterable log of order/instantAction/state/connection messages with raw JSON on click. Multi-node orders, `orderUpdateId` increments, per-action blocking, and `cancelOrder` against a pause are now watchable, not just taken on trust |
