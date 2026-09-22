@@ -124,6 +124,28 @@ Multi-robot demo — two robots deconflicting via RMF
 
 </td>
 </tr>
+<tr>
+<td colspan="2" align="center">
+
+**Milestone 2 demos — updated after review round 2**
+Round 2 feedback addressed: factsheet request + gating, hard/soft order validation, and
+multi-node order stitching on replan (see the
+[Reviewer recommendations](vda5050_fleet_adapter_full_control/README.md#reviewer-recommendations)
+checklist) — plus the dashboard now surfaces live VDA5050 order/traffic
+([`eiu_fleet_ui`](eiu_fleet_ui/README.md#features)).
+
+</td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+
+**3 robots — `amr_fleet` + `tb3_fleet`**
+Multi-robot fleet demo — both fleets running together
+
+[<img src="https://img.youtube.com/vi/w_28pgbwSe8/hqdefault.jpg" width="100%" alt="Watch: multi-robot fleet demo (both fleets)" />](https://www.youtube.com/watch?v=w_28pgbwSe8)
+
+</td>
+</tr>
 </table>
 
 ## Packages
