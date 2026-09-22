@@ -899,7 +899,7 @@ Rectangle {
                 }
             }
 
-            // Right-hand column: VDA5050 order/action traffic above the task chart.
+            // Right-hand column: VDA5050 order/action traffic above the task chart, half the height each.
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -907,8 +907,12 @@ Rectangle {
                 spacing: 10
 
                 VdaOrderPanel {
+                    id: orderPanel
+                    objectName: "vdaOrderPanel"
                     Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignTop
+                    Layout.fillHeight: true
+                    Layout.preferredHeight: Math.max(orderPanel.implicitHeight, distributionBox.implicitHeight)
+                    Layout.minimumHeight: implicitHeight
                     robotName: root.robotName
                     hasTele: root.hasTele
                     hasOrder: root.hasOrder
@@ -925,10 +929,12 @@ Rectangle {
 
                 // Task counts grouped by state.
                 Rectangle {
+                    id: distributionBox
+                    objectName: "taskDistributionBox"
                     Layout.fillWidth: true
-                    // Keep an empty chart compact.
-                    Layout.fillHeight: root.taskTotal > 0
-                    Layout.alignment: Qt.AlignTop
+                    Layout.fillHeight: true
+                    Layout.preferredHeight: Math.max(orderPanel.implicitHeight, distributionBox.implicitHeight)
+                    Layout.minimumHeight: implicitHeight
                     Layout.preferredWidth: 360
                     implicitHeight: distributionColumn.implicitHeight + 24
                     radius: 10
@@ -1118,8 +1124,6 @@ Rectangle {
                     }
                 }
 
-                // Let the column grow so content top-aligns.
-                Item { Layout.fillHeight: true; visible: root.taskTotal === 0 }
             }
         }
     }

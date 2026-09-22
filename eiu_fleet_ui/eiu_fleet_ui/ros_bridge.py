@@ -8,7 +8,10 @@ import queue
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
+from PySide6.QtCore import QObject, Qt, Signal, Property, Slot, QTimer
+
+from .config import env_float
+from .file_io import DebouncedWriter, user_config_dir
 
 DISPENSER_STATES_TOPIC = "/dispenser_states"
 INGESTOR_STATES_TOPIC  = "/ingestor_states"
@@ -19,11 +22,15 @@ DISPATCH_STATES_TOPIC = "/dispatch_states"
 LANE_STATES_TOPIC   = "/lane_states"
 LANE_CLOSURE_REQUEST_TOPIC = "/lane_closure_requests"
 NEGOTIATION_STATUSES_TOPIC = "/rmf_traffic/negotiation_statuses"
-OFFLINE_AFTER_SEC   = 5.0
-DISPATCH_TIMEOUT_SEC = 15.0   # Time before an unanswered dispatch fails
+# Timings and limits; each can be overridden from the environment.
+OFFLINE_AFTER_SEC    = env_float("EIU_RMF_OFFLINE_AFTER", 5.0)
+DISPATCH_TIMEOUT_SEC = env_float("EIU_DISPATCH_TIMEOUT", 15.0)   # Unanswered dispatch or cancel fails after this
+TASK_CACHE_DELAY_SEC = env_float("EIU_TASK_CACHE_DELAY", 1.0)    # Task table changes are written at most this often
+TASK_HISTORY_LIMIT   = int(env_float("EIU_TASK_HISTORY", 50))    # Tasks kept in the table and the cache
 
-
-_TASKS_CACHE_PATH = Path.home() / ".config" / "eiu_fleet_ui" / "tasks_cache.json"
+TASKS_CACHE_FILE = "tasks_cache.json"
+_FINAL_STATES = ("completed", "failed", "cancelled")
+REQUESTER = "eiu_fleet_ui"
 
 _MODE_NAMES = {
     0: "IDLE", 1: "CHARGING", 2: "MOVING",  3: "PAUSED",
@@ -80,8 +87,11 @@ class RosBridge(QObject):
     tasksChanged     = Signal()
     pathChanged      = Signal()
     trafficChanged   = Signal()
-    dispatchResult   = Signal(bool, str)   # Dispatch or cancel result for dialogs
+    workcellsChanged = Signal()
+    # request id, kind ("dispatch" or "cancel"), ok, message: answers the request that carries the id.
+    dispatchResult   = Signal(str, str, bool, str)
     _rosReady        = Signal()            # Hop back to the GUI thread once ROS entities exist
+    _result          = Signal(str, str, bool, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -89,7 +99,9 @@ class RosBridge(QObject):
         self._robots_json  = "[]"
         self._rmf_online   = False
         self._last_rx      = 0.0
-        self._tasks        = self._load_tasks()   # Task records, newest first
+        self._cache_path   = user_config_dir() / TASKS_CACHE_FILE
+        self._cache_writer = DebouncedWriter(self._cache_path, TASK_CACHE_DELAY_SEC, name="tasks-cache-writer")
+        self._tasks        = self._load_tasks(self._cache_path)   # Task records, newest first
         self._tasks_json   = json.dumps(self._tasks)
         self._planned_dest = ""
         self._waypoints    = []       # Navigation graph waypoints
@@ -105,9 +117,14 @@ class RosBridge(QObject):
 
         # Map UI request IDs to RMF task IDs.
         self._req_to_rmf: dict[str, str] = {}
+        # Cancel request id -> (RMF task id, deadline), until RMF answers.
+        self._cancel_requests: dict[str, tuple] = {}
+        # Every result is delivered on the GUI thread, also when the request failed at once.
+        self._result.connect(self.dispatchResult, Qt.ConnectionType.QueuedConnection)
 
         # Latest dispenser/ingestor state by workcell guid.
         self._workcell_wait: dict[str, dict] = {}
+        self._workcells_json = json.dumps({"dispensers": [], "ingestors": []})
 
         # Per-robot task id, seeded from the reloaded cache (newest first,
         # so the first match per robot wins).
@@ -148,23 +165,33 @@ class RosBridge(QObject):
         """Store each robot's RMF fleet for targeted dispatch."""
         self._robot_fleet = dict(mapping)
 
+    def add_robot_fleet(self, name: str, fleet: str):
+        """Remember the fleet of a robot registered while the dashboard runs."""
+        self._robot_fleet[name] = fleet
+
+    def remove_robot_fleet(self, name: str):
+        self._robot_fleet.pop(name, None)
+
     @staticmethod
-    def _load_tasks() -> list:
+    def _load_tasks(path) -> list:
+        """Read the task cache; an unreadable or malformed file gives an empty table."""
         try:
-            tasks = json.loads(_TASKS_CACHE_PATH.read_text())
+            tasks = json.loads(Path(path).read_text())
         except Exception:
             return []
+        if not isinstance(tasks, list):
+            return []
+        tasks = [t for t in tasks if isinstance(t, dict) and isinstance(t.get("id"), str)]
         for t in tasks:
             for field in ("date", "start", "end", "pickup", "destination", "robot"):
                 t.setdefault(field, "—")
-        return tasks
+            # A cancel that was pending when the cache was written has no answer coming any more.
+            t.pop("cancel", None)
+            t.pop("cancel_id", None)
+        return tasks[:TASK_HISTORY_LIMIT]
 
     def _save_tasks(self):
-        try:
-            _TASKS_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            _TASKS_CACHE_PATH.write_text(self._tasks_json)
-        except Exception as e:
-            print(f"[ROS] failed to persist task cache: {e}")
+        self._cache_writer.submit(self._tasks_json)
 
     def _publish_tasks(self):
         """Serialise the task table, persist it, and notify QML. Call with _task_lock held."""
@@ -193,10 +220,7 @@ class RosBridge(QObject):
         threading.Thread(target=self._start_impl, args=(on_node_ready,), daemon=True).start()
 
     def _start_impl(self, on_node_ready=None):
-        # No default domain to force anymore -- eiu_fleet_ui, Open-RMF, and the
-        # fleet adapter all run in the same process group via fleet_bringup, so
-        # this just inherits whatever ROS_DOMAIN_ID that environment already
-        # has. Only override it if the caller explicitly asks for a different one.
+        # Inherits ROS_DOMAIN_ID from the environment; EIU_ROS_DOMAIN_ID selects a different one.
         override = os.environ.get("EIU_ROS_DOMAIN_ID")
         if override:
             os.environ["ROS_DOMAIN_ID"] = override
@@ -259,9 +283,11 @@ class RosBridge(QObject):
 
             # Workcell wait countdown for delivery tasks.
             self._node.create_subscription(
-                DispenserState, DISPENSER_STATES_TOPIC, self._on_workcell_state, 10)
+                DispenserState, DISPENSER_STATES_TOPIC,
+                lambda msg: self._on_workcell_state(msg, "dispensers"), 10)
             self._node.create_subscription(
-                IngestorState, INGESTOR_STATES_TOPIC, self._on_workcell_state, 10)
+                IngestorState, INGESTOR_STATES_TOPIC,
+                lambda msg: self._on_workcell_state(msg, "ingestors"), 10)
 
             # Publish queued commands on the ROS thread to keep the UI responsive.
             self._command_timer = self._node.create_timer(
@@ -281,8 +307,12 @@ class RosBridge(QObject):
             print(f"[ROS] start error: {e}")
 
     def _spin(self):
+        from rclpy.executors import ExternalShutdownException
+
         try:
             self._executor.spin()
+        except ExternalShutdownException:
+            pass   # ROS was shut down from outside, e.g. by Ctrl-C
         except Exception as e:
             if self._ok:
                 print(f"[ROS] executor stopped unexpectedly: {e}")
@@ -323,6 +353,7 @@ class RosBridge(QObject):
     @Slot()
     def shutdown(self):
         """Release ROS entities in a background thread."""
+        self._cache_writer.flush()
         if not self._ok and self._node is None:
             return
         self._ok = False
@@ -434,7 +465,7 @@ class RosBridge(QObject):
             self.rmfOnlineChanged.emit()
 
     def _check_dispatch_timeouts(self):
-        """Fail queued tasks that receive no RMF task ID before the timeout."""
+        """Fail queued tasks that receive no RMF task ID, and cancels that RMF never answers."""
         now = time.monotonic()
         updated = False
         with self._task_lock:
@@ -451,6 +482,39 @@ class RosBridge(QObject):
                 updated = True
             if updated:
                 self._publish_tasks()
+            expired = [(rid, rmf_id) for rid, (rmf_id, deadline) in self._cancel_requests.items() if now > deadline]
+            # RMF's own task state can settle a cancel before its answer arrives.
+            settled = [(rid, t["state"]) for rid, (rmf_id, _) in self._cancel_requests.items()
+                       for t in self._tasks if t.get("rmf_id") == rmf_id and t.get("state") in _FINAL_STATES]
+
+        for request_id, state in settled:
+            self._finish_cancel(request_id, state == "cancelled", "" if state == "cancelled" else f"Task already {state}")
+        for request_id, _ in expired:
+            self._finish_cancel(request_id, False, "No answer from the dispatcher")
+
+    def _finish_cancel(self, request_id: str, success: bool, detail: str = ""):
+        """Settle a cancel request: RMF confirmed it, refused it, or did not answer."""
+        with self._task_lock:
+            pending = self._cancel_requests.pop(request_id, None)
+            if pending is None:
+                return   # Answered already, or not ours
+            for task in self._tasks:
+                if task.get("cancel_id") != request_id:
+                    continue
+                task.pop("cancel_id", None)
+                if success:
+                    task.pop("cancel", None)
+                    task["state"] = "cancelled"
+                    if task.get("end", "—") == "—":
+                        task["end"] = datetime.datetime.now().strftime("%I:%M:%S %p")
+                elif task.get("state") in _FINAL_STATES:
+                    task.pop("cancel", None)
+                else:
+                    task["cancel"] = "failed"
+                    task["cancel_error"] = detail or "Cancel refused"
+                break
+            self._publish_tasks()
+        self._result.emit(request_id, "cancel", success, "Cancelled" if success else (detail or "Cancel refused"))
 
     def _on_lane_states(self, msg):
         if self._fleet_names and msg.fleet_name not in self._fleet_names:
@@ -470,13 +534,20 @@ class RosBridge(QObject):
             self._active_conflicts = count
             self.trafficChanged.emit()
 
-    def _on_workcell_state(self, msg):
-        """Track dispenser/ingestor wait countdown for delivery tasks."""
+    def _on_workcell_state(self, msg, group: str = "dispensers"):
+        """Track the workcells RMF reports and the wait countdown of delivery tasks."""
         busy = bool(msg.request_guid_queue)
+        is_new = msg.guid not in self._workcell_wait
         self._workcell_wait[msg.guid] = {
             "busy": busy,
             "seconds_remaining": float(msg.seconds_remaining) if busy else 0.0,
+            "group": group,
         }
+        if is_new:
+            self._workcells_json = json.dumps({
+                g: sorted(guid for guid, w in self._workcell_wait.items() if w["group"] == g)
+                for g in ("dispensers", "ingestors")})
+            self.workcellsChanged.emit()
         updated = False
         with self._task_lock:
             for task in self._tasks:
@@ -528,6 +599,15 @@ class RosBridge(QObject):
         try:
             data = json.loads(msg.json_msg)
         except Exception:
+            return
+
+        with self._task_lock:
+            is_cancel_answer = msg.request_id in self._cancel_requests
+        if is_cancel_answer and isinstance(data, dict):
+            errors = data.get("errors") or []
+            detail = "; ".join(str(e.get("detail") or e.get("category") or e) if isinstance(e, dict) else str(e)
+                               for e in errors)
+            self._finish_cancel(msg.request_id, bool(data.get("success", False)), detail)
             return
 
         msg_type = data.get("type", "")
@@ -722,28 +802,76 @@ class RosBridge(QObject):
 
     # Build and submit task requests to RMF.
 
-    @Slot(str, str, int)
-    def dispatch(self, category: str, place: str, loops: int):
-        """Submit a task for RMF to assign within the fleet."""
-        self._dispatch(category, place, loops, "")
-
-    @Slot(str, str, int, str)
-    def dispatchToRobot(self, category: str, place: str, loops: int, robot: str):
-        """Submit a task directly to the selected robot."""
-        self._dispatch(category, place, loops, robot)
-
-    @Slot(str, str, str, str)
-    def dispatchDelivery(self, pickup_place: str, pickup_handler: str,
-                         dropoff_place: str, dropoff_handler: str):
-        """Delivery task: pick up at a dispenser, drop off at an ingestor."""
-        if not self._ok or self._task_pub is None:
-            print("[ROS] dispatch skipped — ROS not ready yet")
-            self.dispatchResult.emit(False, "ROS not connected — dispatch not sent")
-            return
-
+    @staticmethod
+    def _new_request_id(prefix: str = "eiu") -> str:
         import uuid
-        req_id = "eiu-" + uuid.uuid4().hex[:8]
-        payload = {"sku": "box", "quantity": 1}
+        return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+    def _refuse(self, request_id: str, kind: str, message: str) -> str:
+        """Report a request that could not be sent; the caller gets the id to match the result."""
+        print(f"[ROS] {kind} not sent: {message}")
+        self._result.emit(request_id, kind, False, message)
+        return request_id
+
+    def _ready(self) -> bool:
+        return self._ok and self._task_pub is not None
+
+    def _submit(self, request_id: str, envelope: dict, **fields):
+        """Queue a task request for RMF and add its row to the task table."""
+        self._command_queue.put((request_id, json.dumps(envelope)))
+        record = {
+            "id":          request_id,
+            "rmf_id":      "",           # Set when RMF returns a task ID
+            "date":        time.strftime("%d %b %Y"),
+            "requester":   REQUESTER,
+            "pickup":      "n/a",
+            "robot":       "—",
+            "start":       datetime.datetime.now().strftime("%I:%M:%S %p"),
+            "end":         "—",
+            "state":       "queued",
+            "phase":       "",
+            "_dispatched_at": time.monotonic(),   # Dispatch timeout start
+        }
+        record.update(fields)
+        with self._task_lock:
+            self._tasks.insert(0, record)
+            del self._tasks[TASK_HISTORY_LIMIT:]
+            self._publish_tasks()
+
+    @Slot(str, str, int, result=str)
+    def dispatch(self, category: str, place: str, loops: int) -> str:
+        """Submit a task for RMF to assign within the fleet."""
+        return self._dispatch(category, place, loops, "")
+
+    @Slot(str, str, int, str, result=str)
+    def dispatchToRobot(self, category: str, place: str, loops: int, robot: str) -> str:
+        """Submit a task directly to the selected robot."""
+        return self._dispatch(category, place, loops, robot)
+
+    @Slot(str, str, str, str, str, int, result=str)
+    def dispatchDelivery(self, pickup_place: str, pickup_handler: str,
+                         dropoff_place: str, dropoff_handler: str, sku: str, quantity: int) -> str:
+        """Delivery task: pick up at a dispenser, drop off at an ingestor."""
+        return self._dispatch_delivery(pickup_place, pickup_handler, dropoff_place, dropoff_handler,
+                                       sku, quantity, "")
+
+    @Slot(str, str, str, str, str, int, str, result=str)
+    def dispatchDeliveryToRobot(self, pickup_place: str, pickup_handler: str, dropoff_place: str,
+                                dropoff_handler: str, sku: str, quantity: int, robot: str) -> str:
+        """Delivery task submitted directly to the selected robot."""
+        return self._dispatch_delivery(pickup_place, pickup_handler, dropoff_place, dropoff_handler,
+                                       sku, quantity, robot)
+
+    def _dispatch_delivery(self, pickup_place: str, pickup_handler: str, dropoff_place: str,
+                           dropoff_handler: str, sku: str, quantity: int, robot: str) -> str:
+        request_id = self._new_request_id()
+        if not self._ready():
+            return self._refuse(request_id, "dispatch", "ROS not connected — dispatch not sent")
+        if robot and not self._robot_registered(robot):
+            return self._refuse(request_id, "dispatch",
+                                f"{robot} is not registered with RMF (offline) — task not sent")
+
+        payload = {"sku": sku, "quantity": int(quantity)}
         task_request = {
             "category": "delivery",
             "description": {
@@ -751,38 +879,23 @@ class RosBridge(QObject):
                 "dropoff": {"place": dropoff_place, "handler": dropoff_handler, "payload": payload},
             },
             "unix_millis_earliest_start_time": 0,
-            "requester": "eiu_fleet_ui",
+            "requester": REQUESTER,
         }
-        request_json = json.dumps({"type": "dispatch_task_request", "request": task_request})
-        self._command_queue.put((req_id, request_json))
+        envelope = ({"type": "robot_task_request", "robot": robot,
+                     "fleet": self._robot_fleet.get(robot, ""), "request": task_request}
+                    if robot else
+                    {"type": "dispatch_task_request", "request": task_request})
+        self._submit(request_id, envelope,
+                     pickup=pickup_place, destination=dropoff_place, robot=robot or "—",
+                     rounds=1, rounds_remaining=0,
+                     category="delivery", pickup_handler=pickup_handler, dropoff_handler=dropoff_handler)
         print(f"[ROS] delivery dispatch queued → {pickup_place} ({pickup_handler}) -> "
-              f"{dropoff_place} ({dropoff_handler}) req_id={req_id}")
-
-        rec = {
-            "id":          req_id,
-            "rmf_id":      "",
-            "date":        time.strftime("%d %b %Y"),
-            "requester":   "eiu_fleet_ui",
-            "pickup":      pickup_place,
-            "destination": dropoff_place,
-            "robot":       "—",
-            "start":       datetime.datetime.now().strftime("%I:%M:%S %p"),
-            "end":         "—",
-            "state":       "queued",
-            "rounds":           1,
-            "rounds_remaining": 0,
-            "phase":       "",
-            "category":    "delivery",
-            "pickup_handler":  pickup_handler,
-            "dropoff_handler": dropoff_handler,
-            "_dispatched_at": time.monotonic(),
-        }
-        with self._task_lock:
-            self._tasks.insert(0, rec)
-            del self._tasks[50:]
-            self._publish_tasks()
+              f"{dropoff_place} ({dropoff_handler}) robot={robot or '(any)'} req_id={request_id}")
 
         self._planned_dest = dropoff_place
+        self.pathChanged.emit()
+        self._result.emit(request_id, "dispatch", True, "Sent to the dispatcher")
+        return request_id
 
     @Slot(str)
     def closeLanes(self, indices_json: str):
@@ -808,26 +921,18 @@ class RosBridge(QObject):
         """True when a fleet adapter has reported this robot to RMF."""
         return any(r["name"] == robot for r in json.loads(self._robots_json))
 
-    def _dispatch(self, category: str, place: str, loops: int, robot: str):
-        if not self._ok or self._task_pub is None:
-            print("[ROS] dispatch skipped — ROS not ready yet")
-            self.dispatchResult.emit(False, "ROS not connected — dispatch not sent")
-            return
-
+    def _dispatch(self, category: str, place: str, loops: int, robot: str) -> str:
+        request_id = self._new_request_id()
+        if not self._ready():
+            return self._refuse(request_id, "dispatch", "ROS not connected — dispatch not sent")
         if robot and not self._robot_registered(robot):
-            print(f"[ROS] dispatch skipped — {robot} is not registered with RMF")
-            self.dispatchResult.emit(False, f"{robot} is not registered with RMF (offline) — task not sent")
-            return
-
-        import uuid
-
-        req_id  = "eiu-" + uuid.uuid4().hex[:8]
+            return self._refuse(request_id, "dispatch",
+                                f"{robot} is not registered with RMF (offline) — task not sent")
 
         # Start multi-round patrols at the robot's current waypoint.
         places = [place]
         if loops > 1:
-            robots = json.loads(self._robots_json)
-            home = self._nearest_wp_name(robots, robot)
+            home = self._nearest_wp_name(json.loads(self._robots_json), robot)
             if home and home != place:
                 places = [home, place]
 
@@ -835,73 +940,48 @@ class RosBridge(QObject):
             "category": category,
             "description": {"places": places, "rounds": int(loops)},
             "unix_millis_earliest_start_time": 0,
-            "requester": "eiu_fleet_ui",
+            "requester": REQUESTER,
         }
         # Send the task to the selected robot.
         envelope = ({"type": "robot_task_request", "robot": robot,
                      "fleet": self._robot_fleet.get(robot, ""), "request": task_request}
                     if robot else
                     {"type": "dispatch_task_request", "request": task_request})
-        request_json = json.dumps(envelope)
-        self._command_queue.put((req_id, request_json))
+        self._submit(request_id, envelope, destination=place, robot=robot or "—",
+                     rounds=int(loops), rounds_remaining=int(loops), category=category)
         print(f"[ROS] dispatch queued → place={place} loops={loops} "
-              f"robot={robot or '(any)'} req_id={req_id}")
-
-        rec = {
-            "id":          req_id,
-            "rmf_id":      "",           # Set when RMF returns a task ID
-            "date":        time.strftime("%d %b %Y"),
-            "requester":   "eiu_fleet_ui",
-            "pickup":      "n/a",
-            "destination": place,
-            "robot":       robot or "—",
-            "start":       datetime.datetime.now().strftime("%I:%M:%S %p"),
-            "end":         "—",
-            "state":       "queued",
-            "rounds":           int(loops),
-            "rounds_remaining": int(loops),
-            "phase":       "",
-            "category":    category,
-            "_dispatched_at": time.monotonic(),   # Dispatch timeout start
-        }
-        with self._task_lock:
-            self._tasks.insert(0, rec)
-            del self._tasks[50:]          # Keep the latest 50 tasks
-            self._publish_tasks()
+              f"robot={robot or '(any)'} req_id={request_id}")
 
         self._planned_dest = place
         self.pathChanged.emit()
-        self.dispatchResult.emit(True, "Dispatched")
+        self._result.emit(request_id, "dispatch", True, "Sent to the dispatcher")
+        return request_id
 
-    @Slot(str)
-    def cancel_task(self, rmf_id: str):
+    @Slot(str, result=str)
+    def cancel_task(self, rmf_id: str) -> str:
+        """Ask RMF to cancel a task; the row shows it as cancelling until RMF answers."""
+        request_id = self._new_request_id("eiu-cancel")
         if not rmf_id:
-            return
-        if not self._ok or self._task_pub is None:
-            self.dispatchResult.emit(False, "ROS not connected — cancel not sent")
-            return
+            return self._refuse(request_id, "cancel", "The task has no RMF id yet")
+        if not self._ready():
+            return self._refuse(request_id, "cancel", "ROS not connected — cancel not sent")
 
-        import uuid
-        req_id = "eiu-cancel-" + uuid.uuid4().hex[:8]
-        request_json = json.dumps({
-            "type":      "cancel_task_request",
-            "task_id":   rmf_id,
-            "requester": "eiu_fleet_ui",
-            "labels":    [],
-        })
-        self._command_queue.put((req_id, request_json))
-        print(f"[ROS] cancel_task queued → {rmf_id}")
-
-        # Mark cancellation immediately in the task list.
         with self._task_lock:
-            for task in self._tasks:
-                if task.get("rmf_id") == rmf_id and task["state"] in ("queued", "underway"):
-                    task["state"] = "cancelled"
-                    if task.get("end", "—") == "—":
-                        task["end"] = datetime.datetime.now().strftime("%I:%M:%S %p")
-                    break
+            task = next((t for t in self._tasks if t.get("rmf_id") == rmf_id), None)
+            if task is None or task.get("state") not in ("queued", "underway"):
+                return self._refuse(request_id, "cancel", "The task is not active")
+            if task.get("cancel") == "requested":
+                return self._refuse(request_id, "cancel", "A cancel is already waiting for RMF")
+            task["cancel"] = "requested"
+            task["cancel_id"] = request_id
+            task.pop("cancel_error", None)
+            self._cancel_requests[request_id] = (rmf_id, time.monotonic() + DISPATCH_TIMEOUT_SEC)
             self._publish_tasks()
-        self.dispatchResult.emit(True, "Cancelled")
+
+        envelope = {"type": "cancel_task_request", "task_id": rmf_id, "requester": REQUESTER, "labels": []}
+        self._command_queue.put((request_id, json.dumps(envelope)))
+        print(f"[ROS] cancel_task queued → {rmf_id} req_id={request_id}")
+        return request_id
 
     # Properties and signals exposed to QML.
 
@@ -913,6 +993,9 @@ class RosBridge(QObject):
 
     @Property(str, notify=tasksChanged)
     def tasksJson(self):    return self._tasks_json
+
+    @Property(str, notify=workcellsChanged)
+    def workcellsJson(self):   return self._workcells_json
 
     @Property(int, notify=trafficChanged)
     def blockedLanes(self):    return self._blocked_lanes

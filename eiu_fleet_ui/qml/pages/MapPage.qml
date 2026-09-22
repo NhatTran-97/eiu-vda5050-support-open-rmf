@@ -22,8 +22,7 @@ Rectangle {
     property string selectedRobotName: ""
     property url robotIconSource: ""
     property var robotIconUrls: ({})   // robot name -> icon url; falls back to robotIconSource
-    // Scales with the map panel like labelScale, so the marker and its rings
-    // don't stay a fixed pixel size while everything else around them grows.
+    // Scales with the map panel like labelScale, so the marker does not keep a fixed pixel size.
     readonly property real robotMarkerSize: 46 * labelScale
 
     function iconForRobot(name) {
@@ -110,7 +109,7 @@ Rectangle {
         return best
     }
 
-    // ── nav_graph.yaml editor (see graph_editor.py) ─────────────────────────
+    // nav_graph.yaml editor (see graph_editor.py)
     readonly property bool graphEditMode: {
         try { return graphEd.active } catch (e) { return false }
     }
@@ -705,8 +704,7 @@ Rectangle {
                 }
             }
 
-            // Draw one marker per robot. Disconnected robots stay visible at their
-            // last-known position, dimmed with a static outline instead of a live pulse.
+            // One marker per robot; disconnected robots stay at their last-known position, dimmed with a static outline.
             Repeater {
                 model: root.mapRobots
                 delegate: Item {
@@ -720,9 +718,7 @@ Rectangle {
                     transformOrigin: Item.TopLeft
                     scale: 1 / Math.max(0.001, overlay.displayScale)
 
-                    // Shared selection with Fleet Robots and the telemetry panel. Only shown
-                    // for online robots -- an offline robot marks "selected" by making its own
-                    // red ring bolder instead of stacking a second color on top of it.
+                    // Selection shared with Fleet Robots and the telemetry panel; an offline robot shows it as a bolder red ring.
                     Rectangle {
                         visible: robotMarker.selected && robotMarker.online
                         x: -width / 2; y: -height / 2
@@ -770,8 +766,7 @@ Rectangle {
                             PauseAnimation { duration: 200 }
                         }
                     }
-                    // Offline is routine (robot just not connected yet), not an active fault --
-                    // muted blue-gray instead of red, which stays reserved for real emergencies.
+                    // Offline is routine, not a fault: muted blue-gray, keeping red for real emergencies.
                     Rectangle {
                         visible: !robotMarker.online && robotMarker.selected
                         x: -width / 2; y: -height / 2
@@ -1078,7 +1073,7 @@ Rectangle {
         }
     }
 
-    // ── nav_graph.yaml editor controls ──────────────────────────────────────
+    // nav_graph.yaml editor controls
     property string graphStatusText: ""
     Connections {
         target: graphEd
@@ -1174,9 +1169,7 @@ Rectangle {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                // Discard every unsaved edit this session and reload the file from
-                // disk -- the file itself is only touched by SAVE AS, so this is a
-                // clean "undo everything, back to default" as long as you haven't saved.
+                // Discards all unsaved edits and reloads the file from disk; only SAVE AS writes it.
                 onClicked: {
                     root.pickMode = ""; root._laneFromIndex = -1
                     root.selectedGraphVertex = -1; root.selectedGraphLane = null

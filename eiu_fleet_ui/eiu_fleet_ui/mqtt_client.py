@@ -8,7 +8,7 @@ import time
 import paho.mqtt.client as mqtt
 from PySide6.QtCore import QObject, Signal, Property, Slot, QTimer
 
-from .config import FleetConfig, client_id
+from .config import FleetConfig, client_id, env_float
 from .vda5050 import traffic
 from .vda5050.graph import NavGraph, OffGraphTracker
 from .vda5050.state import parse_state
@@ -19,7 +19,7 @@ LEAF_STATE = "state"
 LEAF_ORDER = "order"
 LEAF_INSTANT = "instantActions"
 # Mark robot telemetry stale after this many seconds without a state message.
-STATE_STALE_AFTER_SEC = 5.0
+STATE_STALE_AFTER_SEC = env_float("EIU_STATE_STALE_AFTER", 5.0)
 TRAFFIC_LOG_SIZE = 200
 
 
@@ -36,6 +36,8 @@ class MqttClient(QObject):
 
         self._config = config
         self._connected = False
+        # Robots to follow; grows and shrinks as fleets register or drop robots.
+        self._robots = list(config.robots)
 
         # Protect data shared by the MQTT and Qt threads.
         self._lock = threading.Lock()
@@ -93,7 +95,7 @@ class MqttClient(QObject):
             self._client.connect_async(host, port, keepalive=60)
             self._client.loop_start()   # Start the MQTT worker
             print(f"[MQTT] connecting → {host}:{port} "
-                  f"({len(self._config.robots)} robot(s) from config)")
+                  f"({len(self._robots)} robot(s) from config)")
         except Exception as e:
             print(f"[MQTT] connect error: {e}")
 
@@ -111,16 +113,53 @@ class MqttClient(QObject):
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             self._connected = True
-            for robot in self._config.robots:
-                client.subscribe(robot.topic(LEAF_CONNECTION))
-                client.subscribe(robot.topic(LEAF_STATE))
-                client.subscribe(robot.topic(LEAF_ORDER))
-                client.subscribe(robot.topic(LEAF_INSTANT))
+            with self._lock:
+                robots = list(self._robots)
+            for robot in robots:
+                self._subscribe(robot)
             print(f"[MQTT] broker connected, subscribed to "
-                  f"{len(self._config.robots)} robot(s)' connection/state/order/instantActions topics")
+                  f"{len(robots)} robot(s)' connection/state/order/instantActions topics")
         else:
             print(f"[MQTT] connect failed rc={rc}")
         self.stateChanged.emit()
+
+    def _subscribe(self, robot):
+        for leaf in (LEAF_CONNECTION, LEAF_STATE, LEAF_ORDER, LEAF_INSTANT):
+            self._client.subscribe(robot.topic(leaf))
+
+    def _robot_for_topic(self, topic: str):
+        with self._lock:
+            return next((r for r in self._robots if topic.startswith(r.topic_prefix)), None)
+
+    def add_robot(self, robot):
+        """Follow a robot that a fleet registered while the dashboard runs."""
+        with self._lock:
+            if any(r.name == robot.name for r in self._robots):
+                return
+            self._robots.append(robot)
+            self._online[robot.name] = False
+            self._online_dirty = True
+        if self._connected:
+            self._subscribe(robot)
+        print(f"[MQTT] following {robot.name} ({robot.topic_prefix})")
+
+    def remove_robot(self, name: str):
+        """Stop following a robot and drop what was known about it."""
+        with self._lock:
+            robot = next((r for r in self._robots if r.name == name), None)
+            if robot is None:
+                return
+            self._robots.remove(robot)
+            for table in (self._online, self._telemetry, self._last_state_rx, self._last_state_epoch,
+                          self._stale_reported, self._state_sig, self._blocking, self._off_graph_state,
+                          self._orders):
+                table.pop(name, None)
+            self._online_dirty = True
+            self._telemetry_dirty = True
+        if self._connected:
+            for leaf in (LEAF_CONNECTION, LEAF_STATE, LEAF_ORDER, LEAF_INSTANT):
+                self._client.unsubscribe(robot.topic(leaf))
+        print(f"[MQTT] no longer following {name}")
 
     def _on_disconnect(self, client, userdata, rc):
         self._connected = False
@@ -132,7 +171,7 @@ class MqttClient(QObject):
         self.stateChanged.emit()
 
     def _on_message(self, client, userdata, msg):
-        robot = self._config.robot_for_topic(msg.topic)
+        robot = self._robot_for_topic(msg.topic)
         if robot is None:
             return
         try:
@@ -183,8 +222,9 @@ class MqttClient(QObject):
     def _flush(self):
         """Publish pending connection and telemetry changes to QML."""
         now = time.monotonic()
+        # Copy what changed under the lock; serialising it happens after the MQTT thread is free again.
         with self._lock:
-            online_payload = json.dumps(self._online) if self._online_dirty else None
+            online = dict(self._online) if self._online_dirty else None
             self._online_dirty = False
 
             # Check telemetry age on every refresh tick.
@@ -194,28 +234,25 @@ class MqttClient(QObject):
                 self._stale_reported = stale_now
                 self._telemetry_dirty = True
 
-            telemetry_payload = None
+            telemetry = None
             if self._telemetry_dirty:
-                telemetry_payload = json.dumps({
-                    name: self._export(name, s, stale_now.get(name, False))
-                    for name, s in self._telemetry.items()})
+                telemetry = {name: self._export(name, s, stale_now.get(name, False))
+                             for name, s in self._telemetry.items()}
             self._telemetry_dirty = False
 
-            traffic_payload = None
-            if self._traffic_dirty:
-                # Newest first; raw payloads are fetched separately via rawFor().
-                traffic_payload = json.dumps(
-                    [{k: v for k, v in e.items() if k != "raw"} for e in reversed(self._traffic)])
+            # Newest first; raw payloads are fetched separately via rawFor().
+            traffic = ([{k: v for k, v in e.items() if k != "raw"} for e in reversed(self._traffic)]
+                       if self._traffic_dirty else None)
             self._traffic_dirty = False
 
-        if online_payload is not None:
-            self._online_json = online_payload
+        if online is not None:
+            self._online_json = json.dumps(online)
             self.onlineChanged.emit()
-        if telemetry_payload is not None:
-            self._telemetry_json = telemetry_payload
+        if telemetry is not None:
+            self._telemetry_json = json.dumps(telemetry)
             self.telemetryChanged.emit()
-        if traffic_payload is not None:
-            self._traffic_json = traffic_payload
+        if traffic is not None:
+            self._traffic_json = json.dumps(traffic)
             self.trafficChanged.emit()
 
     def set_graph(self, graph: NavGraph):

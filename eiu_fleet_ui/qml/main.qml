@@ -5,7 +5,7 @@ import "components"
 
 ApplicationWindow {
     id: root
-    visible: true
+    visibility: Window.Maximized
     width: 1440
     height: 900
     minimumWidth: 1120
@@ -32,6 +32,10 @@ ApplicationWindow {
     }
     property var robots: []
     property var tasks: []
+    // Robots the fleet adapters found on the broker that no fleet has registered.
+    property var pendingRobots: []
+    // Robot names that two fleets both use.
+    property var nameConflicts: []
     // Waypoint names that are any robot's current underway-task destination.
     readonly property var activeDestinations: {
         var set = {}
@@ -103,6 +107,10 @@ ApplicationWindow {
     function reloadTraffic() { root.traffic = JSON.parse(mqtt.trafficJson) }
     function telemetryFor(name) { return root.telemetry[name] || null }
     function reloadSpeedLimits() { root.speedLimits = JSON.parse(control.speedLimitsJson) }
+    function reloadPendingRobots() {
+        root.pendingRobots = JSON.parse(registry.pendingJson)
+        root.nameConflicts = JSON.parse(registry.conflictsJson)
+    }
 
     // Include configured robots not yet present in /fleet_states.
     readonly property var displayRobots: {
@@ -189,6 +197,18 @@ ApplicationWindow {
         if (ros.blockedLanes > 0)
             items.push({ severity: "warning", robot: "", title: ros.blockedLanes + " lane(s) blocked",
                          detail: "A no-go zone is closing part of the map" })
+        // The dashboard reads robot state from one broker; fleets that name another one are silent to it.
+        var brokerClashes = []
+        try { brokerClashes = JSON.parse(cfg.brokerConflictsJson) } catch (e) { brokerClashes = [] }
+        if (brokerClashes.length > 0)
+            items.push({ severity: "warning", robot: "", title: "Fleets use different MQTT brokers",
+                         detail: brokerClashes.map(function(b) { return b.fleet + " → " + b.host + ":" + b.port }).join(" · ")
+                                 + " · robot state is read from the first only (EIU_MQTT_HOST picks one)" })
+        // Problems the fleet adapters report about themselves; they arrive in the same format.
+        var adapterItems = []
+        try { adapterItems = JSON.parse(adapterMetrics.attentionJson) } catch (e) { adapterItems = [] }
+        for (var m = 0; m < adapterItems.length; m++)
+            items.push(adapterItems[m])
         for (var i = 0; i < root.displayRobots.length; i++) {
             var r = root.displayRobots[i]
             var t = root.telemetryFor(r.name)
@@ -227,6 +247,21 @@ ApplicationWindow {
         if (failedTasks > 0)
             items.push({ severity: "warning", robot: "", title: failedTasks + " task(s) failed",
                          detail: "See Recent Tasks for details" })
+        for (var c = 0; c < root.nameConflicts.length; c++) {
+            var clash = root.nameConflicts[c]
+            items.push({ severity: "warning", robot: "", title: "Robot name '" + clash.name + "' is used twice",
+                         detail: "Fleet " + clash.fleet + " ignored; following " + clash.followed_fleet + ". Rename one of them." })
+        }
+        // Not a fault, so it never counts toward system health.
+        for (var p = 0; p < root.pendingRobots.length; p++) {
+            var found = root.pendingRobots[p]
+            var wasRemoved = found.removed_as !== null && found.removed_as !== undefined
+            items.push({ severity: "info", robot: "", pending: found,
+                         title: (wasRemoved ? "Removed robot is online again: " + found.removed_as.name + " (" + found.manufacturer + "/" + found.serial + ")"
+                                            : "New robot detected: " + found.manufacturer + "/" + found.serial),
+                         detail: wasRemoved ? "Register it again to restore it in " + found.removed_as.fleet
+                                            : (found.series ? found.series : "Type unknown") + " · not registered in any fleet" })
+        }
         return items
     }
 
@@ -296,7 +331,16 @@ ApplicationWindow {
         return parts.length > 0 ? parts.join(" · ") : "No robots"
     }
 
+    // What the State column shows: a pending or refused cancel replaces the RMF state.
+    function taskDisplayState(task) {
+        if (task.cancel === "requested") return "cancelling"
+        if (task.cancel === "failed") return "cancel failed"
+        return task.state
+    }
+
     function taskColor(state) {
+        if (state === "cancel failed")
+            return C.warn
         if (state === "completed" || state.indexOf("complet") >= 0)
             return C.success
         if (state === "failed" || state.indexOf("fail") >= 0)
@@ -325,6 +369,7 @@ ApplicationWindow {
         reloadTelemetry()
         reloadTraffic()
         reloadSpeedLimits()
+        reloadPendingRobots()
         // Children complete first, so FleetAnalytics has already auto-selected a robot.
         if (fleetAnalytics.selectedRobotName)
             root.selectedRobotName = fleetAnalytics.selectedRobotName
@@ -334,6 +379,16 @@ ApplicationWindow {
         target: ros
         function onRobotsChanged() { root.reloadRobots() }
         function onTasksChanged()  { root.reloadTasks() }
+    }
+
+    // A cancel is only done once RMF has said so; say when it did not.
+    Connections {
+        target: ros
+        function onDispatchResult(id, kind, ok, message) {
+            if (kind !== "cancel") return
+            robotToast.pending = null
+            robotToast.show(ok ? "Task cancelled." : "Cancel not done: " + message, ok ? "ok" : "error", "", ok ? 5000 : 12000)
+        }
     }
 
     Connections {
@@ -348,6 +403,45 @@ ApplicationWindow {
         function onSpeedLimitsChanged() { root.reloadSpeedLimits() }
     }
 
+    Connections {
+        target: registry
+        function onChanged() { root.reloadPendingRobots() }
+        function onNewRobotsDetected(keysJson) {
+            var keys = JSON.parse(keysJson)
+            var fresh = root.pendingRobots.filter(function (p) { return keys.indexOf(p.key) >= 0 })
+            if (fresh.length === 1) {
+                robotToast.pending = fresh[0]
+                var removedAs = fresh[0].removed_as
+                robotToast.show(removedAs
+                                ? "Removed robot " + removedAs.name + " is online again. Register it to restore it in " + removedAs.fleet + "."
+                                : "New robot detected: " + fresh[0].manufacturer + "/" + fresh[0].serial
+                                  + (fresh[0].series ? " (" + fresh[0].series + ")" : "")
+                                  + ". It is not registered in any fleet.", "info", "REGISTER", 20000)
+            } else if (fresh.length > 1) {
+                robotToast.pending = null
+                robotToast.show(fresh.length + " new robots detected. See Needs Attention to register them.",
+                                "info", "", 12000)
+            }
+        }
+        function onRequestResult(text) {
+            var result = JSON.parse(text)
+            // The dialog shows its own failures.
+            if (!result.ok && registerDialog.opened) return
+            robotToast.pending = null
+            if (result.ok && result.action === "remove")
+                robotToast.show("Robot " + result.name + " removed. RMF keeps it decommissioned until the fleet adapter restarts.",
+                                "warn", "", 12000)
+            else if (result.ok)
+                robotToast.show("Robot " + result.name + " registered in " + result.fleet
+                                + (result.persisted ? "." : ", but it could not be saved for the next start."),
+                                result.persisted ? "ok" : "warn", "", 9000)
+            else
+                robotToast.show((result.action === "remove" ? "Could not remove " : "Could not register ") + result.name + ": "
+                                + (result.errors.length > 0 ? result.errors[0].message : "no reason given"),
+                                "error", "", 12000)
+        }
+    }
+
     RobotControlDialog {
         id: controlDialog
     }
@@ -359,12 +453,37 @@ ApplicationWindow {
         anchors.centerIn: parent
     }
 
+    RegisterRobotDialog {
+        id: registerDialog
+        anchors.centerIn: parent
+    }
+
+    SystemMetricsDialog {
+        id: systemDialog
+        objectName: "systemDialog"
+        // Covers the dashboard, leaving the navigation rail.
+        railWidth: navRail.width
+    }
+
+    Toast {
+        id: robotToast
+        objectName: "robotToast"
+        property var pending: null
+        z: 100
+        // Bottom edge: the top is the title and the RMF/MQTT status chips.
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 24
+        anchors.horizontalCenter: parent.horizontalCenter
+        onActionTriggered: if (pending) registerDialog.openFor(pending)
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
 
         // Navigation sidebar.
         Rectangle {
+            id: navRail
             objectName: "navRail"
             Layout.preferredWidth: 218
             Layout.fillHeight: true
@@ -461,6 +580,13 @@ ApplicationWindow {
                             radius: 10
                             // Accent for the selected navigation item.
                             color: modelData.active ? "#3573C4" : "transparent"
+
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: modelData.label === "System"
+                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onClicked: systemDialog.open()
+                            }
 
                             Rectangle {
                                 visible: modelData.active
@@ -618,6 +744,45 @@ ApplicationWindow {
                                 font.bold: true
                                 anchors.verticalCenter: parent.verticalCenter
                             }
+                        }
+                    }
+
+                    // Whether the fleet adapters are there: found by their metrics topic, before any report arrives.
+                    Rectangle {
+                        Layout.preferredWidth: 150
+                        Layout.preferredHeight: 34
+                        radius: 17
+                        color: C.surface
+                        border.color: adapterMetrics.adaptersLevel === "ok" ? "#286A60"
+                                      : (adapterMetrics.adaptersLevel === "wait" ? C.border
+                                         : (adapterMetrics.adaptersLevel === "warn" ? "#5A4A26" : "#673044"))
+                        border.width: 1
+                        Row {
+                            anchors.centerIn: parent
+                            spacing: 7
+                            Rectangle {
+                                width: 7
+                                height: 7
+                                radius: 4
+                                color: adapterMetrics.adaptersLevel === "ok" ? C.success
+                                       : (adapterMetrics.adaptersLevel === "wait" ? C.textDim
+                                          : (adapterMetrics.adaptersLevel === "warn" ? C.warn : C.err))
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Text {
+                                text: adapterMetrics.adaptersLevel === "wait" ? "ADAPTERS …"
+                                      : "ADAPTERS " + adapterMetrics.adaptersFound + "/" + adapterMetrics.adaptersTotal
+                                color: C.text
+                                font.family: root.monoFontFamily
+                                font.pixelSize: 10
+                                font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: systemDialog.open()
                         }
                     }
 
@@ -1043,7 +1208,7 @@ ApplicationWindow {
                             Binding {
                                 target: mapLoader.item
                                 property: "robotIconUrls"
-                                value: robotIconUrls
+                                value: cfg.robotIconUrls
                                 when: mapLoader.status === Loader.Ready
                             }
                         }
@@ -1110,7 +1275,8 @@ ApplicationWindow {
                                                 width: attnCountText.implicitWidth + 14
                                                 height: 20
                                                 radius: 10
-                                                color: root.criticalAlertCount > 0 ? C.err : C.warn
+                                                color: root.criticalAlertCount > 0 ? C.err
+                                                       : (root.warningAlertCount > 0 ? C.warn : C.cyan)
                                                 Text {
                                                     id: attnCountText
                                                     anchors.centerIn: parent
@@ -1172,7 +1338,8 @@ ApplicationWindow {
                                                     Layout.preferredWidth: 8
                                                     Layout.preferredHeight: 8
                                                     radius: 4
-                                                    color: modelData.severity === "critical" ? C.err : C.warn
+                                                    color: modelData.severity === "critical" ? C.err
+                                                           : (modelData.severity === "info" ? C.cyan : C.warn)
                                                     Layout.alignment: Qt.AlignVCenter
                                                 }
                                                 ColumnLayout {
@@ -1192,6 +1359,32 @@ ApplicationWindow {
                                                         font.pixelSize: 11
                                                         elide: Text.ElideRight
                                                         Layout.fillWidth: true
+                                                    }
+                                                }
+                                                // A robot found on the broker that no fleet has registered.
+                                                Row {
+                                                    visible: modelData.pending !== undefined
+                                                    Layout.alignment: Qt.AlignVCenter
+                                                    spacing: 6
+                                                    Button {
+                                                        objectName: "registerRobotBtn"
+                                                        text: "REGISTER"
+                                                        implicitHeight: 28; leftPadding: 12; rightPadding: 12
+                                                        contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 11; font.bold: true
+                                                                             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                        background: Rectangle { radius: 8; color: parent.down ? C.accentDark : C.accent }
+                                                        onClicked: registerDialog.openFor(modelData.pending)
+                                                    }
+                                                    Button {
+                                                        objectName: "ignoreRobotBtn"
+                                                        text: "×"
+                                                        implicitWidth: 28; implicitHeight: 28
+                                                        contentItem: Text { text: parent.text; color: C.textDim; font.pixelSize: 16
+                                                                             horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                                                        background: Rectangle { radius: 8; color: parent.hovered ? C.surfaceAlt : "transparent" }
+                                                        ToolTip.visible: hovered
+                                                        ToolTip.text: "Ignore until the dashboard restarts"
+                                                        onClicked: registry.dismiss(modelData.pending.key)
                                                     }
                                                 }
                                                 // Separate hit target: opens diagnostics instead of just focusing.
@@ -1304,8 +1497,7 @@ ApplicationWindow {
                                             delegate: Rectangle {
                                                 id: robotRow
                                                 width: ListView.view.width
-                                                // How many lines a row needs varies (task/warnings/freshness
-                                                // are each conditional) -- size to content, not a fixed guess.
+                                                // Row height follows its content; task, warnings and freshness are each conditional.
                                                 height: Math.max(72 * fleetPanel.contentScale,
                                                                  nameColumn.implicitHeight + 20 * fleetPanel.contentScale)
                                                 radius: 10
@@ -1843,7 +2035,7 @@ ApplicationWindow {
                                                         Layout.minimumWidth: Layout.preferredWidth
                                                         Layout.preferredHeight: 22 * recentTasksPanel.tableScale
                                                         radius: height / 2
-                                                        property color badgeColor: root.taskColor(modelData.state)
+                                                        property color badgeColor: root.taskColor(root.taskDisplayState(modelData))
                                                         color: Qt.rgba(badgeColor.r, badgeColor.g, badgeColor.b, 0.12)
                                                         border.color: Qt.rgba(badgeColor.r, badgeColor.g, badgeColor.b, 0.45)
                                                         border.width: 1
@@ -1851,7 +2043,7 @@ ApplicationWindow {
                                                         Text {
                                                             anchors.centerIn: parent
                                                             width: parent.width - 8
-                                                            text: modelData.state.toUpperCase()
+                                                            text: root.taskDisplayState(modelData).toUpperCase()
                                                             color: parent.badgeColor
                                                             font.family: root.monoFontFamily
                                                             font.pixelSize: Math.max(11, 10 * recentTasksPanel.tableScale)
@@ -1868,7 +2060,8 @@ ApplicationWindow {
                                                         Button {
                                                             id: cancelTaskButton
                                                             anchors.fill: parent
-                                                            visible: modelData.state === "queued" || modelData.state === "underway"
+                                                            visible: (modelData.state === "queued" || modelData.state === "underway")
+                                                                     && modelData.cancel !== "requested"
                                                             padding: 0
                                                             contentItem: Text {
                                                                 text: "×"

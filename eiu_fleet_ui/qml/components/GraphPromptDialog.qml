@@ -2,9 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// One small modal reused by the map's graph editor for the three prompts it
-// needs: naming a new waypoint, confirming a lane's direction, and choosing
-// a save-as filename. `mode` picks which fields show.
+// Modal prompt of the graph editor: waypoint name, lane direction or save-as filename, chosen by `mode`.
 Dialog {
     id: dlg
 
@@ -54,7 +52,7 @@ Dialog {
             horizontalAlignment: Text.AlignHCenter
         }
 
-        // ── Vertex mode ──────────────────────────────────────────────────
+        // Vertex mode
         ColumnLayout {
             visible: dlg.mode === "vertex"
             Layout.fillWidth: true
@@ -84,7 +82,7 @@ Dialog {
             }
         }
 
-        // ── Lane mode ────────────────────────────────────────────────────
+        // Lane mode
         ColumnLayout {
             visible: dlg.mode === "lane"
             Layout.fillWidth: true
@@ -107,7 +105,7 @@ Dialog {
             }
         }
 
-        // ── Save mode ────────────────────────────────────────────────────
+        // Save mode
         ColumnLayout {
             visible: dlg.mode === "save"
             Layout.fillWidth: true
@@ -132,7 +130,7 @@ Dialog {
             }
         }
 
-        // ── Buttons ──────────────────────────────────────────────────────
+        // Buttons
         RowLayout {
             Layout.fillWidth: true
             Layout.margins: 18

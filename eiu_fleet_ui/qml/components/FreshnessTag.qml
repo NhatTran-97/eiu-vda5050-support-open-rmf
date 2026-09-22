@@ -1,10 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 
-// One consistent way to show data freshness everywhere it matters: a robot
-// row, the telemetry panel, later the System page. Same three states, same
-// wording, same "hover for the exact timestamp" affordance -- so an operator
-// never has to learn a second convention for the same fact.
+// Shows how fresh a value is in one of three states, with the exact timestamp on hover.
 Item {
     id: root
 

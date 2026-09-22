@@ -21,6 +21,14 @@ Popup {
 
     property string pickTarget: ""
 
+    // Only robots that were added while the adapter ran can be removed here; the others are in its config.
+    readonly property bool removable: {
+        // Reading fleetsJson makes the binding follow registry updates.
+        registry.fleetsJson
+        return registry.sourceOf(robotName) === "runtime"
+    }
+    readonly property string fleetOfRobot: JSON.parse(cfg.robotFleetsJson)[robotName] || ""
+
     function beginPick(target) {
         if (!mapLoader.item)
             return
@@ -94,9 +102,13 @@ Popup {
         }
     }
 
+    // Id of the go-to request sent from this drawer; other requests' results are not shown here.
+    property string goRequestId: ""
+
     Connections {
         target: ros
-        function onDispatchResult(ok, message) {
+        function onDispatchResult(id, kind, ok, message) {
+            if (id !== dlg.goRequestId) return
             dlg.lastAction = "go_to"
             dlg.lastOk = ok
             dlg.lastMessage = message
@@ -119,18 +131,21 @@ Popup {
         width: 300
         padding: 18
         property var onConfirm: null
+        property string titleText: ""
+        property string detailText: ""
+        property string confirmText: "CONFIRM"
 
         background: Rectangle { color: C.surfaceRaised; radius: 14; border.color: C.border; border.width: 1 }
 
         contentItem: ColumnLayout {
             spacing: 14
             Text {
-                text: "Re-localize " + dlg.robotName + " to (" + xField.text + ", " + yField.text + ", " + yawField.text + ")?"
+                text: confirmPopup.titleText
                 color: C.text; font.pixelSize: 14; font.bold: true
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             Text {
-                text: "This overrides its current believed pose immediately."
+                text: confirmPopup.detailText
                 color: C.textDim; font.pixelSize: 12
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
@@ -147,8 +162,9 @@ Popup {
                     onClicked: confirmPopup.close()
                 }
                 Button {
+                    objectName: "confirmActionBtn"
                     Layout.fillWidth: true
-                    text: "CONFIRM"
+                    text: confirmPopup.confirmText
                     implicitHeight: 38
                     contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 13; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
@@ -159,7 +175,17 @@ Popup {
         }
     }
 
-    contentItem: ColumnLayout {
+    contentItem: Flickable {
+        id: scroller
+        clip: true
+        contentWidth: width
+        contentHeight: column.implicitHeight
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar { }
+
+    ColumnLayout {
+        id: column
+        width: scroller.width
         spacing: 22
 
         RowLayout {
@@ -419,6 +445,9 @@ Popup {
                                              border.color: C.border; border.width: 1
                                              opacity: parent.enabled ? 1.0 : 0.65 }
                     onClicked: {
+                        confirmPopup.titleText = "Re-localize " + dlg.robotName + " to (" + xField.text + ", " + yField.text + ", " + yawField.text + ")?"
+                        confirmPopup.detailText = "This overrides its current believed pose immediately."
+                        confirmPopup.confirmText = "CONFIRM"
                         confirmPopup.onConfirm = function() {
                             control.initPosition(dlg.robotName, parseFloat(xField.text),
                                                   parseFloat(yField.text), parseFloat(yawField.text))
@@ -475,16 +504,57 @@ Popup {
                 Layout.fillWidth: true
                 text: goToCombo.currentText !== "" ? "GO → " + goToCombo.currentText : "GO"
                 implicitHeight: 42
-                enabled: goToCombo.currentText !== ""
+                enabled: goToCombo.currentText !== "" && cfg.goToCategory !== ""
                 contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 14; font.bold: true
                                      horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                      elide: Text.ElideRight }
                 background: Rectangle { radius: 10
                                          color: !parent.enabled ? C.border : (parent.down ? C.accentDark : C.accent) }
                 onClicked: {
-                    ros.dispatchToRobot(cfg.taskCategories.length > 0 ? cfg.taskCategories[0] : "loop",
-                                         goToCombo.currentText, 1, dlg.robotName)
+                    dlg.goRequestId = ros.dispatchToRobot(cfg.goToCategory, goToCombo.currentText, 1, dlg.robotName)
                     if (mapLoader.item) mapLoader.item.clearPickedWaypoint()
+                }
+            }
+        }
+
+        // Decommission a robot that was added while the adapter ran, and stop tracking it.
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            spacing: 6
+
+            Text { text: "FLEET MEMBERSHIP"; font.pixelSize: 12; font.bold: true
+                   font.letterSpacing: 0.8; color: C.textDim
+                   elide: Text.ElideRight; Layout.fillWidth: true }
+            Text {
+                Layout.fillWidth: true
+                text: dlg.removable
+                      ? "RMF cannot delete a robot. Removing it decommissions it and stops tracking it; register it again with the same settings to restore it, or restart the fleet adapter to free its name and charger."
+                      : "This robot is defined in the fleet's config file. Remove it there and restart the fleet adapter."
+                font.pixelSize: 11; color: C.textDim; wrapMode: Text.WordWrap
+            }
+            Button {
+                id: removeBtn
+                objectName: "removeRobotBtn"
+                Layout.fillWidth: true
+                text: "REMOVE FROM FLEET"
+                implicitHeight: 38
+                enabled: dlg.removable
+                contentItem: Text { text: removeBtn.text; color: removeBtn.enabled ? C.err : C.textDim
+                                     font.pixelSize: 13; font.bold: true
+                                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { radius: 10
+                                         color: Qt.alpha(C.err, removeBtn.enabled ? (removeBtn.down ? 0.30 : 0.10) : 0.0)
+                                         border.color: removeBtn.enabled ? C.err : C.border; border.width: 1 }
+                onClicked: {
+                    confirmPopup.titleText = "Remove " + dlg.robotName + " from " + dlg.fleetOfRobot + "?"
+                    confirmPopup.detailText = "It is decommissioned and no longer tracked. Take it off the floor first: RMF keeps planning around its last position, and its name, identity and charger stay reserved until the fleet adapter restarts."
+                    confirmPopup.confirmText = "REMOVE"
+                    confirmPopup.onConfirm = function() {
+                        registry.remove(dlg.fleetOfRobot, dlg.robotName)
+                        dlg.closeDrawer()
+                    }
+                    confirmPopup.open()
                 }
             }
         }
@@ -500,5 +570,6 @@ Popup {
             font.pixelSize: 12
             wrapMode: Text.WordWrap
         }
+    }
     }
 }

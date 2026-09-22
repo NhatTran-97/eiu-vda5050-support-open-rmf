@@ -12,21 +12,47 @@ Dialog {
     // Only online robots can take a task.
     property var robotNames: JSON.parse(cfg.robotNamesJson).filter(function (n) { return !!robotsOnline[n] })
     property string errorMessage: ""
+    // Id of the request this dialog sent; results of other requests are not ours.
+    property string requestId: ""
+    // Dispensers and ingestors RMF reports; the handler fields offer them.
+    property var workcells: JSON.parse(ros.workcellsJson)
+    // What the form still lacks before it can be sent; empty when complete.
+    readonly property string missingFields: {
+        var missing = []
+        if (catCombo.currentText === "delivery") {
+            if (pickupCombo.currentText === "") missing.push("pickup waypoint")
+            if (pickupHandlerField.editText.trim() === "") missing.push("dispenser")
+            if (dropoffCombo.currentText === "") missing.push("dropoff waypoint")
+            if (dropoffHandlerField.editText.trim() === "") missing.push("ingestor")
+            if (skuField.text.trim() === "") missing.push("payload SKU")
+        } else if (placeCombo.currentText === "") {
+            missing.push("waypoint")
+        }
+        return missing.join(", ")
+    }
 
-    onAboutToShow: robotCombo.currentIndex = 0
+    onAboutToShow: {
+        robotCombo.currentIndex = 0
+        dlg.requestId = ""
+        dlg.errorMessage = ""
+    }
 
     Connections {
         target: ros
-        function onDispatchResult(ok, message) {
+        function onDispatchResult(id, kind, ok, message) {
+            if (id !== dlg.requestId) return
             if (ok) { dlg.errorMessage = ""; dlg.close() }
             else    { dlg.errorMessage = message }
         }
+        function onWorkcellsChanged() { dlg.workcells = JSON.parse(ros.workcellsJson) }
     }
 
-    // Remember the selected patrol loop count across app restarts.
+    // Remember the selected patrol loop count and the delivery payload across app restarts.
     Settings {
         category: "newTaskDialog"
         property alias lastLoops: loopsSpin.value
+        property alias lastSku: skuField.text
+        property alias lastQuantity: quantitySpin.value
     }
 
     modal: true
@@ -127,7 +153,6 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
-            visible: catCombo.currentText !== "delivery"
             Text { text: "ASSIGN TO ROBOT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
             ComboBox {
                 id: robotCombo
@@ -207,12 +232,12 @@ Dialog {
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 4
                 Text { text: "DISPENSER (PICKUP HANDLER)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
-                TextField {
+                ComboBox {
                     id: pickupHandlerField
                     Layout.fillWidth: true
-                    text: "mock_dispenser_1"
+                    editable: true
+                    model: dlg.workcells.dispensers
                     font.pixelSize: 13
-                    color: C.text
                     background: Rectangle {
                         implicitHeight: 42; radius: 10
                         color: C.surfaceAlt; border.color: C.border; border.width: 1
@@ -241,15 +266,57 @@ Dialog {
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 4
                 Text { text: "INGESTOR (DROPOFF HANDLER)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
-                TextField {
+                ComboBox {
                     id: dropoffHandlerField
                     Layout.fillWidth: true
-                    text: "mock_ingestor_1"
+                    editable: true
+                    model: dlg.workcells.ingestors
                     font.pixelSize: 13
-                    color: C.text
                     background: Rectangle {
                         implicitHeight: 42; radius: 10
                         color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true; spacing: 12
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: 4
+                    Text { text: "PAYLOAD (SKU)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                    TextField {
+                        id: skuField
+                        Layout.fillWidth: true
+                        font.pixelSize: 13
+                        color: C.text
+                        placeholderText: "as the workcells expect it"
+                        placeholderTextColor: C.placeholderText
+                        background: Rectangle {
+                            implicitHeight: 42; radius: 10
+                            color: C.surfaceAlt; border.color: C.border; border.width: 1
+                        }
+                    }
+                }
+                ColumnLayout {
+                    spacing: 4
+                    Text { text: "QUANTITY"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                    SpinBox {
+                        id: quantitySpin
+                        from: 1; to: 999; value: 1
+                        editable: true
+                        font.pixelSize: 13
+                        contentItem: TextInput {
+                            text: quantitySpin.textFromValue(quantitySpin.value, quantitySpin.locale)
+                            color: C.text
+                            horizontalAlignment: Qt.AlignHCenter
+                            verticalAlignment: Qt.AlignVCenter
+                            readOnly: !quantitySpin.editable
+                            validator: quantitySpin.validator
+                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                        }
+                        background: Rectangle {
+                            implicitWidth: 100; implicitHeight: 42; radius: 10
+                            color: C.surfaceAlt; border.color: C.border; border.width: 1
+                        }
                     }
                 }
             }
@@ -261,6 +328,16 @@ Dialog {
             visible: dlg.errorMessage !== ""
             text: dlg.errorMessage
             color: C.err
+            font.pixelSize: 11
+            wrapMode: Text.WordWrap
+        }
+
+        Text {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            visible: dlg.missingFields !== ""
+            text: "Still needed: " + dlg.missingFields
+            color: C.textDim
             font.pixelSize: 11
             wrapMode: Text.WordWrap
         }
@@ -292,10 +369,7 @@ Dialog {
                 id: submitBtn
                 objectName: "submitBtn"
                 text: "DISPATCH TASK"
-                enabled: catCombo.currentText === "delivery"
-                        ? (pickupCombo.currentText !== "" && dropoffCombo.currentText !== ""
-                           && pickupHandlerField.text !== "" && dropoffHandlerField.text !== "")
-                        : placeCombo.currentText !== ""
+                enabled: dlg.missingFields === ""
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 contentItem: Text {
                     text: submitBtn.text; color: "#ffffff"; font.pixelSize: 13; font.bold: true
@@ -310,13 +384,18 @@ Dialog {
                 onClicked: {
                     dlg.errorMessage = ""
                     if (catCombo.currentText === "delivery") {
-                        ros.dispatchDelivery(pickupCombo.currentText, pickupHandlerField.text,
-                                             dropoffCombo.currentText, dropoffHandlerField.text)
+                        dlg.requestId = robotCombo.currentIndex > 0
+                            ? ros.dispatchDeliveryToRobot(pickupCombo.currentText, pickupHandlerField.editText.trim(),
+                                                          dropoffCombo.currentText, dropoffHandlerField.editText.trim(),
+                                                          skuField.text.trim(), quantitySpin.value, robotCombo.currentText)
+                            : ros.dispatchDelivery(pickupCombo.currentText, pickupHandlerField.editText.trim(),
+                                                   dropoffCombo.currentText, dropoffHandlerField.editText.trim(),
+                                                   skuField.text.trim(), quantitySpin.value)
                     } else if (robotCombo.currentIndex > 0) {
-                        ros.dispatchToRobot(catCombo.currentText, placeCombo.currentText, loopsSpin.value,
-                                            robotCombo.currentText)
+                        dlg.requestId = ros.dispatchToRobot(catCombo.currentText, placeCombo.currentText, loopsSpin.value,
+                                                            robotCombo.currentText)
                     } else {
-                        ros.dispatch(catCombo.currentText, placeCombo.currentText, loopsSpin.value)
+                        dlg.requestId = ros.dispatch(catCombo.currentText, placeCombo.currentText, loopsSpin.value)
                     }
                 }
             }

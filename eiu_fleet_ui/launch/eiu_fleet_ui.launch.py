@@ -29,13 +29,23 @@ def generate_launch_description():
         description="Optional EIU_ROS_DOMAIN_ID override; leave empty to use "
                     "this shell's ROS_DOMAIN_ID")
 
+    nav_graph_arg = DeclareLaunchArgument(
+        "nav_graph",
+        default_value="",
+        description="Optional EIU_NAV_GRAPH override: the nav graph file the map shows and the editor starts from; "
+                    "leave empty to use the one beside the adapter config")
+
     return LaunchDescription([
         fleet_adapters_arg,
         ros_domain_id_arg,
+        nav_graph_arg,
         SetEnvironmentVariable("EIU_FLEET_ADAPTERS", LaunchConfiguration("fleet_adapters")),
         SetEnvironmentVariable(
             "EIU_ROS_DOMAIN_ID", LaunchConfiguration("ros_domain_id"),
             condition=IfCondition(NotEqualsSubstitution(LaunchConfiguration("ros_domain_id"), ""))),
+        SetEnvironmentVariable(
+            "EIU_NAV_GRAPH", LaunchConfiguration("nav_graph"),
+            condition=IfCondition(NotEqualsSubstitution(LaunchConfiguration("nav_graph"), ""))),
         Node(
             package="eiu_fleet_ui",
             executable="eiu_fleet_ui",

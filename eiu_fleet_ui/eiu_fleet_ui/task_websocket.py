@@ -1,12 +1,35 @@
 """Receive RMF task and fleet events through a Qt WebSocket server."""
 
 import json
+import os
 from urllib.parse import urlparse
 
 import shiboken6
 from PySide6.QtCore import QObject, Signal, Property
 from PySide6.QtNetwork import QHostAddress
 from PySide6.QtWebSockets import QWebSocketServer
+
+
+# Port used when the adapter's URI names none.
+DEFAULT_PORT = 9000
+# Overrides the address the server listens on: an IP address, or "any" for every interface.
+BIND_ENV = "EIU_WS_BIND"
+
+
+def bind_address(uri: str, override: str | None = None) -> QHostAddress:
+    """Where to listen: the override, else the host of the adapter's URI (loopback names stay on loopback)."""
+    host = (override if override is not None else os.environ.get(BIND_ENV, "")).strip()
+    if host.lower() == "any":
+        return QHostAddress(QHostAddress.SpecialAddress.Any)
+    if not host:
+        host = urlparse(uri).hostname or ""
+    if host.lower() == "localhost":
+        return QHostAddress(QHostAddress.SpecialAddress.LocalHost)
+    address = QHostAddress(host)
+    if not address.isNull():
+        return address
+    # A host name says which machine the adapter reaches, not which of our interfaces to use.
+    return QHostAddress(QHostAddress.SpecialAddress.Any)
 
 
 class TaskEventServer(QObject):
@@ -29,17 +52,17 @@ class TaskEventServer(QObject):
     def listen(self):
         if not self._uri:
             return
-        parsed = urlparse(self._uri)
-        port = parsed.port or 9000
+        port = urlparse(self._uri).port or DEFAULT_PORT
+        address = bind_address(self._uri)
 
         self._server = QWebSocketServer(
             "eiu_fleet_ui task events", QWebSocketServer.SslMode.NonSecureMode, self)
         self._server.newConnection.connect(self._on_new_connection)
 
-        if self._server.listen(QHostAddress.SpecialAddress.Any, port):
-            print(f"[WS] listening on :{port} for {self._uri}")
+        if self._server.listen(address, port):
+            print(f"[WS] listening on {address.toString()}:{port} for {self._uri}")
         else:
-            print(f"[WS] listen on :{port} failed: {self._server.errorString()}")
+            print(f"[WS] listen on {address.toString()}:{port} failed: {self._server.errorString()}")
 
     def _on_new_connection(self):
         client = self._server.nextPendingConnection()

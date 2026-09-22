@@ -1,6 +1,7 @@
 """Load fleet identity, MQTT settings, and task categories from the adapter configuration."""
 
 import json
+import math
 import os
 import sys
 import uuid
@@ -8,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-from PySide6.QtCore import QObject, Property
+from PySide6.QtCore import QObject, Property, Signal
 
 ADAPTER_PACKAGE = "vda5050_fleet_adapter_full_control"
 
@@ -30,6 +31,12 @@ _CAPABILITY_TO_CATEGORY = {
 
 # Show only task categories the UI can create.
 _UI_SUPPORTED_CATEGORIES = ("patrol", "delivery")
+
+# Names the nav graph file to use instead of the one beside the adapter's config.
+NAV_GRAPH_ENV = "EIU_NAV_GRAPH"
+
+# The category whose RMF description is a list of places; a single-place one is a "go to".
+PLACES_CATEGORY = "patrol"
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,8 @@ class FleetConfig:
     nav_graph: Path | None
     websocket_uri: str | None  # None disables task events
     source: str  # Config source(s) for startup logs
+    # (fleet, host, port) per fleet when the fleets use different brokers; only the first is followed.
+    broker_conflicts: tuple[tuple[str, str, int], ...] = ()
 
     def robot_for_topic(self, topic: str) -> RobotIdentity | None:
         for r in self.robots:
@@ -180,12 +189,18 @@ def _load_one_fleet(candidates: list[tuple[Path, str, str]]) -> FleetConfig | No
     except (TypeError, ValueError):
         port = _DEFAULT_PORT
 
-    # Prefer the navigation graph loaded by the adapter.
+    # Prefer the navigation graph loaded by the adapter, unless one is named explicitly.
     nav_graph = None
     if path is not None:
         candidate_graph = path.parent.parent / "maps" / "nav_graph.yaml"
         if candidate_graph.is_file():
             nav_graph = candidate_graph
+    explicit_graph = os.environ.get(NAV_GRAPH_ENV)
+    if explicit_graph:
+        if Path(explicit_graph).is_file():
+            nav_graph = Path(explicit_graph)
+        else:
+            print(f"[CFG] {NAV_GRAPH_ENV}={explicit_graph!r} is not a file -- using {nav_graph}", file=sys.stderr)
 
     fleet_name = str(rmf.get("name") or "fleet")
     robots = _parse_robots(vda, interface, node_name, fleet_name)
@@ -220,7 +235,14 @@ def _merge_fleets(fleets: list[FleetConfig]) -> FleetConfig:
     nav_graph = None
     websocket_uri = None
     for f in fleets:
-        robots.extend(f.robots)
+        for robot in f.robots:
+            # The dashboard keys robots by name, so a second fleet's robot of the same name cannot be followed.
+            kept = next((r for r in robots if r.name == robot.name), None)
+            if kept is not None:
+                print(f"[CFG] robot '{robot.name}' is declared in fleets '{kept.fleet_name}' and "
+                      f"'{robot.fleet_name}' -- following the one in '{kept.fleet_name}' only", file=sys.stderr)
+                continue
+            robots.append(robot)
         for c in f.task_categories:
             if c not in task_categories:
                 task_categories.append(c)
@@ -228,6 +250,13 @@ def _merge_fleets(fleets: list[FleetConfig]) -> FleetConfig:
             nav_graph = f.nav_graph
         if websocket_uri is None:
             websocket_uri = f.websocket_uri
+
+    brokers = {(f.broker_host, f.broker_port) for f in fleets}
+    broker_conflicts = tuple((f.fleet_name, f.broker_host, f.broker_port) for f in fleets) if len(brokers) > 1 else ()
+    if broker_conflicts:
+        print("[CFG] the fleets name different MQTT brokers (" +
+              ", ".join(f"{fleet} -> {host}:{port}" for fleet, host, port in broker_conflicts) +
+              f") -- following {first.broker_host}:{first.broker_port} only; set EIU_MQTT_HOST to choose one", file=sys.stderr)
 
     return FleetConfig(
         fleet_name=" + ".join(f.fleet_name for f in fleets),
@@ -242,12 +271,12 @@ def _merge_fleets(fleets: list[FleetConfig]) -> FleetConfig:
         nav_graph=nav_graph,
         websocket_uri=websocket_uri,
         source="; ".join(f.source for f in fleets),
+        broker_conflicts=broker_conflicts,
     )
 
 
 def load_fleet_config() -> FleetConfig:
-    """Read every configured fleet adapter's config, falling back to
-    built-in defaults (with a warning) if none can be found."""
+    """Read every fleet adapter's config; fall back to built-in defaults (with a warning) if none is found."""
     fleets = []
     for candidates in _adapter_fleets():
         fleet = _load_one_fleet(candidates)
@@ -268,6 +297,21 @@ def load_fleet_config() -> FleetConfig:
     return _merge_fleets(fleets)
 
 
+def env_float(name: str, default: float) -> float:
+    """A positive number from the environment, else `default`."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        value = float("nan")
+    if not math.isfinite(value) or value <= 0:
+        print(f"[CFG] {name}={raw!r} is not a positive number -- using {default}", file=sys.stderr)
+        return default
+    return value
+
+
 def client_id(prefix: str = "eiu_fleet_ui") -> str:
     """Generate a unique MQTT client ID for a caller."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
@@ -276,9 +320,28 @@ def client_id(prefix: str = "eiu_fleet_ui") -> str:
 class FleetSettings(QObject):
     """Exposes the fleet config to QML as the context property `cfg`."""
 
-    def __init__(self, config: FleetConfig, parent=None):
+    robotsChanged = Signal()
+
+    def __init__(self, config: FleetConfig, icon_for=None, parent=None):
+        """`icon_for(identity)` gives a robot's map icon; robots come and go while the dashboard runs."""
         super().__init__(parent)
         self._c = config
+        self._robots = list(config.robots)
+        self._icon_for = icon_for
+
+    def add_robot(self, identity: RobotIdentity):
+        """Start listing a robot that a fleet registered."""
+        if any(r.name == identity.name for r in self._robots):
+            return
+        self._robots.append(identity)
+        self.robotsChanged.emit()
+
+    def remove_robot(self, name: str):
+        """Stop listing a robot."""
+        kept = [r for r in self._robots if r.name != name]
+        if len(kept) != len(self._robots):
+            self._robots = kept
+            self.robotsChanged.emit()
 
     @Property(str, constant=True)
     def fleetName(self):
@@ -288,22 +351,39 @@ class FleetSettings(QObject):
     def brokerLabel(self):
         return f"{self._c.broker_host}:{self._c.broker_port}"
 
+    @Property(str, constant=True)
+    def brokerConflictsJson(self):
+        """JSON list of {fleet, host, port} when the fleets name different MQTT brokers, else an empty list."""
+        return json.dumps([{"fleet": fleet, "host": host, "port": port} for fleet, host, port in self._c.broker_conflicts])
+
     @Property(list, constant=True)
     def taskCategories(self):
         return list(self._c.task_categories)
 
-    @Property(str, constant=True)
+    @Property(str, notify=robotsChanged)
     def robotNamesJson(self):
-        return json.dumps([r.name for r in self._c.robots])
+        return json.dumps([r.name for r in self._robots])
+
+    @Property(str, notify=robotsChanged)
+    def robotFleetsJson(self):
+        return json.dumps({r.name: r.fleet_name for r in self._robots})
+
+    @Property("QVariantMap", notify=robotsChanged)
+    def robotIconUrls(self):
+        """Robot name to its map icon URL."""
+        if self._icon_for is None:
+            return {}
+        return {r.name: self._icon_for(r) for r in self._robots}
 
     @Property(str, constant=True)
-    def robotFleetsJson(self):
-        return json.dumps({r.name: r.fleet_name for r in self._c.robots})
+    def goToCategory(self):
+        """Category used to send one robot to a waypoint; empty when the fleets do not offer it."""
+        return PLACES_CATEGORY if PLACES_CATEGORY in self._c.task_categories else ""
 
     @Property(bool, constant=True)
     def websocketEnabled(self):
         return self._c.websocket_uri is not None
 
-    @Property(str, constant=True)
+    @Property(str, notify=robotsChanged)
     def primaryRobot(self):
-        return self._c.robots[0].name if self._c.robots else ""
+        return self._robots[0].name if self._robots else ""

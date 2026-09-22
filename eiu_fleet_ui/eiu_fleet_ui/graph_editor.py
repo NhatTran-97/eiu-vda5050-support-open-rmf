@@ -1,18 +1,7 @@
-"""Interactive nav_graph.yaml editor: vertices + lanes, load/new/save.
+"""Nav graph editor: vertices and lanes, with load, new and save.
 
-Mirrors Open-RMF's own nav_graph.yaml schema (the same format
-traffic_editor produces) so a graph edited here loads straight into RMF:
-
-    building_name: <str>
-    doors: {}
-    levels:
-      <level_name>:
-        vertices: [[x, y, {name: ..., is_charger: true, ...}], ...]
-        lanes:    [[from_index, to_index, {...params}], ...]
-    lifts: {}
-
-A lane is one direction only -- a bidirectional connection is two entries
-(A->B and B->A), same convention as the files this project already ships.
+Uses Open-RMF's nav_graph.yaml schema (levels with vertices and lanes). A lane is one direction, so a
+bidirectional connection is two entries (A->B and B->A).
 """
 
 import json
@@ -20,6 +9,8 @@ from pathlib import Path
 
 import yaml
 from PySide6.QtCore import QObject, Signal, Slot, Property
+
+from .file_io import write_atomic
 
 
 class GraphEditor(QObject):
@@ -38,7 +29,7 @@ class GraphEditor(QObject):
         self._level_name = "level1"
         self._source_path = ""
 
-    # ── Mode ──────────────────────────────────────────────────────────────
+    # Mode
 
     @Slot(str, str)
     def loadFromFile(self, path: str, level_hint: str = ""):
@@ -103,7 +94,7 @@ class GraphEditor(QObject):
         self._active = False
         self.graphChanged.emit()
 
-    # ── Vertices ──────────────────────────────────────────────────────────
+    # Vertices
 
     @Slot(float, float, str, bool, result=int)
     def addVertex(self, x: float, y: float, name: str, is_charger: bool) -> int:
@@ -148,7 +139,7 @@ class GraphEditor(QObject):
         self._lanes = kept
         self.graphChanged.emit()
 
-    # ── Lanes ─────────────────────────────────────────────────────────────
+    # Lanes
 
     def _lane_exists(self, frm: int, to: int) -> bool:
         return any(l["from"] == frm and l["to"] == to for l in self._lanes)
@@ -178,7 +169,7 @@ class GraphEditor(QObject):
         if len(self._lanes) != before:
             self.graphChanged.emit()
 
-    # ── Save ──────────────────────────────────────────────────────────────
+    # Save
 
     @Slot(str, result=bool)
     def saveAs(self, path: str) -> bool:
@@ -218,7 +209,7 @@ class GraphEditor(QObject):
 
             out = Path(path)
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=None))
+            write_atomic(out, yaml.safe_dump(data, sort_keys=False, default_flow_style=None))
             self._source_path = path
             self.saveResult.emit(True, f"Saved {len(vertices_yaml)} waypoints, "
                                  f"{len(lanes_yaml)} lane entries to {path}")
@@ -227,7 +218,7 @@ class GraphEditor(QObject):
             self.saveResult.emit(False, f"Save failed: {e}")
             return False
 
-    # ── QML-facing state ─────────────────────────────────────────────────
+    # Exposed to QML
 
     @Property(bool, notify=graphChanged)
     def active(self):
@@ -247,8 +238,7 @@ class GraphEditor(QObject):
 
     @Property(str, notify=graphChanged)
     def lanesJson(self):
-        # One entry per unordered pair, with a bidir flag -- matches how
-        # MapPage already draws the live RMF graph (see root.edges).
+        # One entry per unordered pair with a bidir flag, as MapPage draws the live RMF graph.
         seen = {}
         order = []
         for l in self._lanes:

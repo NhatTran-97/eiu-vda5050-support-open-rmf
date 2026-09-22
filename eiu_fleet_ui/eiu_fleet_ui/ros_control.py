@@ -21,7 +21,8 @@ class RosControl(QObject):
 
     def __init__(self, config: FleetConfig, parent=None):
         super().__init__(parent)
-        self._config = config
+        # Robots to control; grows and shrinks as fleets register or drop robots.
+        self._robots = list(config.robots)
         self._node = None
 
         self._pause_clients = {}
@@ -31,7 +32,7 @@ class RosControl(QObject):
         self._param_clients = {}
 
         self._lock = threading.Lock()
-        self._speed_limits = {r.name: NO_SPEED_LIMIT for r in config.robots}
+        self._speed_limits = {r.name: NO_SPEED_LIMIT for r in self._robots}
         self._speed_limits_json = json.dumps(self._speed_limits)
 
         self._command_queue = queue.SimpleQueue()
@@ -39,33 +40,71 @@ class RosControl(QObject):
     # Set up robot control before the ROS executor starts.
 
     def attach(self, node):
+        self._node = node
+        for robot in list(self._robots):
+            self._create_endpoints(robot)
+
+        node.create_timer(0.05, self._drain_commands)
+        self._refresh_speed_limits()
+
+    def _create_endpoints(self, robot):
+        """Create the services, topics and parameter client of one robot on the adapter's node."""
         from std_srvs.srv import Trigger
         from std_msgs.msg import String
         from geometry_msgs.msg import PoseWithCovarianceStamped
         from rclpy.parameter_client import AsyncParameterClient
 
-        self._node = node
-        for robot in self._config.robots:
-            prefix = f"/{robot.adapter_node}/{robot.name}"
-            self._pause_clients[robot.name] = node.create_client(Trigger, f"{prefix}/pause")
-            self._resume_clients[robot.name] = node.create_client(Trigger, f"{prefix}/resume")
-            self._init_pos_pubs[robot.name] = node.create_publisher(
-                PoseWithCovarianceStamped, f"{prefix}/init_position", 1)
-            # Receive the adapter's position initialization result.
-            self._init_pos_result_subs[robot.name] = node.create_subscription(
-                String, f"{prefix}/init_position_result",
-                lambda msg, name=robot.name: self._on_init_position_result(name, msg), 1)
-            self._param_clients[robot.name] = AsyncParameterClient(node, robot.adapter_node)
+        node = self._node
+        prefix = f"/{robot.adapter_node}/{robot.name}"
+        self._pause_clients[robot.name] = node.create_client(Trigger, f"{prefix}/pause")
+        self._resume_clients[robot.name] = node.create_client(Trigger, f"{prefix}/resume")
+        self._init_pos_pubs[robot.name] = node.create_publisher(
+            PoseWithCovarianceStamped, f"{prefix}/init_position", 1)
+        # Receive the adapter's position initialization result.
+        self._init_pos_result_subs[robot.name] = node.create_subscription(
+            String, f"{prefix}/init_position_result",
+            lambda msg, name=robot.name: self._on_init_position_result(name, msg), 1)
+        self._param_clients[robot.name] = AsyncParameterClient(node, robot.adapter_node)
 
-        node.create_timer(0.05, self._drain_commands)
-        self._refresh_speed_limits()
+    def _destroy_endpoints(self, name: str):
+        node = self._node
+        for clients in (self._pause_clients, self._resume_clients):
+            client = clients.pop(name, None)
+            if client is not None:
+                node.destroy_client(client)
+        publisher = self._init_pos_pubs.pop(name, None)
+        if publisher is not None:
+            node.destroy_publisher(publisher)
+        subscription = self._init_pos_result_subs.pop(name, None)
+        if subscription is not None:
+            node.destroy_subscription(subscription)
+        self._param_clients.pop(name, None)
 
-    def _refresh_speed_limits(self):
+    def add_robot(self, robot):
+        """Control a robot that a fleet registered while the dashboard runs."""
+        with self._lock:
+            if any(r.name == robot.name for r in self._robots):
+                return
+            self._robots.append(robot)
+            self._speed_limits[robot.name] = NO_SPEED_LIMIT
+        self._command_queue.put(("add_robot", robot.name, robot))
+        self._publish_speed_limits()
+
+    def remove_robot(self, name: str):
+        """Stop controlling a robot."""
+        with self._lock:
+            self._robots = [r for r in self._robots if r.name != name]
+            self._speed_limits.pop(name, None)
+        self._command_queue.put(("remove_robot", name, None))
+        self._publish_speed_limits()
+
+    def _refresh_speed_limits(self, only=None):
         """Pull each robot's operator speed cap as currently set on the adapter."""
         from rcl_interfaces.msg import ParameterType
 
-        for robot in self._config.robots:
-            name = robot.name
+        with self._lock:
+            names = [r.name for r in self._robots if only is None or r.name == only]
+        for name in names:
 
             def _done(future, name=name):
                 try:
@@ -74,10 +113,14 @@ class RosControl(QObject):
                     return
                 if values and values[0].type == ParameterType.PARAMETER_DOUBLE:
                     with self._lock:
+                        if name not in self._speed_limits:
+                            return
                         self._speed_limits[name] = values[0].double_value
                     self._publish_speed_limits()
 
-            self._param_clients[name].get_parameters([SPEED_LIMIT_PREFIX + name], callback=_done)
+            client = self._param_clients.get(name)
+            if client is not None:
+                client.get_parameters([SPEED_LIMIT_PREFIX + name], callback=_done)
 
     def _publish_speed_limits(self):
         with self._lock:
@@ -110,7 +153,12 @@ class RosControl(QObject):
                 kind, name, payload = self._command_queue.get_nowait()
             except queue.Empty:
                 return
-            if kind == "pause":
+            if kind == "add_robot":
+                self._create_endpoints(payload)
+                self._refresh_speed_limits(only=name)
+            elif kind == "remove_robot":
+                self._destroy_endpoints(name)
+            elif kind == "pause":
                 self._call_trigger(self._pause_clients, name, "pause")
             elif kind == "resume":
                 self._call_trigger(self._resume_clients, name, "resume")

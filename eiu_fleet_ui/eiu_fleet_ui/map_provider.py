@@ -156,6 +156,5 @@ class MapProvider(QObject):
 
     @Property(str, notify=mapReady)
     def navGraphPath(self):
-        """Absolute path to the nav_graph.yaml this map was loaded from --
-        default source/target for the in-app graph editor."""
+        """Path of the nav_graph.yaml this map was loaded from; the graph editor's default source and target."""
         return str(self._nav_graph)

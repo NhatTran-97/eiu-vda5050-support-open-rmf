@@ -135,20 +135,33 @@ def _suppress_rcutils_spam():
 
     threading.Thread(target=_run, daemon=True, name="stderr-filter").start()
 
+from .adapter_metrics import AdapterMetrics
 from .colors import Colors
 from .config import FleetSettings, load_fleet_config
 from .graph_editor import GraphEditor
 from .map_provider import MapProvider
 from .mqtt_client import MqttClient
+from .robot_registry import RobotRegistry
 from .ros_bridge import RosBridge
 from .ros_control import RosControl
 from .task_websocket import TaskEventServer
 from .vda5050.graph import NavGraph
 
 
+def _manufacturer_icons(icons_dir: Path) -> dict:
+    """Manufacturer name to its map icon file, from icons/manufacturer_icons.json."""
+    try:
+        table = json.loads((icons_dir / "manufacturer_icons.json").read_text())
+    except (OSError, ValueError) as exc:
+        print(f"[UI] no manufacturer icon table ({exc})", file=sys.stderr)
+        return {}
+    return {maker: icons_dir / name for maker, name in table.items() if isinstance(name, str)}
+
+
 def build_engine(app: QApplication):
     """Create the backends and load main.qml without starting any I/O."""
     logo_dir = _resource_dir("logo")
+    icons_dir = _resource_dir("icons")
     eiu_logo_path = logo_dir / "eiu_logo.png"
     font_sans, font_mono = _load_fonts(app)
 
@@ -156,8 +169,14 @@ def build_engine(app: QApplication):
     fleet_cfg  = load_fleet_config()
     print(f"[CFG] fleet '{fleet_cfg.fleet_name}' from {fleet_cfg.source}")
 
+    # Choose each robot's map icon by manufacturer, with a generic fallback.
+    manufacturer_icon = _manufacturer_icons(icons_dir)
+
+    def robot_icon(robot) -> QUrl:
+        return QUrl.fromLocalFile(str(manufacturer_icon.get(robot.manufacturer, logo_dir / "robot.png")))
+
     colors     = Colors()
-    settings   = FleetSettings(fleet_cfg)
+    settings   = FleetSettings(fleet_cfg, icon_for=robot_icon)
     map_prov   = MapProvider(fleet_cfg)
     mqtt       = MqttClient(fleet_cfg)
     mqtt.set_graph(NavGraph(map_prov.waypoints(), json.loads(map_prov.lanesJson)))
@@ -165,9 +184,28 @@ def build_engine(app: QApplication):
     ros.set_fleet_names(list(fleet_cfg.fleet_names))
     ros.set_robot_fleets({r.name: r.fleet_name for r in fleet_cfg.robots})
     control    = RosControl(fleet_cfg)
+    registry   = RobotRegistry(fleet_cfg.robots)
+    adapter_metrics = AdapterMetrics(fleet_cfg.robots)
     ws_tasks   = TaskEventServer(fleet_cfg.websocket_uri)
     ws_tasks.taskStateUpdate.connect(ros.apply_task_state_update)
     graph_ed   = GraphEditor()
+
+    # Robots that fleets register or drop while the dashboard runs.
+    registry.robotAdded.connect(settings.add_robot)
+    registry.robotAdded.connect(mqtt.add_robot)
+    registry.robotAdded.connect(control.add_robot)
+    registry.robotAdded.connect(adapter_metrics.add_adapter)
+    registry.robotAdded.connect(lambda robot: ros.add_robot_fleet(robot.name, robot.fleet_name))
+    registry.robotRemoved.connect(settings.remove_robot)
+    registry.robotRemoved.connect(mqtt.remove_robot)
+    registry.robotRemoved.connect(control.remove_robot)
+    registry.robotRemoved.connect(ros.remove_robot_fleet)
+
+    def attach_ros(node):
+        """Create the ROS entities of the backends that share the bridge's node."""
+        control.attach(node)
+        registry.attach(node)
+        adapter_metrics.attach(node)
 
     # Expose backend objects to QML.
     engine = QQmlApplicationEngine()
@@ -180,6 +218,8 @@ def build_engine(app: QApplication):
     ctx.setContextProperty("control", control)   # Direct robot control
     ctx.setContextProperty("wsTasks", ws_tasks)  # Task state events
     ctx.setContextProperty("graphEd", graph_ed)  # nav_graph.yaml editor
+    ctx.setContextProperty("registry", registry)  # Robot registration
+    ctx.setContextProperty("adapterMetrics", adapter_metrics)  # Fleet adapter health
     ctx.setContextProperty("fontSans", font_sans)
     ctx.setContextProperty("fontMono", font_mono)
     ctx.setContextProperty(
@@ -189,20 +229,6 @@ def build_engine(app: QApplication):
     ctx.setContextProperty("eiuLogoUrl", QUrl.fromLocalFile(str(eiu_logo_path)))
 
     # Logos used by the metric cards.
-    icons_dir = _resource_dir("icons")
-
-    # Choose each robot's map icon by manufacturer, with a generic fallback.
-    _MANUFACTURER_ICON = {
-        "ROBOTIS": icons_dir / "tb3_logo.png",
-    }
-    ctx.setContextProperty(
-        "robotIconUrls",
-        {
-            r.name: QUrl.fromLocalFile(str(
-                _MANUFACTURER_ICON.get(r.manufacturer, logo_dir / "robot.png")))
-            for r in fleet_cfg.robots
-        },
-    )
     ctx.setContextProperty(
         "statusActiveIconUrl",
         QUrl.fromLocalFile(str(icons_dir / "active.png")),
@@ -217,13 +243,11 @@ def build_engine(app: QApplication):
     qml_file = _resource_dir("qml") / "main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))
 
-    # Keep backend objects alive for the lifetime of the QML engine -- a
-    # context property with no surviving Python reference gets garbage
-    # collected out from under QML (it then reads back as null), which is
-    # exactly what happened to graph_ed before it was added here.
+    # Keep the backend objects referenced for the life of the QML engine; an unreferenced context property is garbage collected.
     backends = SimpleNamespace(colors=colors, settings=settings, map_prov=map_prov,
                                mqtt=mqtt, ros=ros, control=control, ws_tasks=ws_tasks,
-                               graph_ed=graph_ed)
+                               graph_ed=graph_ed, registry=registry, adapter_metrics=adapter_metrics,
+                               attach_ros=attach_ros)
     return engine, backends
 
 
@@ -248,7 +272,7 @@ def main():
     # Start backend services after QML has loaded.
     ros.set_waypoints(map_prov.waypoints())
     mqtt.connect_broker()
-    ros.start(on_node_ready=control.attach)
+    ros.start(on_node_ready=backends.attach_ros)
     ws_tasks.listen()
     app.aboutToQuit.connect(mqtt.disconnect_broker)
     app.aboutToQuit.connect(ros.shutdown)   # Shut down ROS on exit

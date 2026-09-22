@@ -9,7 +9,7 @@ cancels, and directly controls robots through the same channels.
 ## Features
 
 | Area | What it does |
-|---|---|
+|:---:|---|
 | Live navigation map | Occupancy grid + nav-graph overlay, lane direction arrows, blocked-lane highlighting from live RMF traffic state, multi-robot markers with heading/pulse, planned-path overlay, click-to-pick a pose or waypoint |
 | Fleet Command dashboard | KPI cards (system health: Healthy/Degraded/Critical/Offline, fleet + VDA5050-connected count, traffic status, tasks), RMF/MQTT online indicators, a Needs Attention panel listing every active issue |
 | Active Robots panel | Search/filter, battery, round progress, live telemetry badges (not-localized, no-recent-data, safety/eStop/fatal-error) |
@@ -17,8 +17,12 @@ cancels, and directly controls robots through the same channels.
 | Recent Tasks table | Search/filter, underway-first sort, cancel button, dispatch confirmed synchronously with error feedback and a server-side timeout for a dispatcher that never responds |
 | New Task dialog | Fleet-wide patrol or delivery dispatch (destinations, handlers, loop count) — RMF bids it to whichever robot it picks; draggable |
 | Fleet Analytics | Battery/task-distribution gauges, current task progress, live distance-since-last-node, eStop/safety status per robot, delivery pickup/dropoff wait countdown, AGV-reported load while a delivery is underway |
+| System view | Per fleet adapter: robots online, oldest state age against the adapter's own offline limit, messages per second, drops, MQTT link, update-loop time, and charts of the last reports; the problems an adapter reports about itself also join Needs Attention |
 | Traffic awareness | Blocked lanes and active negotiation/conflict counts, read from real RMF topics, not inferred |
 | No-go zones | Drag a rectangle on the map; every lane it crosses is closed via RMF's own lane-closure mechanism. Multiple zones at once, click to select, delete to reopen |
+| Robot registration | Unregistered broker robots raise a Needs Attention entry; Register dialog shows the adapter's live checks; a removed-but-still-online robot is offered again to be restored |
+| Nav graph editor | Add/move waypoints and lanes on the map, *Save as* writes an `nav_graph.yaml`; nothing written until saved |
+| VDA5050 order & traffic | Selected robot's live order as route tiles + per-action blocking; filterable log of order/instantAction/state/connection messages with raw JSON |
 | Resilience | VDA5050 telemetry staleness detection, malformed-MQTT-payload hardening, dispatch/cancel confirmation with timeout |
 
 ## System architecture
@@ -74,6 +78,8 @@ flowchart TB
         ana["FleetAnalytics.qml"]
         newTask["NewTaskDialog.qml"]
         ctrl["RobotControlDialog.qml"]
+        reg["RegisterRobotDialog.qml\nToast.qml"]
+        vda["VdaOrderPanel.qml\nVdaTrafficPanel.qml"]
     end
 
     subgraph PY ["Python backend"]
@@ -81,25 +87,39 @@ flowchart TB
         mp["MapProvider\nmap.yaml + nav_graph.yaml"]
         rb["RosBridge\nfleet state · tasks · traffic"]
         rc["RosControl\npause/resume/speed/init_position"]
-        mc["MqttClient\nVDA5050 state + connection"]
-        vs["vda5050/state.py\npure parsing, no Qt"]
+        mc["MqttClient\nVDA5050 state + connection + traffic log"]
+        vs["vda5050/state.py + traffic.py\npure parsing, no Qt"]
         ws["TaskEventServer\nwebsocket, optional"]
+        rr["RobotRegistry\nregistration requests · registry · discovery"]
+        am["AdapterMetrics\nadapter metrics reports · charts · attention items"]
+        mm["metrics_model.py\npure: rates · series · attention"]
+        rmodel["registry_model.py\npure: followed robots · pending · suggestions"]
+        ge["graph_editor.py\nedit + save nav_graph.yaml"]
     end
 
-    cfg --> mp & rb & rc & mc & ws
+    cfg --> mp & rb & rc & mc & ws & rr
+    rr --> rmodel
+    am --> mm
+    am -->|metricsJson · attentionJson| main
+    rr -->|robotAdded · robotRemoved| rb & rc & mc & cfg
+    rr -->|fleetsJson · pendingJson · checkResult · requestResult| main & reg
+    reg -->|check · register · remove| rr
+    ctrl -->|remove| rr
 
     mp  -->|imagePath · wpJson · lanesJson · laneIndexMapJson| map
     rb  -->|robotsJson · tasksJson · blockedLanes · activeConflicts| main
     rb  -->|dispatchResult ok/err| newTask
     rb  -->|dispatchResult ok/err| ctrl
     rc  -->|speedLimitsJson · commandResult| ctrl
-    mc  -->|telemetryJson · robotsOnlineJson| main
+    mc  -->|telemetryJson · robotsOnlineJson · trafficJson| main & vda
     mc  --> vs
     ws  -->|taskStateUpdate| rb
     main --> map & ana
+    ana --> vda
     newTask -->|dispatch| rb
     ctrl -->|dispatchToRobot| rb
     map -->|closeLanes · openLanes| rb
+    map -->|loadFromFile · addVertex · addLane · saveAs| ge
     ctrl -->|pauseRobot · setSpeedLimit · initPosition| rc
 ```
 
@@ -136,6 +156,43 @@ finds the robot's nearest waypoint via `/fleet_states` and requests
 `[current_wp, destination]` with `rounds = loops`, so each round is real
 travel rather than a no-op at the destination.
 
+### Register a robot found on the broker
+
+```mermaid
+sequenceDiagram
+    participant FA as Fleet adapters
+    participant RR as RobotRegistry
+    participant UI as QML
+    actor Op as Operator
+
+    FA-->>RR: /robot_registry, /robot_discovery (latched snapshots)
+    RR->>UI: pendingJson, newRobotsDetected
+    UI->>Op: toast + Needs Attention entry with Register
+    Op->>UI: Register
+    UI->>RR: suggestFor(fleet, robot)
+    loop as the form is edited
+        UI->>RR: check(request)  (dry run)
+        RR->>FA: /robot_registration_requests
+        FA-->>RR: /robot_registration_results (errors, warnings)
+        RR->>UI: checkResult, ignored if the form has changed since
+    end
+    Op->>UI: Register robot (only enabled after a passing check)
+    UI->>RR: register(request)
+    RR->>FA: add
+    FA-->>RR: result ok + new /robot_registry
+    RR->>RR: robotAdded -> FleetSettings, MqttClient, RosControl, RosBridge
+```
+
+The dashboard holds no registration rules: it shows the adapter's verdict, so
+a rule changed in the adapter is changed everywhere at once. Suggestions
+(fleet by matching type, a name continuing the fleet's numbering, the first
+free charger) only prefill the form. A request that gets no answer within
+`REPLY_TIMEOUT_SEC` ends in a failure the dialog shows.
+
+A robot removed from a fleet but still online is offered again. `removed_as`
+tells the dialog its old fleet, name and charger, so it can prefill them —
+registering it unchanged restores it instead of creating a new one.
+
 ### Task cancellation
 
 ```mermaid
@@ -170,9 +227,11 @@ sequenceDiagram
 ## Process boundaries, at a glance
 
 | Boundary | Crossed by | Protocol |
-|---|---|---|
+|:---:|---|:---:|
 | UI ↔ RMF core | `/fleet_states`, `/task_api_requests`, `/task_api_responses`, `/dispatch_states`, `/lane_states`, `/lane_closure_requests`, `/rmf_traffic/negotiation_statuses`, `/dispenser_states`, `/ingestor_states` | ROS 2, domain 42 |
 | UI ↔ fleet adapter | `<robot>/pause`, `<robot>/resume` (services), `speed_limit.<robot>` (param), `<robot>/init_position` (+ `_result`) | ROS 2, domain 42 |
+| UI ↔ fleet adapter (metrics) | `/<adapter node>/metrics` (JSON in `std_msgs/String`, one report per `vda5050.metrics_period_s`) | ROS 2, domain 42 |
+| UI ↔ fleet adapter (registration) | `/robot_registry`, `/robot_discovery`, `/robot_registration_requests`, `/robot_registration_results` (JSON in `std_msgs/String`) | ROS 2, domain 42 |
 | UI ↔ robot | `<interface>/v2/<mfr>/<serial>/state`, `.../connection` | MQTT (Mosquitto) |
 | Fleet adapter ↔ robot | VDA5050 `order`, `state`, `connection`, `instantActions` | MQTT (Mosquitto) |
 | Fleet adapter → UI | `task_state_update`, `task_log_update` | WebSocket, optional |

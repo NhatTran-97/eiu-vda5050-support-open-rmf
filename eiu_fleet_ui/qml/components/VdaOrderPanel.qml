@@ -2,8 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-// VDA5050 order layer under the RMF task: order/update id, route progress,
-// the running action, and the details of a picked node.
+// VDA5050 order layer under the RMF task: order and update id, route progress, running action and picked node details.
 Rectangle {
     id: root
 
@@ -30,9 +29,8 @@ Rectangle {
     opacity: offline ? 0.6 : 1.0
     implicitHeight: column.implicitHeight + 20
 
-    // done = passed (sequenceId <= lastNodeSequenceId), current = first node still to
-    // traverse, pending = released ahead, horizon = not yet released. Ids can repeat in
-    // one order, so nodes are told apart by sequenceId.
+    // done = passed (sequenceId <= lastNodeSequenceId), current = first node to traverse, pending = released ahead,
+    // horizon = not yet released. Ids can repeat in an order, so nodes are told apart by sequenceId.
     readonly property var route: {
         var remaining = {}
         var firstSeq = null
@@ -130,7 +128,7 @@ Rectangle {
         id: column
         anchors.fill: parent
         anchors.margins: 10
-        spacing: 6
+        spacing: 12 * root.uiScale
 
         RowLayout {
             Layout.fillWidth: true
@@ -191,69 +189,63 @@ Rectangle {
             font.pixelSize: 12 * root.uiScale
         }
 
-        // Route: done -> current -> pending -> horizon (unreleased).
-        ScrollView {
+        // Route: done -> current -> pending -> horizon (unreleased); wraps onto more rows when it is long.
+        Flow {
             visible: root.hasOrder && root.route.length > 0
             Layout.fillWidth: true
-            Layout.preferredHeight: 52 * root.uiScale
-            clip: true
-            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
-
-            Row {
-                spacing: 4
-                Repeater {
-                    model: root.route
-                    delegate: Row {
-                        readonly property string tileState: modelData.state
-                        spacing: 4
-                        Rectangle {
-                            width: 74 * root.uiScale
-                            height: 44 * root.uiScale
-                            radius: 8
-                            anchors.verticalCenter: parent.verticalCenter
-                            opacity: tileState === "horizon" ? 0.55 : 1.0
-                            readonly property bool picked: root.shownIndex === index
-                            color: tileState === "current" ? Qt.rgba(0.09, 0.78, 0.89, 0.12)
-                                   : (picked ? Qt.rgba(1, 1, 1, 0.07) : "transparent")
-                            border.width: tileState === "current" || picked ? 2 : 1
-                            border.color: tileState === "done" ? C.success
-                                          : (tileState === "current" ? C.cyan
-                                             : (picked ? C.textDim : C.border))
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: root.pickedSeq = modelData.seq
+            spacing: 4
+            Repeater {
+                model: root.route
+                delegate: Row {
+                    readonly property string tileState: modelData.state
+                    spacing: 4
+                    Rectangle {
+                        width: 74 * root.uiScale
+                        height: 44 * root.uiScale
+                        radius: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        opacity: tileState === "horizon" ? 0.55 : 1.0
+                        readonly property bool picked: root.shownIndex === index
+                        color: tileState === "current" ? Qt.rgba(0.09, 0.78, 0.89, 0.12)
+                               : (picked ? Qt.rgba(1, 1, 1, 0.07) : "transparent")
+                        border.width: tileState === "current" || picked ? 2 : 1
+                        border.color: tileState === "done" ? C.success
+                                      : (tileState === "current" ? C.cyan
+                                         : (picked ? C.textDim : C.border))
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.pickedSeq = modelData.seq
+                        }
+                        Column {
+                            anchors.centerIn: parent
+                            spacing: 1
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: modelData.nodeId || ("#" + index)
+                                color: tileState === "done" ? C.success
+                                       : (tileState === "current" ? C.cyan : C.textDim)
+                                font.family: fontMono
+                                font.pixelSize: 11 * root.uiScale
+                                font.bold: true
+                                elide: Text.ElideRight
+                                width: 68 * root.uiScale
+                                horizontalAlignment: Text.AlignHCenter
                             }
-                            Column {
-                                anchors.centerIn: parent
-                                spacing: 1
-                                Text {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    text: modelData.nodeId || ("#" + index)
-                                    color: tileState === "done" ? C.success
-                                           : (tileState === "current" ? C.cyan : C.textDim)
-                                    font.family: fontMono
-                                    font.pixelSize: 11 * root.uiScale
-                                    font.bold: true
-                                    elide: Text.ElideRight
-                                    width: 68 * root.uiScale
-                                    horizontalAlignment: Text.AlignHCenter
-                                }
-                                Text {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    text: tileState === "done" ? "passed" : (tileState === "current" ? "next" : tileState)
-                                    color: C.textDim
-                                    font.pixelSize: 9 * root.uiScale
-                                }
+                            Text {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                text: tileState === "done" ? "passed" : (tileState === "current" ? "next" : tileState)
+                                color: C.textDim
+                                font.pixelSize: 9 * root.uiScale
                             }
                         }
-                        Text {
-                            visible: index < root.route.length - 1
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "→"
-                            color: C.textDim
-                            font.pixelSize: 13 * root.uiScale
-                        }
+                    }
+                    Text {
+                        visible: index < root.route.length - 1
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "→"
+                        color: C.textDim
+                        font.pixelSize: 13 * root.uiScale
                     }
                 }
             }
@@ -265,7 +257,7 @@ Rectangle {
             id: detailBox
             visible: root.hasOrder && root.shownNode !== null
             Layout.fillWidth: true
-            spacing: 3
+            spacing: 5
             Text {
                 width: parent.width
                 text: root.shownNode
@@ -309,5 +301,8 @@ Rectangle {
                 elide: Text.ElideRight
             }
         }
+
+        // Keep the content at the top when the panel is taller than it needs.
+        Item { Layout.fillHeight: true }
     }
 }

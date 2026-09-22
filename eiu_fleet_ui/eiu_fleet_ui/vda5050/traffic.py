@@ -65,8 +65,15 @@ def order_summary(order: dict) -> str:
 
 
 def instant_summary(msg: dict) -> str:
-    types = [str(a.get("actionType", "?")) for a in msg.get("actions") or [] if isinstance(a, dict)]
-    return ", ".join(types) if types else "(no actions)"
+    """Action types with their blocking type, e.g. 'cancelOrder · HARD'."""
+    actions = []
+    for a in msg.get("actions") or []:
+        if not isinstance(a, dict):
+            continue
+        kind = str(a.get("actionType", "?"))
+        blocking = a.get("blockingType")
+        actions.append(f"{kind} · {blocking}" if blocking else kind)
+    return ", ".join(actions) if actions else "(no actions)"
 
 
 def state_signature(s: RobotState) -> tuple:
