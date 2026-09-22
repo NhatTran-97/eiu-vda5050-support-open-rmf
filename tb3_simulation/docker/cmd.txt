@@ -2,3 +2,15 @@ docker exec -it tb3-simulation bash
 ros2 launch tb3_simulation tb3_simulation_nav2.launch.py
 ros2 launch tb3_simulation tb3_simulation_nav2.launch.py use_gz_gui:=True
 docker compose build
+
+
+docker compose \
+  -f ~/ros2_ws/src/tb3_simulation/docker/docker-compose.yaml \
+  down
+
+docker compose \
+  -f ~/ros2_ws/src/tb3_simulation/docker/docker-compose.yaml \
+  up -d --force-recreate
+
+docker exec -it tb3-simulation bash
+nvidia-smi

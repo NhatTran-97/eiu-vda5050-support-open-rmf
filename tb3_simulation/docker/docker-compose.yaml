@@ -5,9 +5,13 @@ services:
     tty: true
     container_name: tb3-simulation
     network_mode: host
+    gpus: all
 
     volumes:
-      - ${HOME}/simulation_ws:/home/eiu/sim_ws/
+      - ${HOME}/ros2_ws:/home/eiu/sim_ws/
+      - tb3-build:/home/eiu/build
+      - tb3-install:/home/eiu/install
+      - tb3-log:/home/eiu/log
       - /tmp/.X11-unix:/tmp/.X11-unix
       - ${HOME}/.config/open-robotics:/home/eiu/.config/open-robotics
       - ${HOME}/.cache/open-robotics:/home/eiu/.cache/open-robotics
@@ -19,6 +23,11 @@ services:
       - XAUTHORITY=/home/eiu/.Xauthority
       - QT_X11_NO_MITSHM=1
       - QT_XCB_GL_INTEGRATION=xcb_glx
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility,display
+      - __NV_PRIME_RENDER_OFFLOAD=1
+      - __GLX_VENDOR_LIBRARY_NAME=nvidia
+      - __VK_LAYER_NV_optimus=NVIDIA_only
       - TURTLEBOT3_MODEL=burger
       - ROS_DOMAIN_ID=1
 
@@ -29,3 +38,8 @@ services:
       - video
 
     privileged: true
+
+volumes:
+  tb3-build:
+  tb3-install:
+  tb3-log:

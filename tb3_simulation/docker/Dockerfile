@@ -68,7 +68,9 @@ RUN chmod +x /entrypoint.sh
 
 
 RUN userdel -r ubuntu 2>/dev/null || true && \
-    useradd -m -u 1000 eiu
+    useradd -m -u 1000 eiu && \
+    mkdir -p /home/eiu/build /home/eiu/install /home/eiu/log && \
+    chown -R eiu:eiu /home/eiu/build /home/eiu/install /home/eiu/log
 WORKDIR /home/eiu
 USER eiu
 
@@ -76,7 +78,7 @@ ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 ENV TURTLEBOT3_MODEL=burger
 
 RUN echo "source /opt/ros/jazzy/setup.bash" >> /home/eiu/.bashrc && \
-    echo "[ -f /home/eiu/sim_ws/install/setup.bash ] && source /home/eiu/sim_ws/install/setup.bash" >> /home/eiu/.bashrc && \
+    echo "[ -f /home/eiu/install/setup.bash ] && source /home/eiu/install/setup.bash" >> /home/eiu/.bashrc && \
     echo "export TURTLEBOT3_MODEL=burger" >> /home/eiu/.bashrc && \
     echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> /home/eiu/.bashrc
 

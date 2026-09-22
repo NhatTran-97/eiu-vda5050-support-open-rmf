@@ -45,6 +45,13 @@ if(NOT building_yaml)
   message(FATAL_ERROR "[tb3_simulation] Không tìm thấy file .building.yaml nào trong maps/")
 endif()
 
+# Install the source map assets first. Generated worlds and models below must
+# replace any checked-in copies so Gazebo loads matching model:// URIs.
+install(
+  DIRECTORY maps/
+  DESTINATION share/${PROJECT_NAME}/maps
+)
+
 foreach(path ${building_yaml})
 
   string(REGEX REPLACE "\\.building\\.yaml$" "" base ${path})
@@ -102,11 +109,6 @@ foreach(path ${building_yaml})
   )
 
 endforeach()
-
-install(
-  DIRECTORY maps/
-  DESTINATION share/${PROJECT_NAME}/maps
-)
 
 install(
   DIRECTORY launch/
