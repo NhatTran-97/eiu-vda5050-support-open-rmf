@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <array>
 #include <utility>
 #include <vector>
@@ -15,8 +16,13 @@
 
 #include "vda5050_fleet_adapter_full_control/mqtt/mqtt_client.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/state_handler.hpp"
+#include "vda5050_fleet_adapter_full_control/util/log_throttle.hpp"
+#include "vda5050_fleet_adapter_full_control/util/metrics.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/cancel_tracker.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/state_sequence.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/factsheet_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/order_handler.hpp"
+#include "vda5050_fleet_adapter_full_control/rmf/link_policy.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/transform.hpp"
 
 namespace vda5050_fleet_adapter_full_control::rmf {
@@ -73,17 +79,49 @@ struct RobotData
 class Connector
 {
 public:
-    Connector(rclcpp::Logger logger, std::string broker_url, std::string interface_name,
+    Connector(const rclcpp::Logger &logger, const std::string &broker_url, std::string interface_name,
               std::optional<std::string> username = std::nullopt,
-              std::optional<std::string> password = std::nullopt);
+              std::optional<std::string> password = std::nullopt,
+              const mqtt::MqttOptions &mqtt_options = {});
     ~Connector();
 
     void start();
     void shutdown();
 
     // Registers a robot and subscribes to its uplink topics.
-    void add_robot(const std::string &name, const std::string &manufacturer,
-                   const std::string &serial, const Transform &transform);
+    void add_robot(const std::string &name, const std::string &manufacturer,const std::string &serial, const Transform &transform);
+
+    // A robot seen on this interface that is not registered.
+    struct DiscoveredRobot
+    {
+        std::string manufacturer;
+        std::string serial;
+        bool connection_seen = false;
+        bool online = false;
+        std::optional<vda5050::ParsedFactsheet> factsheet;
+        bool has_state = false;
+        bool pose_initialized = false;
+        double x = 0.0;
+        double y = 0.0;
+        double theta = 0.0;
+        std::string map_id;
+        // Its factsheet and state topics are subscribed.
+        bool watched = false;
+    };
+
+    // Unregistered robots seen on this interface.
+    std::vector<DiscoveredRobot> discovered() const;
+    std::optional<DiscoveredRobot> find_discovered(const std::string &manufacturer, const std::string &serial) const;
+    // Subscribe to the factsheet and state of newly seen online robots; call it outside MQTT callbacks.
+    void watch_discovered();
+    // Factsheets of the registered robots that published one.
+    std::vector<vda5050::ParsedFactsheet> registered_factsheets() const;
+
+    // Entry point for every message received from the broker.
+    void handle_message(const std::string &topic, const std::string &payload);
+
+    // Message path health as JSON: state ages, message and drop counts, MQTT counts, latency since the last call.
+    nlohmann::json metrics();
 
     // Route waypoint in RMF coordinates.
     struct RoutePoint
@@ -95,14 +133,14 @@ public:
         std::optional<double> speed_limit;
     };
 
-    // Publish a multi-node order and track completion at its final waypoint.
+    // Outcome of navigate_route.
     struct NavigateResult
     {
         CommandStatus status = CommandStatus::queued;
         std::string order_id;
     };
 
-    // Release the requested route points; nullopt releases the full route.
+    // Publishes a multi-node order and tracks completion at its final waypoint; `released_count` limits the released points (nullopt releases all).
     NavigateResult navigate_route(const std::string &name,
                                   const std::vector<RoutePoint> &route,
                                   const std::string &map_id,
@@ -147,8 +185,7 @@ public:
     CommandStatus resume(const std::string &name);
 
     // Publish an instant action and return its ID, or an empty string if dispatch fails.
-    std::string execute_instant_action(
-        const std::string &name, const std::string &action_type,
+    std::string execute_instant_action(const std::string &name, const std::string &action_type,
         const nlohmann::json &parameters = nlohmann::json::object());
 
     // Requests an immediate state update.
@@ -160,27 +197,33 @@ public:
     // Reject hard violations instead of only warning.
     void set_strict_validation(bool strict);
 
+    // Consecutive stale states tolerated before the sender counts as restarted; 0 accepts all.
+    void set_stale_state_streak(int streak);
+
+    // How long to wait for a cancelOrder answer and how many times to send it; a zero timeout disables tracking.
+    void set_cancel_policy(const vda5050::CancelPolicy &policy);
+
+    // Time limits applied to each AGV: offline, stuck order and factsheet requests.
+    void set_link_policy(const LinkPolicy &policy);
+
     // Send initPosition in the robot frame and return its action ID, or an empty string on failure.
-    std::string init_position(const std::string &name, double x, double y,
-                              double theta, const std::string &map_id);
+    std::string init_position(const std::string &name, double x, double y, double theta, const std::string &map_id);
 
     // State received from the AGV.
     std::optional<RobotData> get_data(const std::string &name);
     // Whether the tracked order reached its final node and settled its actions.
     bool is_command_completed(const std::string &name);
 
-    // Detect an order the AGV has not acknowledged within the timeout.
-    bool is_order_stuck(const std::string &name, double timeout_s = 15.0) const;
+    // Detect an order the AGV has not acknowledged within the link policy's order timeout.
+    bool is_order_stuck(const std::string &name) const;
     // Last reported status of an instant action.
-    std::optional<std::string> get_action_state(const std::string &name,
-                                                const std::string &action_id);
+    std::optional<std::string> get_action_state(const std::string &name, const std::string &action_id);
     // Status and resultDescription of `action_id` as last reported by the AGV.
-    std::optional<std::pair<std::string, std::string>> get_action_result(
-        const std::string &name, const std::string &action_id);
+    std::optional<std::pair<std::string, std::string>> get_action_result(const std::string &name, const std::string &action_id);
     // Best-known map for `name`, without requiring the AGV to be localized.
     std::optional<std::string> get_known_map(const std::string &name);
-    // Whether the robot is connected and has recent state.
-    bool is_online(const std::string &name, double state_timeout_s = 10.0);
+    // Whether the robot is connected and has state newer than the link policy's state timeout.
+    bool is_online(const std::string &name);
 
 private:
     struct RobotContext
@@ -189,8 +232,8 @@ private:
         std::string manufacturer;
         std::string serial;
         std::string interface_name;
-        // MQTT topic suffix used to identify this robot.
-        std::string mqtt_needle;
+        // Serializes order, order update and cancel commands for this robot.
+        std::mutex order_mutex;
         Transform transform;
         // VDA5050 header counters are maintained independently per topic.
         int order_header_id = 0;
@@ -215,6 +258,10 @@ private:
         // Number of route points released in the last published order.
         std::size_t current_released_count = 0;
         std::optional<vda5050::ParsedState> last_state;
+        // Header of the last accepted state message.
+        vda5050::StateSequence state_sequence;
+        // The last cancelOrder sent that the AGV has not answered yet.
+        vda5050::CancelTracker cancel;
         // Visualization data is used only to refine pose and velocity.
         std::optional<vda5050::ParsedVisualization> last_visualization;
         std::chrono::steady_clock::time_point last_visualization_time{};
@@ -236,6 +283,7 @@ private:
         std::string last_loads_key;
         std::string last_maps_key;
         bool last_new_base_request = false;
+        bool last_paused = false;
 
         int next_order_header() { return order_header_id++; }
         int next_instant_actions_header() { return instant_actions_header_id++; }
@@ -244,8 +292,30 @@ private:
     // Subscribes to a robot's uplink topics.
     void subscribe_robot(const RobotContext &ctx);
 
-    // Find a robot by MQTT topic; the caller holds _mutex.
-    RobotContext *match_robot(const std::string &topic);
+    // The levels of an uplink topic "<interface>/v2/<manufacturer>/<serial>/<leaf>".
+    struct TopicLevels
+    {
+        std::string manufacturer;
+        std::string serial;
+        std::string leaf;
+    };
+
+    // Split a topic into its levels; empty unless it is an uplink topic of this interface.
+    std::optional<TopicLevels> parse_topic(const std::string &topic) const;
+
+    // Find the registered robot with the topic's manufacturer and serial; the caller holds _mutex.
+    std::shared_ptr<RobotContext> find_by_identity(const TopicLevels &levels) const;
+
+    // Resends an unanswered cancelOrder while the AGV still reports the order.
+    void resolve_pending_cancel(const std::string &name);
+
+    // Holds a robot's order lock; empty for an unknown robot. Take it before _mutex.
+    struct OrderLock
+    {
+        std::shared_ptr<RobotContext> robot;
+        std::unique_lock<std::mutex> lock;
+    };
+    OrderLock lock_orders(const std::string &name);
 
     // Publishes a serialized payload without throwing.
     CommandStatus publish_raw(const std::string &topic, const std::string &payload);
@@ -264,30 +334,89 @@ private:
     std::vector<vda5050::RouteWaypoint> to_waypoints(const RobotContext &ctx,  const std::vector<RoutePoint> &route,  const std::string &map_id) const;
 
     // Log violations; false means do not send. The caller holds _mutex.
-    bool order_allowed(RobotContext &ctx, const vda5050::RobotPose &base,
-                       const std::vector<vda5050::RouteWaypoint> &route,
+    bool order_allowed(RobotContext &ctx, const vda5050::RobotPose &base, const std::vector<vda5050::RouteWaypoint> &route,
                        const std::string &map_id, std::size_t node_count, std::size_t edge_count);
 
     // Report a map ID mismatch with the AGV; the caller holds _mutex.
     void warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_map_id) const;
 
-    // Report changes in cached operational state; the caller holds _mutex.
-    void report_state_changes(RobotContext &ctx);
+    // Keys that change when a state's errors, safety, information, loads or maps change.
+    struct StateKeys
+    {
+        std::string errors;
+        std::string safety;
+        std::string information;
+        std::string loads;
+        std::string maps;
+    };
+    static StateKeys make_state_keys(const vda5050::ParsedState &state);
+
+    // A log message gathered while holding _mutex and written once it is released.
+    struct LogLine
+    {
+        enum class Level
+        {
+            info,
+            warn,
+            error
+        };
+        Level level;
+        std::string text;
+    };
+    void write_log(const std::vector<LogLine> &log) const;
+
+    // Cache a state message and log what changed; the caller holds no lock.
+    void update_state(RobotContext &ctx, const nlohmann::json &raw);
+
+    // Record changes in cached operational state into `log`; the caller holds _mutex.
+    static void report_state_changes(RobotContext &ctx, const StateKeys &keys, std::vector<LogLine> &log);
+
+    // Logs a dropped stale state unless one was logged recently; the caller holds _mutex.
+    void report_stale_state(const RobotContext &ctx, const vda5050::ParsedState &state, std::vector<LogLine> &log);
 
     // Handle callbacks from the MQTT client.
     void on_connected();
     void on_connection_lost(const std::string &cause);
     void on_error(const std::string &context, const std::string &what);
-    void handle_message(const std::string &topic, const std::string &payload);
+
+    // Record a message from a robot that is not registered; the caller holds _mutex.
+    void record_unregistered(const TopicLevels &levels, const nlohmann::json &raw);
+
+    // Messages held back since the last log line about `key`; nullopt while the throttle holds this one back.
+    std::optional<std::size_t> admit_repeated(const std::string &key);
 
     rclcpp::Logger _logger;
     std::string _interface_name;
+    mqtt::TlsOptions _tls;
+    bool _has_credentials;
     mqtt::MqttClient _mqtt_client;
 
     // Protects robot state shared by MQTT, ROS, and update-loop threads.
     mutable std::mutex _mutex;
-    std::map<std::string, std::unique_ptr<RobotContext>> _robots;
+    std::map<std::string, std::shared_ptr<RobotContext>> _robots;
+    // The same robots keyed by "manufacturer/serial".
+    std::unordered_map<std::string, std::shared_ptr<RobotContext>> _robot_index;
+    // Unregistered robots keyed by "manufacturer/serial".
+    std::map<std::string, DiscoveredRobot> _discovered;
     bool _strict_validation = true;
+    int _stale_state_streak = vda5050::StateSequence::kDefaultStreakLimit;
+    vda5050::CancelPolicy _cancel_policy;
+    LinkPolicy _link_policy;
+    // Limits how often a problem that repeats with every message is logged.
+    util::LogThrottle _repeat_log;
+
+    // What the message path counts and times; see metrics().
+    struct Metrics
+    {
+        util::Counter rx_state, rx_visualization, rx_connection, rx_factsheet;
+        util::Counter bad_payload, bad_topic, unregistered, invalid_state, stale_state, log_suppressed;
+        util::Counter published, publish_failed;
+        // Time to handle one message, by kind, and how long it waited for _mutex.
+        util::Histogram handle_state, handle_other, mutex_wait;
+        // Age of a state message from its own timestamp; needs the AGV clock in step with this one.
+        util::Histogram state_transit;
+    };
+    Metrics _metrics;
 };
 
 }  // namespace vda5050_fleet_adapter_full_control::rmf

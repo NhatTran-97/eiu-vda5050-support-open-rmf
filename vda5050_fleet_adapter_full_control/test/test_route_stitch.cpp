@@ -165,3 +165,34 @@ TEST(RouteStitchTest, RejectsInconsistentInput) {
   EXPECT_FALSE(plan_stitch(kOld, 9, 0, kOld).has_value());
   EXPECT_FALSE(plan_stitch(kOld, 2, 3, kOld).has_value());
 }
+
+TEST(StitchedReleasedCountTest, UnchangedRouteKeepsTheHorizonTheAgvWasSent) {
+  // An unchanged route keeps the horizon last sent, whatever release is requested.
+  const auto plan = plan_stitch(kOld, 2, 0, kOld);
+  ASSERT_TRUE(plan.has_value());
+  ASSERT_TRUE(plan->unchanged);
+  EXPECT_EQ(stitched_released_count(*plan, 2, 5), 2u);
+}
+
+TEST(StitchedReleasedCountTest, ChangedRouteReleasesTheRequestedPoints) {
+  const auto plan = plan_stitch(kOld, 2, 0, {wp("A", 1), wp("B", 2), wp("X", 9), wp("Y", 10)});
+  ASSERT_TRUE(plan.has_value());
+  EXPECT_EQ(stitched_released_count(*plan, 2, 3), 3u);
+  // A request past the end of the route stops at the route.
+  EXPECT_EQ(stitched_released_count(*plan, 2, 9), 4u);
+}
+
+TEST(StitchedReleasedCountTest, NeverShrinksBelowTheSentHorizon) {
+  const auto plan = plan_stitch(kOld, 2, 0, {wp("A", 1), wp("B", 2), wp("X", 9), wp("Y", 10)});
+  ASSERT_TRUE(plan.has_value());
+  EXPECT_EQ(stitched_released_count(*plan, 3, 1), 3u);
+}
+
+TEST(StitchedReleasedCountTest, CountsFromTheStartOfTheNewRoute) {
+  // One leading point of the new route is already in the order and one point was passed.
+  StitchPlan plan;
+  plan.route = {wp("A", 1), wp("B", 2), wp("C", 3), wp("D", 4), wp("E", 5), wp("F", 6)};
+  plan.consumed = 1;
+  plan.leading = 1;
+  EXPECT_EQ(stitched_released_count(plan, 2, 4), 4u);
+}

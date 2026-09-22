@@ -11,6 +11,9 @@ namespace vda5050_fleet_adapter_full_control::vda5050 {
 
 inline constexpr const char *VERSION = "2.1.0";
 
+// Topic level that carries the protocol major version.
+inline constexpr const char *TOPIC_VERSION = "v2";
+
 inline constexpr const char *TOPIC_ORDER = "order";
 inline constexpr const char *TOPIC_INSTANT_ACTIONS = "instantActions";
 inline constexpr const char *TOPIC_STATE = "state";

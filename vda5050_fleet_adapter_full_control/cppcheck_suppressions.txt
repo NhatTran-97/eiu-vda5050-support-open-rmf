@@ -1,0 +1,6 @@
+# Suggestions to replace a loop with an <algorithm> call; the loops are kept where they read more directly.
+useStlAlgorithm
+# The order lock is a guard object: it is never read, and its destructor releases the lock.
+unreadVariable:*/src/rmf/connector.cpp
+# The order id is copied on purpose: the cancel tracker clears it while the verdict is judged.
+redundantCopyLocalConst:*/src/rmf/connector.cpp

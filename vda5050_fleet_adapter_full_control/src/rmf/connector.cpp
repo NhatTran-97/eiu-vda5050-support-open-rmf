@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <random>
+#include <stdexcept>
 #include <unistd.h>
 
 #include <rclcpp/logging.hpp>
@@ -18,9 +19,14 @@ namespace vda5050_fleet_adapter_full_control::rmf {
 
 namespace {
 
-constexpr std::chrono::seconds kFactsheetFirstWait{5};
-constexpr std::chrono::seconds kFactsheetRetryWait{20};
-constexpr int kFactsheetRequestAttempts = 3;
+// Shortest time between two log lines about the same problem that repeats with every message.
+constexpr std::chrono::seconds kRepeatedLogInterval{30};
+
+// Suffix that says how many similar messages a log line stands for.
+std::string suppressed_note(std::size_t held)
+{
+    return held == 0 ? std::string{} : " (" + std::to_string(held) + " similar message(s) suppressed)";
+}
 
 // Validate state fields needed for readiness, progress, and battery reporting.
 bool has_required_state_fields(const nlohmann::json &raw)
@@ -61,12 +67,34 @@ std::string make_mqtt_client_id(const std::string &interface_name)
     return "rmf_vda5050_adapter_" + interface_name + buf;
 }
 
+// Split "<interface>/v2/<manufacturer>/<serial>/<leaf>" into its five levels.
+std::vector<std::string> split_topic(const std::string &topic)
+{
+    std::vector<std::string> parts;
+    std::size_t start = 0;
+    while (true)
+    {
+        const auto slash = topic.find('/', start);
+        if (slash == std::string::npos)
+        {
+            parts.push_back(topic.substr(start));
+            return parts;
+        }
+        parts.push_back(topic.substr(start, slash - start));
+        start = slash + 1;
+    }
+}
+
 }  // namespace
 
-Connector::Connector(rclcpp::Logger logger, std::string broker_url, std::string interface_name, std::optional<std::string> username, std::optional<std::string> password)
-                            : _logger(std::move(logger)),
+Connector::Connector(const rclcpp::Logger &logger, const std::string &broker_url, std::string interface_name, std::optional<std::string> username, std::optional<std::string> password,
+                     const mqtt::MqttOptions &mqtt_options)
+                            : _logger(logger),
                                 _interface_name(std::move(interface_name)),
-                                _mqtt_client(std::move(broker_url), make_mqtt_client_id(_interface_name), std::move(username), std::move(password))
+                                _tls(mqtt_options.tls),
+                                _has_credentials(username.has_value() || password.has_value()),
+                                _mqtt_client(broker_url, make_mqtt_client_id(_interface_name), std::move(username), std::move(password), mqtt_options),
+                                _repeat_log(kRepeatedLogInterval)
 {
     _mqtt_client.set_on_connected([this]() { on_connected(); });
     _mqtt_client.set_on_connection_lost(
@@ -84,10 +112,27 @@ Connector::~Connector()
 
 void Connector::start()
 {
+    if (_tls.enabled)
+    {
+        RCLCPP_INFO(_logger, "[VDA5050] MQTT over TLS (CA %s, client certificate %s, hostname check %s)",
+                    _tls.ca_file.empty() ? "from the system" : _tls.ca_file.c_str(),
+                    _tls.client_cert.empty() ? "none" : _tls.client_cert.c_str(), _tls.verify_hostname ? "on" : "off");
+        if (!_tls.verify_hostname)
+        {
+            RCLCPP_WARN(_logger, "[VDA5050] the broker's certificate is not checked against its host name");
+        }
+    }
+    else if (_has_credentials)
+    {
+        RCLCPP_WARN(_logger, "[VDA5050] MQTT credentials are sent without TLS; set vda5050.mqtt.tls.enabled");
+    }
+
+    // Learn about robots that are not registered yet from their connection messages.
+    _mqtt_client.subscribe(vda5050::topic(_interface_name, "+", "+", vda5050::TOPIC_CONNECTION), 1);
     try
     {
         _mqtt_client.connect();
-        RCLCPP_INFO(_logger, "[VDA5050] MQTT connected");
+        RCLCPP_INFO(_logger, "[VDA5050] MQTT connecting");
     }
     catch (const std::exception &e)
     {
@@ -103,26 +148,39 @@ void Connector::shutdown()
 void Connector::add_robot(const std::string &name, const std::string &manufacturer,
                           const std::string &serial, const Transform &transform)
 {
-    auto ctx = std::make_unique<RobotContext>();
+    for (const std::string *part : {&manufacturer, &serial})
+    {
+        if (part->empty() || part->find_first_of("/+#") != std::string::npos)
+        {
+            throw std::invalid_argument("robot '" + name + "': manufacturer and serial must not be empty or contain '/', '+' or '#'");
+        }
+    }
+
+    auto ctx = std::make_shared<RobotContext>();
     ctx->name = name;
     ctx->manufacturer = manufacturer;
     ctx->serial = serial;
     ctx->interface_name = _interface_name;
-    ctx->mqtt_needle = "/" + manufacturer + "/" + serial + "/";
     ctx->transform = transform;
 
-    RobotContext *ctx_ptr = nullptr;
+    const RobotContext *ctx_ptr = nullptr;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         ctx_ptr = ctx.get();
+        _robot_index[manufacturer + "/" + serial] = ctx;
         _robots[name] = std::move(ctx);
+        _discovered.erase(manufacturer + "/" + serial);
     }
 
     subscribe_robot(*ctx_ptr);
     RCLCPP_INFO(_logger, "[VDA5050] robot '%s' -> %s/%s", name.c_str(),
                 manufacturer.c_str(), serial.c_str());
 
-    request_state(name);
+    // Request a state when already connected.
+    if (_mqtt_client.is_connected())
+    {
+        request_state(name);
+    }
 }
 
 Connector::NavigateResult Connector::navigate_route(const std::string &name,
@@ -135,6 +193,8 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         RCLCPP_WARN(_logger, "[VDA5050] navigate_route: empty route for '%s'", name.c_str());
         return {};
     }
+
+    const auto order_lock = lock_orders(name);
 
     const std::string order_id = vda5050::make_uuid();
     std::string base_id;
@@ -198,6 +258,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         {
             RobotContext &ctx = *it->second;
             ctx.current_order_id = order_id;
+            ctx.cancel.clear();
             // Track completion against the final route node.
             ctx.target_node_id = route.back().node_id;
             ctx.order_action_ids.clear();
@@ -225,15 +286,15 @@ std::vector<vda5050::RouteWaypoint> Connector::to_waypoints(
     for (const auto &p : route)
     {
         // Apply the lower of the graph and operator speed limits.
-        std::optional<double> speed_limit = p.speed_limit;
+        std::optional<double> limit = p.speed_limit;
         if (ctx.operator_speed_limit.has_value())
         {
-            speed_limit = speed_limit.has_value() ? std::min(*speed_limit, *ctx.operator_speed_limit): ctx.operator_speed_limit;
+            limit = limit.has_value() ? std::min(*limit, *ctx.operator_speed_limit): ctx.operator_speed_limit;
         }
 
-        warn_if_unroutable(ctx, p.node_id, p.x, p.y, p.theta, map_id, speed_limit);
+        warn_if_unroutable(ctx, p.node_id, p.x, p.y, p.theta, map_id, limit);
         const auto robot_pose = ctx.transform.to_robot(p.x, p.y, p.theta);
-        waypoints.push_back(vda5050::RouteWaypoint{p.node_id, {robot_pose[0], robot_pose[1], robot_pose[2]}, speed_limit});
+        waypoints.push_back(vda5050::RouteWaypoint{p.node_id, {robot_pose[0], robot_pose[1], robot_pose[2]}, limit});
     }
     return waypoints;
 }
@@ -304,6 +365,8 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         return result;
     };
 
+    const auto order_lock = lock_orders(name);
+
     std::string manufacturer, serial, interface_name, order_id, base_id, order_map;
     vda5050::RobotPose base{};
     std::vector<vda5050::RouteWaypoint> combined;
@@ -371,8 +434,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         stitch_index = plan->stitch_index;
         unchanged = plan->unchanged;
         combined = plan->route;
-        const std::size_t released_new = released_count.value_or(route.size());
-        new_released = std::max(ctx.current_released_count,    std::min(consumed + (released_new > leading ? released_new - leading : 0), combined.size()));
+        new_released = vda5050::stitched_released_count(*plan, ctx.current_released_count, released_count.value_or(route.size()));
         order_id = ctx.current_order_id;
         order_map = ctx.current_map_id;
         base_id = ctx.current_base_id;
@@ -432,6 +494,8 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
 
 CommandStatus Connector::release_more(const std::string &name, std::size_t released_count)
 {
+    const auto order_lock = lock_orders(name);
+
     std::string order_id, base_id, manufacturer, serial, interface_name, map_id;
     std::vector<vda5050::RouteWaypoint> waypoints;
     vda5050::RobotPose base{};
@@ -543,8 +607,12 @@ std::optional<double> Connector::speed_limit(const std::string &name) const
 
 CommandStatus Connector::stop(const std::string &name)
 {
+    const auto order_lock = lock_orders(name);
+
     std::string topic;
     nlohmann::json msg;
+    std::string cancelled_order;
+    std::string action_id;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         auto it = _robots.find(name);
@@ -554,7 +622,9 @@ CommandStatus Connector::stop(const std::string &name)
         }
         RobotContext &ctx = *it->second;
 
+        cancelled_order = ctx.current_order_id;
         msg = vda5050::build_cancel_order(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, blocking_type_for(ctx, "cancelOrder", "HARD"));
+        action_id = msg["actions"][0].value("actionId", std::string{});
         topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
     }
 
@@ -575,6 +645,14 @@ CommandStatus Connector::stop(const std::string &name)
             ctx.current_order_id.clear();
             ctx.target_node_id.clear();
             ctx.order_action_ids.clear();
+            if (_cancel_policy.confirm_timeout > std::chrono::seconds::zero() && !cancelled_order.empty())
+            {
+                ctx.cancel.sent(action_id, cancelled_order, std::chrono::steady_clock::now());
+            }
+            else
+            {
+                ctx.cancel.clear();
+            }
         }
     }
     RCLCPP_INFO(_logger, "[VDA5050] %s -> cancelOrder", name.c_str());
@@ -730,11 +808,111 @@ void Connector::set_strict_validation(bool strict)
     _strict_validation = strict;
 }
 
+void Connector::set_stale_state_streak(int streak)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _stale_state_streak = streak;
+}
+
+void Connector::set_cancel_policy(const vda5050::CancelPolicy &policy)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _cancel_policy = policy;
+}
+
+void Connector::set_link_policy(const LinkPolicy &policy)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _link_policy = policy;
+}
+
+void Connector::resolve_pending_cancel(const std::string &name)
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _robots.find(name);
+        if (it == _robots.end() || !it->second->cancel.pending())
+        {
+            return;
+        }
+    }
+
+    const auto order_lock = lock_orders(name);
+    std::string topic;
+    nlohmann::json message;
+    std::string resent_action_id;
+    std::string resend_note;
+    std::vector<LogLine> log;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _robots.find(name);
+        if (it == _robots.end() || !it->second->last_state.has_value())
+        {
+            return;
+        }
+        RobotContext &ctx = *it->second;
+        const std::string order = ctx.cancel.order_id();
+        const int attempts = ctx.cancel.attempts();
+        const std::string prefix = "[VDA5050] " + ctx.name + ": cancelOrder for order '" + order + "'";
+        const std::string waited = std::to_string(_cancel_policy.confirm_timeout.count()) + " s";
+
+        using Outcome = vda5050::CancelTracker::Outcome;
+        using Level = LogLine::Level;
+        const auto verdict = ctx.cancel.assess(*ctx.last_state, ctx.last_state_time, std::chrono::steady_clock::now(), _cancel_policy);
+        switch (verdict.outcome)
+        {
+            case Outcome::none:
+                break;
+            case Outcome::finished:
+                log.push_back({Level::info, prefix + " finished"});
+                break;
+            case Outcome::failed:
+                log.push_back({Level::warn, prefix + " was refused by the AGV: " + (verdict.detail.empty() ? "no reason given" : verdict.detail)});
+                break;
+            case Outcome::order_gone:
+                log.push_back({Level::info, prefix + ": the AGV no longer reports the order"});
+                break;
+            case Outcome::still_running:
+                log.push_back({Level::warn, prefix + " is still " + verdict.detail + " after " + waited});
+                break;
+            case Outcome::unanswered:
+                log.push_back({Level::error, prefix + " was not answered after " + std::to_string(attempts) +
+                                                 " attempt(s) and the AGV still reports the order"});
+                break;
+            case Outcome::resend:
+                message = vda5050::build_cancel_order(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial,
+                                                      blocking_type_for(ctx, "cancelOrder", "HARD"));
+                resent_action_id = message["actions"][0].value("actionId", std::string{});
+                topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
+                resend_note = prefix + " was not answered within " + waited + " while the AGV still reports the order; sending it again (attempt " +
+                              std::to_string(attempts + 1) + "/" + std::to_string(_cancel_policy.attempts) + ")";
+                break;
+        }
+    }
+
+    if (!topic.empty() && publish_raw(topic, message.dump()) == CommandStatus::queued)
+    {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            const auto it = _robots.find(name);
+            if (it != _robots.end())
+            {
+                it->second->cancel.resent(resent_action_id, std::chrono::steady_clock::now());
+            }
+        }
+        log.push_back({LogLine::Level::warn, resend_note});
+    }
+    write_log(log);
+}
+
 void Connector::poll(const std::string &name)
 {
+    resolve_pending_cancel(name);
+
     std::string topic;
     nlohmann::json message;
     int attempt = 0;
+    int attempts_allowed = 0;
     {
         std::lock_guard<std::mutex> lock(_mutex);
         auto it = _robots.find(name);
@@ -745,12 +923,13 @@ void Connector::poll(const std::string &name)
         RobotContext &ctx = *it->second;
 
         // Ask for the factsheet when the retained one never arrived.
-        if (ctx.factsheet.has_value() || ctx.connected != true ||    ctx.factsheet_requests >= kFactsheetRequestAttempts)
+        attempts_allowed = _link_policy.factsheet_request_attempts;
+        if (ctx.factsheet.has_value() || ctx.connected != true || ctx.factsheet_requests >= attempts_allowed)
         {
             return;
         }
         const auto now = std::chrono::steady_clock::now();
-        const auto wait = ctx.factsheet_requests == 0 ? kFactsheetFirstWait : kFactsheetRetryWait;
+        const std::chrono::duration<double> wait(ctx.factsheet_requests == 0 ? _link_policy.factsheet_first_wait_s : _link_policy.factsheet_retry_wait_s);
         if (now - ctx.factsheet_wait_since < wait)
         {
             return;
@@ -764,7 +943,7 @@ void Connector::poll(const std::string &name)
 
     if (publish_raw(topic, message.dump()) == CommandStatus::queued)
     {
-        RCLCPP_INFO(_logger, "[VDA5050] %s: no factsheet received -- sent factsheetRequest (%d/%d)",    name.c_str(), attempt, kFactsheetRequestAttempts);
+        RCLCPP_INFO(_logger, "[VDA5050] %s: no factsheet received -- sent factsheetRequest (%d/%d)", name.c_str(), attempt, attempts_allowed);
     }
 }
 
@@ -779,16 +958,37 @@ void Connector::subscribe_robot(const RobotContext &ctx)
     }
 }
 
-Connector::RobotContext *Connector::match_robot(const std::string &topic)
+std::optional<Connector::TopicLevels> Connector::parse_topic(const std::string &topic) const
 {
-    for (auto &[_, ctx] : _robots)
+    const auto parts = split_topic(topic);
+    if (parts.size() != 5 || parts[0] != _interface_name || parts[1] != vda5050::TOPIC_VERSION || parts[2].empty() ||
+        parts[3].empty())
     {
-        if (topic.find(ctx->mqtt_needle) != std::string::npos)
-        {
-            return ctx.get();
-        }
+        return std::nullopt;
     }
-    return nullptr;
+    return TopicLevels{parts[2], parts[3], parts[4]};
+}
+
+std::shared_ptr<Connector::RobotContext> Connector::find_by_identity(const TopicLevels &levels) const
+{
+    const auto it = _robot_index.find(levels.manufacturer + "/" + levels.serial);
+    return it == _robot_index.end() ? nullptr : it->second;
+}
+
+Connector::OrderLock Connector::lock_orders(const std::string &name)
+{
+    OrderLock guard;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _robots.find(name);
+        if (it == _robots.end())
+        {
+            return guard;
+        }
+        guard.robot = it->second;
+    }
+    guard.lock = std::unique_lock<std::mutex>(guard.robot->order_mutex);
+    return guard;
 }
 
 void Connector::warn_if_unroutable(const RobotContext &ctx, const std::string &dest_node_id,
@@ -893,9 +1093,11 @@ CommandStatus Connector::publish_raw(const std::string &topic, const std::string
 {
     if (!_mqtt_client.publish(topic, payload))
     {
+        _metrics.publish_failed.add();
         RCLCPP_WARN(_logger, "[VDA5050] publish failed, dropping message to %s", topic.c_str());
         return CommandStatus::transport_failed;
     }
+    _metrics.published.add();
     return CommandStatus::queued;
 }
 
@@ -920,6 +1122,20 @@ void Connector::request_state(const std::string &name)
 void Connector::on_connected()
 {
     RCLCPP_INFO(_logger, "[VDA5050] MQTT (re)connected");
+
+    // Ask every registered robot for a fresh state.
+    std::vector<std::string> names;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (const auto &[name, ctx] : _robots)
+        {
+            names.push_back(name);
+        }
+    }
+    for (const auto &name : names)
+    {
+        request_state(name);
+    }
 }
 
 void Connector::on_connection_lost(const std::string &cause)
@@ -929,51 +1145,240 @@ void Connector::on_connection_lost(const std::string &cause)
 
 void Connector::on_error(const std::string &context, const std::string &what)
 {
-    RCLCPP_WARN(_logger, "[VDA5050] %s: %s", context.c_str(), what.c_str());
+    if (const auto held = admit_repeated("error " + context))
+    {
+        RCLCPP_WARN(_logger, "[VDA5050] %s: %s%s", context.c_str(), what.c_str(), suppressed_note(*held).c_str());
+    }
 }
 
-void Connector::report_state_changes(RobotContext &ctx)
+std::optional<std::size_t> Connector::admit_repeated(const std::string &key)
 {
-    const auto &s = *ctx.last_state;
+    const auto held = _repeat_log.admit(key, std::chrono::steady_clock::now());
+    if (!held)
+    {
+        _metrics.log_suppressed.add();
+    }
+    return held;
+}
 
-    // Report changes in errors and pause state.
-    std::string errors_key;
-    for (const auto &e : s.errors)
+nlohmann::json Connector::metrics()
+{
+    std::size_t registered = 0;
+    std::size_t online = 0;
+    std::size_t without_state = 0;
+    std::size_t with_state = 0;
+    double age_max = 0.0;
+    double age_sum = 0.0;
+    double state_timeout_s = 0.0;
+    std::string oldest;
     {
-        errors_key += e.dump() + ";";
-    }
-    if (s.paused)
-    {
-        errors_key += "paused;";
-    }
-    if (errors_key != ctx.last_errors_key)
-    {
-        if (errors_key.empty())
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto now = std::chrono::steady_clock::now();
+        state_timeout_s = _link_policy.state_timeout_s;
+        registered = _robots.size();
+        for (const auto &[name, ctx] : _robots)
         {
-            RCLCPP_INFO(_logger, "[VDA5050] %s: errors cleared", ctx.name.c_str());
+            if (!ctx->last_state.has_value())
+            {
+                ++without_state;
+                continue;
+            }
+            const double age = std::chrono::duration<double>(now - ctx->last_state_time).count();
+            ++with_state;
+            age_sum += age;
+            if (age > age_max)
+            {
+                age_max = age;
+                oldest = name;
+            }
+            if (ctx->connected != false && age <= _link_policy.state_timeout_s)
+            {
+                ++online;
+            }
+        }
+    }
+    const auto rounded = [](double value) { return std::round(value * 1000.0) / 1000.0; };
+    const mqtt::MqttClient::Stats link = _mqtt_client.stats();
+
+    return {
+        {"robots",
+         {{"registered", registered},
+          {"online", online},
+          {"without_state", without_state},
+          {"state_timeout_s", state_timeout_s},
+          {"state_age_max_s", rounded(age_max)},
+          {"state_age_mean_s", rounded(with_state == 0 ? 0.0 : age_sum / static_cast<double>(with_state))},
+          {"oldest_state_robot", oldest}}},
+        {"rx",
+         {{"state", _metrics.rx_state.value()},
+          {"visualization", _metrics.rx_visualization.value()},
+          {"connection", _metrics.rx_connection.value()},
+          {"factsheet", _metrics.rx_factsheet.value()},
+          {"unregistered", _metrics.unregistered.value()}}},
+        {"dropped",
+         {{"bad_payload", _metrics.bad_payload.value()},
+          {"bad_topic", _metrics.bad_topic.value()},
+          {"invalid_state", _metrics.invalid_state.value()},
+          {"stale_state", _metrics.stale_state.value()},
+          {"oversize", link.oversize_dropped}}},
+        {"log_suppressed", _metrics.log_suppressed.value()},
+        {"published", {{"ok", _metrics.published.value()}, {"failed", _metrics.publish_failed.value()}}},
+        {"mqtt",
+         {{"connected", _mqtt_client.is_connected()},
+          {"connects", link.connects},
+          {"connections_lost", link.connections_lost},
+          {"errors", link.errors}}},
+        {"latency_us",
+         {{"handle_state", util::to_json(_metrics.handle_state.take())},
+          {"handle_other", util::to_json(_metrics.handle_other.take())},
+          {"mutex_wait", util::to_json(_metrics.mutex_wait.take())}}},
+        {"state_transit_us", util::to_json(_metrics.state_transit.take())},
+    };
+}
+
+Connector::StateKeys Connector::make_state_keys(const vda5050::ParsedState &state)
+{
+    StateKeys keys;
+    for (const auto &e : state.errors)
+    {
+        keys.errors += e.dump() + ";";
+    }
+    keys.safety = state.safety_state.e_stop + (state.safety_state.field_violation ? "|field" : "");
+    for (const auto &i : state.information)
+    {
+        keys.information += i.dump() + ";";
+    }
+    for (const auto &l : state.loads)
+    {
+        keys.loads += l.value("loadId", std::string{"?"}) + "(" + l.value("loadType", std::string{"?"}) + ");";
+    }
+    for (const auto &m : state.maps)
+    {
+        keys.maps += m.value("mapId", std::string{"?"}) + ":" + m.value("mapStatus", std::string{"?"}) + ";";
+    }
+    return keys;
+}
+
+void Connector::write_log(const std::vector<LogLine> &log) const
+{
+    for (const auto &line : log)
+    {
+        switch (line.level)
+        {
+            case LogLine::Level::info:
+                RCLCPP_INFO(_logger, "%s", line.text.c_str());
+                break;
+            case LogLine::Level::warn:
+                RCLCPP_WARN(_logger, "%s", line.text.c_str());
+                break;
+            case LogLine::Level::error:
+                RCLCPP_ERROR(_logger, "%s", line.text.c_str());
+                break;
+        }
+    }
+}
+
+void Connector::update_state(RobotContext &ctx, const nlohmann::json &raw)
+{
+    if (!has_required_state_fields(raw))
+    {
+        _metrics.invalid_state.add();
+        if (const auto held = admit_repeated("state " + ctx.name))
+        {
+            RCLCPP_WARN(_logger,"[VDA5050] %s: state message missing/mistyping a VDA5050-required "
+                        "field (orderId/lastNodeId/driving/nodeStates/edgeStates/"
+                        "actionStates/errors/operatingMode/safetyState.{eStop,fieldViolation}/"
+                        "batteryState.batteryCharge) "
+                        "-- rejecting rather than caching it with fallback values%s",
+                        ctx.name.c_str(), suppressed_note(*held).c_str());
+        }
+        return;
+    }
+
+    vda5050::ParsedState state(raw);
+    if (state.timestamp_ms.has_value())
+    {
+        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        _metrics.state_transit.record(std::chrono::milliseconds(now_ms - *state.timestamp_ms));
+    }
+    const StateKeys keys = make_state_keys(state);
+
+    std::vector<LogLine> log;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (ctx.state_sequence.is_stale(state.header_id, state.timestamp_ms, _stale_state_streak))
+        {
+            _metrics.stale_state.add();
+            report_stale_state(ctx, state, log);
         }
         else
         {
-            RCLCPP_ERROR(_logger, "[VDA5050] %s reports: %s", ctx.name.c_str(),errors_key.c_str());
+            ctx.last_state = std::move(state);
+            ctx.last_state_time = std::chrono::steady_clock::now();
+            if (!ctx.last_state->last_node_id.empty())
+            {
+                ctx.last_node_id = ctx.last_state->last_node_id;
+            }
+            report_state_changes(ctx, keys, log);
         }
-        ctx.last_errors_key = errors_key;
+    }
+    write_log(log);
+}
+
+void Connector::report_stale_state(const RobotContext &ctx, const vda5050::ParsedState &state, std::vector<LogLine> &log)
+{
+    const auto held = admit_repeated("stale " + ctx.name);
+    if (!held)
+    {
+        return;
+    }
+    log.push_back({LogLine::Level::warn, "[VDA5050] " + ctx.name + ": dropped " + std::to_string(*held + 1) +
+                                             " stale state message(s) -- headerId " +
+                                             std::to_string(state.header_id.value_or(0)) + " after " +
+                                             std::to_string(ctx.state_sequence.last_header_id().value_or(0))});
+}
+
+void Connector::report_state_changes(RobotContext &ctx, const StateKeys &keys, std::vector<LogLine> &log)
+{
+    const auto &s = *ctx.last_state;
+    const std::string prefix = "[VDA5050] " + ctx.name;
+    using Level = LogLine::Level;
+
+    // Report changes in pause state.
+    if (s.paused != ctx.last_paused)
+    {
+        log.push_back({Level::info, prefix + (s.paused ? " paused" : " resumed")});
+        ctx.last_paused = s.paused;
+    }
+
+    // Report changes in errors.
+    if (keys.errors != ctx.last_errors_key)
+    {
+        if (keys.errors.empty())
+        {
+            log.push_back({Level::info, prefix + ": errors cleared"});
+        }
+        else
+        {
+            log.push_back({Level::error, prefix + " reports: " + keys.errors});
+        }
+        ctx.last_errors_key = keys.errors;
     }
 
     // Report changes in safety state.
-    const std::string safety_key = s.safety_state.e_stop + (s.safety_state.field_violation ? "|field" : "");
-    if (safety_key != ctx.last_safety_key)
+    if (keys.safety != ctx.last_safety_key)
     {
         if (s.safety_state.triggered())
         {
-            RCLCPP_ERROR(_logger,"[VDA5050] %s SAFETY: eStop '%s'%s -- the AGV will not drive",
-                         ctx.name.c_str(), s.safety_state.e_stop.c_str(),
-                         s.safety_state.field_violation ? ", protective field violated" : "");
+            log.push_back({Level::error, prefix + " SAFETY: eStop '" + s.safety_state.e_stop + "'" +
+                                             (s.safety_state.field_violation ? ", protective field violated" : "") +
+                                             " -- the AGV will not drive"});
         }
         else if (!ctx.last_safety_key.empty())
         {
-            RCLCPP_INFO(_logger, "[VDA5050] %s safety cleared", ctx.name.c_str());
+            log.push_back({Level::info, prefix + " safety cleared"});
         }
-        ctx.last_safety_key = safety_key;
+        ctx.last_safety_key = keys.safety;
     }
 
     // Report changes in operating mode.
@@ -981,12 +1386,12 @@ void Connector::report_state_changes(RobotContext &ctx)
     {
         if (s.operable())
         {
-            RCLCPP_INFO(_logger, "[VDA5050] %s operating mode: %s", ctx.name.c_str(),s.operating_mode.c_str());
+            log.push_back({Level::info, prefix + " operating mode: " + s.operating_mode});
         }
         else
         {
-            RCLCPP_WARN(_logger,"[VDA5050] %s operating mode: %s -- under local control, it will ""not act on orders from this fleet adapter",
-                        ctx.name.c_str(), s.operating_mode.c_str());
+            log.push_back({Level::warn, prefix + " operating mode: " + s.operating_mode +
+                                            " -- under local control, it will not act on orders from this fleet adapter"});
         }
         ctx.last_mode_key = s.operating_mode;
     }
@@ -997,70 +1402,55 @@ void Connector::report_state_changes(RobotContext &ctx)
         {
             // Log horizon requests; the route schedule determines actual release.
             const std::size_t total = ctx.current_route.size();
+            const std::string order = ctx.current_order_id.empty() ? "(none)" : ctx.current_order_id;
+            const std::string counts = std::to_string(ctx.current_released_count) + "/" + std::to_string(total);
             if (ctx.current_released_count >= total)
             {
-                RCLCPP_WARN(_logger,"[VDA5050] %s requests a new base but order '%s' has no more "
-                            "route points to release (%zu/%zu already released) -- the AGV's "
-                            "own base tracking may have diverged from this adapter's",
-                            ctx.name.c_str(),
-                            ctx.current_order_id.empty() ? "(none)" : ctx.current_order_id.c_str(),
-                            ctx.current_released_count, total);
+                log.push_back({Level::warn, prefix + " requests a new base but order '" + order +
+                                                "' has no more route points to release (" + counts +
+                                                " already released) -- the AGV's own base tracking may have diverged "
+                                                "from this adapter's"});
             }
             else
             {
-                RCLCPP_INFO(_logger,"[VDA5050] %s requests a new base -- waiting at the release "
-                            "boundary of order '%s' (%zu/%zu route point(s) released)",
-                            ctx.name.c_str(), ctx.current_order_id.empty() ? "(none)" : ctx.current_order_id.c_str(), ctx.current_released_count, total);
+                log.push_back({Level::info, prefix + " requests a new base -- waiting at the release boundary of order '" +
+                                                order + "' (" + counts + " route point(s) released)"});
             }
         }
         ctx.last_new_base_request = s.new_base_request;
     }
 
     // Report VDA5050 informational messages.
-    std::string info_key;
-    for (const auto &i : s.information)
+    if (keys.information != ctx.last_info_key)
     {
-        info_key += i.dump() + ";";
-    }
-    if (info_key != ctx.last_info_key)
-    {
-        if (!info_key.empty())
+        if (!keys.information.empty())
         {
-            RCLCPP_INFO(_logger, "[VDA5050] %s info: %s", ctx.name.c_str(), info_key.c_str());
+            log.push_back({Level::info, prefix + " info: " + keys.information});
         }
-        ctx.last_info_key = info_key;
+        ctx.last_info_key = keys.information;
     }
 
     // Report the current load set.
-    std::string loads_key;
-    for (const auto &l : s.loads)
+    if (keys.loads != ctx.last_loads_key)
     {
-        loads_key += l.value("loadId", std::string{"?"}) + "(" + l.value("loadType", std::string{"?"}) + ");";
-    }
-    if (loads_key != ctx.last_loads_key)
-    {
-        RCLCPP_INFO(_logger, "[VDA5050] %s loads: %s", ctx.name.c_str(),loads_key.empty() ? "(empty)" : loads_key.c_str());
-        ctx.last_loads_key = loads_key;
+        log.push_back({Level::info, prefix + " loads: " + (keys.loads.empty() ? "(empty)" : keys.loads)});
+        ctx.last_loads_key = keys.loads;
     }
 
     // Report maps declared by the AGV.
-    std::string maps_key;
-    for (const auto &m : s.maps)
+    if (keys.maps != ctx.last_maps_key)
     {
-        maps_key += m.value("mapId", std::string{"?"}) + ":" + m.value("mapStatus", std::string{"?"}) + ";";
-    }
-    if (maps_key != ctx.last_maps_key)
-    {
-        if (!maps_key.empty())
+        if (!keys.maps.empty())
         {
-            RCLCPP_INFO(_logger, "[VDA5050] %s maps: %s", ctx.name.c_str(), maps_key.c_str());
+            log.push_back({Level::info, prefix + " maps: " + keys.maps});
         }
-        ctx.last_maps_key = maps_key;
+        ctx.last_maps_key = keys.maps;
     }
 }
 
 void Connector::handle_message(const std::string &topic, const std::string &payload)
 {
+    util::ScopedTimer timer(&_metrics.handle_other);
     nlohmann::json raw;
     try
     {
@@ -1068,46 +1458,46 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
     }
     catch (const std::exception &)
     {
-        RCLCPP_WARN(_logger, "[VDA5050] bad payload on %s", topic.c_str());
+        _metrics.bad_payload.add();
+        timer.retarget(nullptr);
+        if (const auto held = admit_repeated("payload " + topic))
+        {
+            RCLCPP_WARN(_logger, "[VDA5050] bad payload on %s%s", topic.c_str(), suppressed_note(*held).c_str());
+        }
         return;
     }
 
-    std::lock_guard<std::mutex> lock(_mutex);
-    RobotContext *ctx = match_robot(topic);
+    const auto levels = parse_topic(topic);
+    if (!levels)
+    {
+        _metrics.bad_topic.add();
+        timer.retarget(nullptr);
+        return;
+    }
+
+    const auto lock_requested = std::chrono::steady_clock::now();
+    std::unique_lock<std::mutex> lock(_mutex);
+    _metrics.mutex_wait.record(std::chrono::steady_clock::now() - lock_requested);
+    const std::shared_ptr<RobotContext> robot = find_by_identity(*levels);
+    RobotContext *ctx = robot.get();
     if (!ctx)
     {
+        _metrics.unregistered.add();
+        record_unregistered(*levels, raw);
         return;
     }
 
-    auto ends_with = [&](const char *leaf)
+    const std::string &leaf = levels->leaf;
+    if (leaf == vda5050::TOPIC_STATE)
     {
-        const std::string s = leaf;
-        return topic.size() >= s.size() && topic.compare(topic.size() - s.size(), s.size(), s) == 0;
-    };
-
-    if (ends_with(vda5050::TOPIC_STATE))
-    {
-        if (!has_required_state_fields(raw))
-        {
-            RCLCPP_WARN(_logger,"[VDA5050] %s: state message missing/mistyping a VDA5050-required "
-                        "field (orderId/lastNodeId/driving/nodeStates/edgeStates/"
-                        "actionStates/errors/operatingMode/safetyState.{eStop,fieldViolation}/"
-                        "batteryState.batteryCharge) "
-                        "-- rejecting rather than caching it with fallback values",
-                        ctx->name.c_str());
-            return;
-        }
-        ctx->last_state = vda5050::ParsedState(raw);
-        ctx->last_state_time = std::chrono::steady_clock::now();
-        if (!ctx->last_state->last_node_id.empty())
-        {
-            ctx->last_node_id = ctx->last_state->last_node_id;
-        }
-
-        report_state_changes(*ctx);
+        _metrics.rx_state.add();
+        timer.retarget(&_metrics.handle_state);
+        lock.unlock();
+        update_state(*ctx, raw);
     }
-    else if (ends_with(vda5050::TOPIC_VISUALIZATION))
+    else if (leaf == vda5050::TOPIC_VISUALIZATION)
     {
+        _metrics.rx_visualization.add();
         vda5050::ParsedVisualization viz(raw);
         // Ignore visualization messages without a usable pose.
         if (!viz.has_position())
@@ -1117,10 +1507,15 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
         ctx->last_visualization = std::move(viz);
         ctx->last_visualization_time = std::chrono::steady_clock::now();
     }
-    else if (ends_with(vda5050::TOPIC_CONNECTION))
+    else if (leaf == vda5050::TOPIC_CONNECTION)
     {
+        _metrics.rx_connection.add();
         const std::string conn = raw.value("connectionState", std::string{});
         const bool online = (conn == "ONLINE");
+        if (online)
+        {
+            ctx->state_sequence.reset();
+        }
         if (ctx->connected != online)
         {
             if (online)
@@ -1136,8 +1531,9 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
         }
         ctx->connected = online;
     }
-    else if (ends_with(vda5050::TOPIC_FACTSHEET))
+    else if (leaf == vda5050::TOPIC_FACTSHEET)
     {
+        _metrics.rx_factsheet.add();
         vda5050::ParsedFactsheet fs(raw);
         if (!fs.has_content())
         {
@@ -1291,7 +1687,7 @@ bool Connector::is_command_completed(const std::string &name)
     return false;
 }
 
-bool Connector::is_order_stuck(const std::string &name, double timeout_s) const
+bool Connector::is_order_stuck(const std::string &name) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     auto it = _robots.find(name);
@@ -1313,7 +1709,7 @@ bool Connector::is_order_stuck(const std::string &name, double timeout_s) const
     }
 
     const double since_dispatch = std::chrono::duration<double>(std::chrono::steady_clock::now() - ctx.last_order_time).count();
-    return since_dispatch > timeout_s;
+    return since_dispatch > _link_policy.order_stuck_timeout_s;
 }
 
 std::optional<std::string> Connector::get_action_state(
@@ -1370,7 +1766,7 @@ std::optional<std::string> Connector::get_known_map(const std::string &name)
     return ctx.current_map_id;
 }
 
-bool Connector::is_online(const std::string &name, double state_timeout_s)
+bool Connector::is_online(const std::string &name)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     auto it = _robots.find(name);
@@ -1388,7 +1784,136 @@ bool Connector::is_online(const std::string &name, double state_timeout_s)
         return false;
     }
     const auto age = std::chrono::duration<double>( std::chrono::steady_clock::now() - ctx.last_state_time).count();
-    return age <= state_timeout_s;
+    return age <= _link_policy.state_timeout_s;
+}
+
+namespace {
+
+// Most robots one interface may show before further ones are ignored.
+constexpr std::size_t kMaxDiscovered = 256;
+
+}  // namespace
+
+void Connector::record_unregistered(const TopicLevels &levels, const nlohmann::json &raw)
+{
+    if (!raw.is_object())
+    {
+        return;
+    }
+    const std::string &leaf = levels.leaf;
+    if (leaf != vda5050::TOPIC_CONNECTION && leaf != vda5050::TOPIC_FACTSHEET && leaf != vda5050::TOPIC_STATE)
+    {
+        return;
+    }
+
+    const std::string key = levels.manufacturer + "/" + levels.serial;
+    auto it = _discovered.find(key);
+    if (it == _discovered.end())
+    {
+        if (_discovered.size() >= kMaxDiscovered)
+        {
+            // Retained messages of long-gone robots must not crowd out a robot that is online now.
+            const auto stale = std::find_if(_discovered.begin(), _discovered.end(),
+                                            [](const auto &entry) { return !entry.second.online; });
+            if (stale == _discovered.end())
+            {
+                return;
+            }
+            _discovered.erase(stale);
+        }
+        it = _discovered.emplace(key, DiscoveredRobot{}).first;
+        it->second.manufacturer = levels.manufacturer;
+        it->second.serial = levels.serial;
+    }
+    DiscoveredRobot &robot = it->second;
+
+    if (leaf == vda5050::TOPIC_CONNECTION)
+    {
+        robot.connection_seen = true;
+        robot.online = raw.value("connectionState", std::string{}) == "ONLINE";
+    }
+    else if (leaf == vda5050::TOPIC_FACTSHEET)
+    {
+        vda5050::ParsedFactsheet factsheet(raw);
+        if (factsheet.has_content())
+        {
+            robot.factsheet = std::move(factsheet);
+        }
+    }
+    else if (raw.contains("agvPosition") && raw["agvPosition"].is_object())
+    {
+        const auto &pos = raw["agvPosition"];
+        const auto number = [&pos](const char *key) {
+            return pos.contains(key) && pos[key].is_number() ? pos[key].get<double>() : 0.0;
+        };
+        robot.has_state = pos.contains("x") && pos["x"].is_number() && pos.contains("y") && pos["y"].is_number();
+        robot.pose_initialized = pos.value("positionInitialized", false);
+        robot.x = number("x");
+        robot.y = number("y");
+        robot.theta = number("theta");
+        robot.map_id = pos.value("mapId", std::string{});
+    }
+}
+
+std::vector<Connector::DiscoveredRobot> Connector::discovered() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::vector<DiscoveredRobot> out;
+    for (const auto &[key, robot] : _discovered)
+    {
+        out.push_back(robot);
+    }
+    return out;
+}
+
+std::optional<Connector::DiscoveredRobot> Connector::find_discovered(const std::string &manufacturer,
+                                                                       const std::string &serial) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _discovered.find(manufacturer + "/" + serial);
+    if (it == _discovered.end())
+    {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
+void Connector::watch_discovered()
+{
+    std::vector<std::string> topics;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (auto &[key, robot] : _discovered)
+        {
+            if (robot.watched || !robot.connection_seen || !robot.online)
+            {
+                continue;
+            }
+            robot.watched = true;
+            for (const char *leaf : {vda5050::TOPIC_FACTSHEET, vda5050::TOPIC_STATE})
+            {
+                topics.push_back(vda5050::topic(_interface_name, robot.manufacturer, robot.serial, leaf));
+            }
+        }
+    }
+    for (const auto &topic : topics)
+    {
+        _mqtt_client.subscribe(topic, 1);
+    }
+}
+
+std::vector<vda5050::ParsedFactsheet> Connector::registered_factsheets() const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    std::vector<vda5050::ParsedFactsheet> out;
+    for (const auto &[name, ctx] : _robots)
+    {
+        if (ctx->factsheet.has_value())
+        {
+            out.push_back(*ctx->factsheet);
+        }
+    }
+    return out;
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::rmf

@@ -17,6 +17,7 @@
 #include <rmf_traffic/agv/Planner.hpp>
 
 #include "vda5050_fleet_adapter_full_control/rmf/connector.hpp"
+#include "vda5050_fleet_adapter_full_control/rmf/route_policy.hpp"
 
 namespace vda5050_fleet_adapter_full_control::rmf {
 
@@ -31,9 +32,9 @@ public:
     using RequestCompleted = Base::RequestCompleted;
 
     // The connector and graph must outlive this handle; the clock uses the RMF plan's time source.
-    VdaRobotCommandHandle(rclcpp::Logger logger, std::string name,  Connector &connector, std::shared_ptr<const rmf_traffic::agv::Graph> graph,
+    VdaRobotCommandHandle(const rclcpp::Logger &logger, std::string name,  Connector &connector, std::shared_ptr<const rmf_traffic::agv::Graph> graph,
                           double nominal_speed, rclcpp::Clock::SharedPtr clock,
-                          bool honor_waypoint_timing = false,  bool stitch_on_replan = false);
+                          bool honor_waypoint_timing = false,  bool stitch_on_replan = false, const RoutePolicy &route_policy = {});
 
     // RMF RobotCommandHandle interface.
     void follow_new_path(const std::vector<rmf_traffic::agv::Plan::Waypoint> &waypoints, ArrivalEstimator next_arrival_estimator, RequestCompleted path_finished_callback) override;
@@ -48,7 +49,7 @@ public:
     // Publishes robot state to RMF and advances active command tracking.
     void update(const RobotData &data);
 
-    void set_update_handle(std::shared_ptr<RobotUpdateHandle> handle);
+    void set_update_handle(const std::shared_ptr<RobotUpdateHandle> &handle);
     bool added() const;
 
     // Updates RMF commission state from VDA5050 connectivity and readiness.
@@ -56,6 +57,9 @@ public:
 
     // Update readiness when no usable pose is available to the regular update loop.
     void set_ready_for_orders(bool ready, const std::string &reason = "");
+
+    // Cancels the order and releases the pause when a traffic hold got no replacement path in time.
+    void expire_traffic_hold();
 
     // Pause the AGV without clearing its order; return an error string on failure.
     std::string pause();
@@ -112,6 +116,7 @@ private:
     rclcpp::Clock::SharedPtr _clock;
     bool _honor_waypoint_timing;
     bool _stitch_on_replan;
+    RoutePolicy _route_policy;
 
     // Protects command state shared by RMF and the update loop.
     mutable std::mutex _mutex;

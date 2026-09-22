@@ -44,53 +44,12 @@ std::string OperatorInterface::robot_of_speed_limit_parameter(const std::string 
     return parameter.substr(prefix.size());
 }
 
-OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, std::map<std::string, RobotHooks> hooks) 
-                                                            : _node(node), _connector(connector), _hooks(std::move(hooks))
+OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, const std::map<std::string, RobotHooks> &hooks) 
+                                                            : _node(node), _connector(connector)
 {
-    for (const auto &[name, robot_hooks] : _hooks)
+    for (const auto &[name, robot_hooks] : hooks)
     {
-        _init_position_result_pubs[name] = _node.create_publisher<std_msgs::msg::String>("~/" + name + "/init_position_result", rclcpp::QoS(1));
-
-        _init_position_subs.push_back(
-            _node.create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("~/" + name + "/init_position", rclcpp::QoS(1),[this, name](
-                                                                                                        const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
-                {
-                    on_init_position(name, *msg);
-                }));
-
-        const auto make_service = [&](const std::string &verb, std::function<std::string()> action)
-        {
-            return _node.create_service<std_srvs::srv::Trigger>("~/" + name + "/" + verb, [this, name, verb, action](
-                    const std::shared_ptr<std_srvs::srv::Trigger::Request>, std::shared_ptr<std_srvs::srv::Trigger::Response> response)
-                {
-                    if (!action)
-                    {
-                        response->success = false;
-                        response->message = "not available for this robot";
-                        return;
-                    }
-                    const std::string error = action();
-                    response->success = error.empty();
-                    response->message = error.empty() ? verb + "d" : error;
-                    if (!response->success)
-                    {
-                        RCLCPP_WARN(_node.get_logger(), "%s for '%s' refused: %s", verb.c_str(), name.c_str(), error.c_str());
-                    }
-                });
-        };
-
-        _services.push_back(make_service("pause", robot_hooks.pause));
-        _services.push_back(make_service("resume", robot_hooks.resume));
-
-        // Apply an initial value supplied through ROS parameters.
-        const double initial = _node.declare_parameter<double>(speed_limit_parameter(name), kNoSpeedLimit);
-        if (initial != kNoSpeedLimit)
-        {
-            apply_speed_limit(name, initial);
-        }
-
-        RCLCPP_INFO(_node.get_logger(),"Operator interface for '%s': %s/%s/{init_position, pause, resume}, " "parameter %s",
-                    name.c_str(), _node.get_name(), name.c_str(), speed_limit_parameter(name).c_str());
+        add_robot(name, robot_hooks);
     }
 
     _init_action_timer = _node.create_wall_timer( std::chrono::milliseconds(500), [this]() { poll_pending_init_actions(); });
@@ -105,7 +64,93 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
         });
 }
 
-rcl_interfaces::msg::SetParametersResult OperatorInterface::on_set_parameters( const std::vector<rclcpp::Parameter> &parameters)
+void OperatorInterface::add_robot(const std::string &name, const RobotHooks &robot_hooks)
+{
+    if (has_robot(name))
+    {
+        RCLCPP_WARN(_node.get_logger(), "Operator interface: '%s' already has controls", name.c_str());
+        return;
+    }
+
+    // Register the robot first: declaring its speed-limit parameter is validated against _hooks.
+    bool restored = false;
+    {
+        std::lock_guard<std::mutex> lock(_robots_mutex);
+        _hooks[name] = robot_hooks;
+        restored = !_interfaces.insert(name).second;
+    }
+    if (restored)
+    {
+        RCLCPP_INFO(_node.get_logger(), "Operator interface: controls of '%s' switched back on", name.c_str());
+        return;
+    }
+    const auto result_pub = _node.create_publisher<std_msgs::msg::String>("~/" + name + "/init_position_result", rclcpp::QoS(1));
+    {
+        std::lock_guard<std::mutex> lock(_robots_mutex);
+        _init_position_result_pubs[name] = result_pub;
+    }
+    _init_position_subs.push_back(_node.create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("~/" + name + "/init_position", rclcpp::QoS(1),[this, name](
+                                                                                                    const geometry_msgs::msg::PoseWithCovarianceStamped &msg)
+            {
+                on_init_position(name, msg);
+            }));
+
+    const auto make_service = [&](const std::string &verb, const std::function<std::string()> &action)
+    {
+        return _node.create_service<std_srvs::srv::Trigger>("~/" + name + "/" + verb, [this, name, verb, action](
+                // NOLINTNEXTLINE(performance-unnecessary-value-param): the service signature is fixed by rclcpp
+                const std::shared_ptr<std_srvs::srv::Trigger::Request>, std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+            {
+                if (!has_robot(name))
+                {
+                    response->success = false;
+                    response->message = "the robot was removed from the fleet";
+                    return;
+                }
+                if (!action)
+                {
+                    response->success = false;
+                    response->message = "not available for this robot";
+                    return;
+                }
+                const std::string error = action();
+                response->success = error.empty();
+                response->message = error.empty() ? verb + "d" : error;
+                if (!response->success)
+                {
+                    RCLCPP_WARN(_node.get_logger(), "%s for '%s' refused: %s", verb.c_str(), name.c_str(), error.c_str());
+                }
+            });
+    };
+
+    _services.push_back(make_service("pause", robot_hooks.pause));
+    _services.push_back(make_service("resume", robot_hooks.resume));
+
+    // Apply an initial value supplied through ROS parameters.
+    const double initial = _node.declare_parameter<double>(speed_limit_parameter(name), kNoSpeedLimit);
+    if (initial != kNoSpeedLimit)
+    {
+        apply_speed_limit(name, initial);
+    }
+
+    RCLCPP_INFO(_node.get_logger(),"Operator interface for '%s': %s/%s/{init_position, pause, resume}, " "parameter %s",
+                name.c_str(), _node.get_name(), name.c_str(), speed_limit_parameter(name).c_str());
+}
+
+void OperatorInterface::remove_robot(const std::string &name)
+{
+    {
+        std::lock_guard<std::mutex> lock(_robots_mutex);
+        _hooks.erase(name);
+    }
+    {
+        std::lock_guard<std::mutex> lock(_pending_mutex);
+        _pending_init_actions.erase(name);
+    }
+    RCLCPP_INFO(_node.get_logger(), "Operator interface: controls of '%s' switched off", name.c_str());
+}
+
+rcl_interfaces::msg::SetParametersResult OperatorInterface::on_set_parameters( const std::vector<rclcpp::Parameter> &parameters) const
 {
     rcl_interfaces::msg::SetParametersResult result;
     result.successful = true;
@@ -118,7 +163,7 @@ rcl_interfaces::msg::SetParametersResult OperatorInterface::on_set_parameters( c
             continue;
         }
 
-        if (_hooks.find(robot) == _hooks.end())
+        if (!has_robot(robot))
         {
             result.successful = false;
             result.reason = "'" + robot + "' is not a robot in this fleet";
@@ -149,7 +194,7 @@ void OperatorInterface::on_parameters_set(const std::vector<rclcpp::Parameter> &
     {
         const std::string robot = robot_of_speed_limit_parameter(parameter.get_name());
         // Values reaching this callback have already passed validation.
-        if (robot.empty() || _hooks.find(robot) == _hooks.end())
+        if (robot.empty() || !has_robot(robot))
         {
             continue;
         }
@@ -160,6 +205,12 @@ void OperatorInterface::on_parameters_set(const std::vector<rclcpp::Parameter> &
 void OperatorInterface::apply_speed_limit(const std::string &robot_name, double limit)
 {
     const std::optional<double> cap = limit == kNoSpeedLimit ? std::nullopt : std::optional<double>(limit);
+
+    // Declaring a parameter reports its default; there is nothing to change then.
+    if (_connector.speed_limit(robot_name) == cap)
+    {
+        return;
+    }
 
     if (!_connector.set_speed_limit(robot_name, cap))
     {
@@ -174,15 +225,14 @@ void OperatorInterface::on_init_position(
     // Report the outcome on the companion topic; the request itself is one-way.
     const auto publish_result = [this, &robot_name](const std::string &result)
     {
-        const auto it = _init_position_result_pubs.find(robot_name);
-        if (it == _init_position_result_pubs.end())
-        {
-            return;
-        }
-        std_msgs::msg::String out;
-        out.data = result;
-        it->second->publish(out);
+        publish_init_result(robot_name, result);
     };
+
+    if (!has_robot(robot_name))
+    {
+        publish_result("error: the robot was removed from the fleet");
+        return;
+    }
 
     // Read the latest map name even when the AGV has no usable pose.
     const auto map_name = _connector.get_known_map(robot_name);
@@ -238,16 +288,32 @@ void OperatorInterface::poll_pending_init_actions()
 
     for (const auto &[robot_name, result] : finished)
     {
+        publish_init_result(robot_name, result);
+        RCLCPP_INFO(_node.get_logger(), "init_position for '%s': %s", robot_name.c_str(), result.c_str());
+    }
+}
+
+bool OperatorInterface::has_robot(const std::string &name) const
+{
+    std::lock_guard<std::mutex> lock(_robots_mutex);
+    return _hooks.find(name) != _hooks.end();
+}
+
+void OperatorInterface::publish_init_result(const std::string &robot_name, const std::string &result)
+{
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub;
+    {
+        std::lock_guard<std::mutex> lock(_robots_mutex);
         const auto it = _init_position_result_pubs.find(robot_name);
         if (it == _init_position_result_pubs.end())
         {
-            continue;
+            return;
         }
-        std_msgs::msg::String out;
-        out.data = result;
-        it->second->publish(out);
-        RCLCPP_INFO(_node.get_logger(), "init_position for '%s': %s", robot_name.c_str(), result.c_str());
+        pub = it->second;
     }
+    std_msgs::msg::String out;
+    out.data = result;
+    pub->publish(out);
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::core

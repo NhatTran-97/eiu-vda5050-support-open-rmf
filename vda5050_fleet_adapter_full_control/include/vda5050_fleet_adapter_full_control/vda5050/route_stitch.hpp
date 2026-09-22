@@ -24,15 +24,18 @@ struct StitchPlan
     std::size_t leading = 0;
 };
 
-// Attach a replanned route to the live order after its released base.
+// Attach a replanned route to the live order after its released base. 
 // The new route must repeat the released part; up to max_leading points on the AGV's lane may be skipped.
-// Returns nullopt when it does not.
 std::optional<StitchPlan> plan_stitch(const std::vector<RouteWaypoint> &current_route,
                                       std::size_t released_count, std::size_t traversed,
                                       const std::vector<RouteWaypoint> &new_route,
                                       double position_tolerance = 0.10,
                                       std::size_t max_leading = 3,
                                       double lane_tolerance = 0.15);
+
+// Route points to record as released once `plan` is attached.
+// `sent_released` is the horizon last sent to the AGV; `requested_released` counts from the start of the new route.
+std::size_t stitched_released_count(const StitchPlan &plan, std::size_t sent_released, std::size_t requested_released);
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050
 

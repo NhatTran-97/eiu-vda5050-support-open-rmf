@@ -10,10 +10,15 @@ namespace vda5050_fleet_adapter_full_control::rmf {
 class Transform
 {
 public:
-    Transform(double rotation = 0.0, double scale = 1.0, double tx = 0.0, double ty = 0.0) : _rotation(rotation), _scale(scale), _tx(tx), _ty(ty),
+    explicit Transform(double rotation = 0.0, double scale = 1.0, double tx = 0.0, double ty = 0.0) : _rotation(rotation), _scale(scale), _tx(tx), _ty(ty),
                                                                                             _c(std::cos(rotation)), _s(std::sin(rotation))
     {
     }
+
+    double rotation() const { return _rotation; }
+    double scale() const { return _scale; }
+    double tx() const { return _tx; }
+    double ty() const { return _ty; }
 
     // Convert an RMF pose to the robot frame.
     std::array<double, 3> to_robot(double x, double y, double theta) const

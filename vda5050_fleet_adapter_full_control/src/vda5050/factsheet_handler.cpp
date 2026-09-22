@@ -73,6 +73,9 @@ ParsedFactsheet::ParsedFactsheet(const nlohmann::json &raw)
         const auto &p = raw["physicalParameters"];
         speed_min = get_number(p, "speedMin");
         speed_max = get_number(p, "speedMax");
+        acceleration_max = get_number(p, "accelerationMax");
+        length = get_number(p, "length");
+        width = get_number(p, "width");
     }
 
     if (raw.contains("protocolFeatures") && raw["protocolFeatures"].is_object())
@@ -155,7 +158,8 @@ bool ParsedFactsheet::has_content() const
 {
     return !series_name.empty() || !agv_kinematic.empty() || !agv_class.empty() ||
            !localization_types.empty() || !navigation_types.empty() ||
-           speed_min.has_value() || speed_max.has_value() || !agv_actions.empty() ||
+           speed_min.has_value() || speed_max.has_value() || acceleration_max.has_value() ||
+           length.has_value() || width.has_value() || !agv_actions.empty() ||
            max_order_nodes.has_value() || max_order_edges.has_value() || min_order_interval.has_value();
 }
 

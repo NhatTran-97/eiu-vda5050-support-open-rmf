@@ -27,6 +27,11 @@ public:
     // physicalParameters speed envelope.
     std::optional<double> speed_min;
     std::optional<double> speed_max;
+    std::optional<double> acceleration_max;
+
+    // physicalParameters footprint in metres.
+    std::optional<double> length;
+    std::optional<double> width;
 
     // Supported blocking types and scopes for one AGV action.
     struct AgvAction

@@ -22,9 +22,15 @@
 #include <rmf_traffic_ros2/Time.hpp>
 
 #include "vda5050_fleet_adapter_full_control/core/config.hpp"
+#include "vda5050_fleet_adapter_full_control/core/metrics_report.hpp"
 #include "vda5050_fleet_adapter_full_control/core/operator_interface.hpp"
+#include "vda5050_fleet_adapter_full_control/core/registration_interface.hpp"
+#include "vda5050_fleet_adapter_full_control/core/robot_manager.hpp"
+#include "vda5050_fleet_adapter_full_control/core/runtime_robots.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/connector.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/robot_command_handle.hpp"
+#include "vda5050_fleet_adapter_full_control/util/loop_pacer.hpp"
+#include "vda5050_fleet_adapter_full_control/util/metrics.hpp"
 
 namespace vda5050_fleet_adapter_full_control::core {
 
@@ -32,8 +38,13 @@ namespace {
 using rmf_fleet_adapter::agv::Adapter;
 using rmf_fleet_adapter::agv::EasyFullControl;
 
-// Maximum time to wait for an RMF robot-registration callback before retrying.
-constexpr auto kRegistrationTimeout = std::chrono::seconds(30);
+// Stop ROS and end the process with `code` without running destructors.
+[[noreturn]] void exit_now(int code)
+{
+    rclcpp::shutdown();
+    std::fflush(nullptr);
+    std::_Exit(code);
+}
 }  // namespace
 
 int run_fleet_adapter_full_control(int argc, char **argv)
@@ -68,7 +79,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         if (!fleet_config)
         {
             RCLCPP_FATAL(logger, "Failed to parse fleet configuration from %s", args.config_file.c_str());
-            return 1;
+            exit_now(1);
         }
         if (config.server_uri())
         {
@@ -80,14 +91,14 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         if (!traits || !graph)
         {
             RCLCPP_FATAL(logger, "Fleet configuration is missing vehicle traits or a graph");
-            return 1;
+            exit_now(1);
         }
 
         auto fleet = adapter->add_fleet(fleet_config->fleet_name(), *traits, *graph,  fleet_config->server_uri());
         if (!fleet)
         {
             RCLCPP_FATAL(logger, "add_fleet failed for '%s'", fleet_config->fleet_name().c_str());
-            return 1;
+            exit_now(1);
         }
 
         const bool account_for_battery_drain = fleet_config->account_for_battery_drain();
@@ -97,14 +108,13 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         }
 
         // Apply the configured post-task finishing behavior.
-        if (!fleet->set_task_planner_params(
-                fleet_config->battery_system(), fleet_config->motion_sink(),
+        if (!fleet->set_task_planner_params(fleet_config->battery_system(), fleet_config->motion_sink(),
                 fleet_config->ambient_sink(), fleet_config->tool_sink(),
                 fleet_config->recharge_threshold(), fleet_config->recharge_soc(),
                 account_for_battery_drain, fleet_config->finishing_request()))
         {
             RCLCPP_FATAL(logger, "set_task_planner_params failed -- this fleet would " "never bid for a task");
-            return 1;
+            exit_now(1);
         }
 
         fleet->set_retreat_to_charger_interval(fleet_config->retreat_to_charger_interval());
@@ -168,23 +178,19 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             fleet->set_lift_emergency_level(lift, level);
         }
 
-        auto connector = std::make_shared<rmf::Connector>(logger, config.mqtt().broker_url, config.interface_name(), config.mqtt().username, config.mqtt().password);
+        auto connector = std::make_shared<rmf::Connector>(logger, config.mqtt().broker_url, config.interface_name(), config.mqtt().username, config.mqtt().password, config.mqtt().options);
         connector->set_strict_validation(config.strict_validation());
+        connector->set_stale_state_streak(config.stale_state_streak());
+        connector->set_cancel_policy(config.cancel_policy());
+        connector->set_link_policy(config.link_policy());
         connector->start();
 
         const double nominal_speed = traits->linear().get_nominal_velocity();
 
-        // Per-robot FullControl settings applied after RMF registration.
-        struct RobotSetup
-        {
-            std::optional<std::size_t> charger_index;
-            bool responsive_wait = false;
-        };
-        std::map<std::string, RobotSetup> robot_setup;
+        RobotManager manager(logger, *connector, graph, adapter->node()->get_clock(),
+                             {nominal_speed, config.honor_waypoint_timing(), config.stitch_on_replan(), config.route_policy()});
 
-        std::map<std::string, std::shared_ptr<rmf::VdaRobotCommandHandle>> robots;
-        // Identify the latest registration attempt for each robot.
-        std::map<std::string, std::shared_ptr<std::atomic<int>>> registration_generation;
+        // Robots declared in the fleet config file.
         std::set<std::pair<std::string, std::string>> seen_identities;
         for (const auto &name : fleet_config->known_robots())
         {
@@ -192,59 +198,155 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             if (!seen_identities.insert({rc.manufacturer, rc.serial}).second)
             {
                 throw std::runtime_error("robot '" + name + "': manufacturer/serial (" + rc.manufacturer + "/" +
-                    rc.serial + ") is already used by another robot in this fleet -- "
-                    "their VDA5050 MQTT state would be indistinguishable");
+                    rc.serial + ") is already used by another robot in this fleet -- " "their VDA5050 MQTT state would be indistinguishable");
             }
-            connector->add_robot(name, rc.manufacturer, rc.serial, rc.transform);
-            robots[name] = std::make_shared<rmf::VdaRobotCommandHandle>(
-                logger, name, *connector, graph, nominal_speed, adapter->node()->get_clock(), config.honor_waypoint_timing(), config.stitch_on_replan());
 
-            RobotSetup setup;
-            setup.responsive_wait = fleet_config->default_responsive_wait();
+            RobotSpec spec;
+            spec.name = name;
+            spec.manufacturer = rc.manufacturer;
+            spec.serial = rc.serial;
+            spec.rotation = rc.transform.rotation();
+            spec.scale = rc.transform.scale();
+            spec.tx = rc.transform.tx();
+            spec.ty = rc.transform.ty();
+            spec.from_config = true;
+            spec.responsive_wait = fleet_config->default_responsive_wait();
             if (const auto robot_cfg = fleet_config->get_known_robot_configuration(name))
             {
                 if (robot_cfg->responsive_wait().has_value())
                 {
-                    setup.responsive_wait = *robot_cfg->responsive_wait();
+                    spec.responsive_wait = *robot_cfg->responsive_wait();
                 }
                 if (!robot_cfg->compatible_chargers().empty())
                 {
-                    const auto &charger_name = robot_cfg->compatible_chargers().front();
-                    if (const auto *charger_wp = graph->find_waypoint(charger_name))
-                    {
-                        setup.charger_index = charger_wp->index();
-                    }
-                    else
-                    {
-                        RCLCPP_ERROR(logger, "Robot '%s': charger waypoint '%s' not found in the nav " "graph -- it will use whatever charger RMF finds nearest",
-                                     name.c_str(), charger_name.c_str());
-                    }
+                    spec.charger = robot_cfg->compatible_chargers().front();
                 }
             }
-            robot_setup[name] = setup;
-            registration_generation[name] = std::make_shared<std::atomic<int>>(0);
+            manager.add(spec);
+        }
+
+        const std::string fleet_name = fleet_config->fleet_name();
+        const RegistrationConfig &registration_config = config.registration();
+        // Time RMF may take to complete a robot's registration before it is tried again.
+        const std::chrono::duration<double> registration_timeout(registration_config.timeout_s);
+        const FleetLimits limits{fleet_name, traits->profile().footprint()->get_characteristic_length(),
+                                 traits->linear().get_nominal_velocity(), traits->linear().get_nominal_acceleration(),
+                                 registration_config.limit_tolerance};
+
+        GraphFacts graph_facts;
+        graph_facts.chargers = [graph]()
+        {
+            std::vector<std::string> names;
+            for (std::size_t i = 0; i < graph->num_waypoints(); ++i)
+            {
+                const auto &waypoint = graph->get_waypoint(i);
+                if (waypoint.is_charger() && waypoint.name())
+                {
+                    names.push_back(*waypoint.name());
+                }
+            }
+            return names;
+        };
+        graph_facts.is_charger = [graph](const std::string &waypoint)
+        {
+            const auto *found = graph->find_waypoint(waypoint);
+            return found && found->is_charger();
+        };
+        graph_facts.has_map = [graph](const std::string &map)
+        {
+            for (std::size_t i = 0; i < graph->num_waypoints(); ++i)
+            {
+                if (graph->get_waypoint(i).get_map_name() == map)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+        graph_facts.on_graph = [graph, node = adapter->node()](const std::string &map, double x, double y, double theta)
+        {
+            const Eigen::Vector3d position(x, y, theta);
+            return !rmf_traffic::agv::compute_plan_starts(*graph, map, position, rmf_traffic_ros2::convert(node->now())).empty();
+        };
+
+        // Robots added while the adapter ran earlier; an entry that no longer passes the checks is skipped.
+        const std::string runtime_path = runtime_robots_path(args.config_file, registration_config.runtime_robots_file);
+        const auto runtime = load_runtime_robots(runtime_path);
+        for (const auto &problem : runtime.problems)
+        {
+            RCLCPP_ERROR(logger, "Runtime robots: %s", problem.c_str());
+        }
+        for (const auto &spec : runtime.robots)
+        {
+            FleetView view;
+            view.limits = limits;
+            for (const auto &entry : manager.snapshot())
+            {
+                view.robots.push_back({fleet_name, entry->spec.name, entry->spec.manufacturer, entry->spec.serial,
+                                       entry->spec.charger, false});
+            }
+            const Verdict verdict = validate_spec(spec, view, graph_facts);
+            if (!verdict.ok())
+            {
+                for (const auto &error : verdict.errors)
+                {
+                    RCLCPP_ERROR(logger, "Runtime robot '%s' skipped: %s", spec.name.c_str(), error.message.c_str());
+                }
+                continue;
+            }
+            manager.add(spec);
+            RCLCPP_INFO(logger, "Runtime robot '%s' (%s/%s) loaded from %s", spec.name.c_str(),
+                        spec.manufacturer.c_str(), spec.serial.c_str(), runtime_path.c_str());
         }
 
         // Register operator controls on the adapter node.
         std::map<std::string, RobotHooks> hooks;
-        for (const auto &[name, command] : robots)
+        for (const auto &entry : manager.snapshot())
         {
-            hooks[name] = RobotHooks{[command]() { return command->pause(); },[command]() { return command->resume(); }};
+            const auto command = entry->command;
+            hooks[entry->spec.name] = RobotHooks{[command]() { return command->pause(); }, [command]() { return command->resume(); }};
         }
         OperatorInterface operator_interface(*adapter->node(), *connector, std::move(hooks));
+
+        RegistrationInterface registration(*adapter->node(), *connector, manager, operator_interface,
+                                           {fleet_name, config.interface_name(), runtime_path, limits, graph_facts,
+                                            fleet_config->default_responsive_wait(),
+                                            registration_config.discovery_grace_s, registration_config.discovery_period_s});
+        registration.publish_registry();
 
         // Update RMF from VDA5050 state.
         std::atomic<bool> running{true};
         const auto period = std::chrono::duration<double>(1.0 / config.update_rate_hz());
+        util::LoopPacer pacer(std::chrono::steady_clock::now(),
+                              std::chrono::duration_cast<std::chrono::steady_clock::duration>(period));
 
-        // Track pending RMF robot registrations.
-        std::map<std::string, std::chrono::steady_clock::time_point> registration_started;
+        // Update pass times and overruns, reported with the message path's metrics.
+        util::Histogram loop_pass;
+        util::Counter loop_overruns;
+        MetricsReporter metrics_reporter(
+            *adapter->node(), std::chrono::duration<double>(config.metrics_period_s()),
+            [&loop_pass, &loop_overruns, connector, period, fleet_name]()
+            {
+                nlohmann::json report = connector->metrics();
+                report["fleet"] = fleet_name;
+                report["update_loop"] = {{"pass_us", util::to_json(loop_pass.take())},
+                                         {"overruns", loop_overruns.value()},
+                                         {"period_ms", std::chrono::duration<double, std::milli>(period).count()}};
+                return report;
+            });
 
         std::thread update_thread([&] {
             while (running && rclcpp::ok())
             {
-                for (auto &[name, command] : robots)
+                const auto pass_started = std::chrono::steady_clock::now();
+                for (const auto &entry : manager.snapshot())
                 {
+                    if (entry->retired)
+                    {
+                        continue;
+                    }
+                    const std::string &name = entry->spec.name;
+                    const auto &command = entry->command;
                     try
                     {
                         if (!connector->is_online(name))
@@ -252,8 +354,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             if (command->added())
                             {
                                 command->set_online(false);
-                                RCLCPP_WARN_THROTTLE(
-                                    logger, *adapter->node()->get_clock(), 10000, "Robot '%s' is offline - no recent VDA5050 state",name.c_str());
+                                RCLCPP_WARN_THROTTLE(logger, *adapter->node()->get_clock(), 10000, "Robot '%s' is offline - no recent VDA5050 state",name.c_str());
                             }
                             continue;
                         }
@@ -267,22 +368,27 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             if (command->added())
                             {
                                 command->set_ready_for_orders(false, "no valid pose");
+                                command->expire_traffic_hold();
+                            }
+                            else
+                            {
+                                RCLCPP_WARN_THROTTLE(logger, *adapter->node()->get_clock(), 10000,
+                                    "Robot '%s' is online but its state has no usable pose (agvPosition missing or " "positionInitialized false) -- not added to RMF yet",
+                                    name.c_str());
                             }
                             continue;
                         }
 
                         if (!command->added())
                         {
-                            const auto pending = registration_started.find(name);
-                            if (pending != registration_started.end())
+                            if (entry->registration_started.has_value())
                             {
-                                if (std::chrono::steady_clock::now() - pending->second <
-                                    kRegistrationTimeout)
+                                if (std::chrono::steady_clock::now() - *entry->registration_started < registration_timeout)
                                 {
                                     // Wait for the in-flight registration.
                                     continue;
                                 }
-                                RCLCPP_WARN(logger,"Robot '%s' registration did not complete within " "%lds -- retrying", name.c_str(), static_cast<long>(kRegistrationTimeout.count()));
+                                RCLCPP_WARN(logger,"Robot '%s' registration did not complete within " "%.0fs -- retrying", name.c_str(), registration_timeout.count());
                             }
 
                             const Eigen::Vector3d position(data->position[0], data->position[1], data->position[2]);
@@ -295,10 +401,11 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                                 continue;
                             }
 
-                            const RobotSetup setup = robot_setup.at(name);
-                            const auto generation = registration_generation.at(name);
+                            const auto charger_index = entry->charger_index;
+                            const bool responsive_wait = entry->spec.responsive_wait;
+                            const auto generation = entry->registration_generation;
                             const int this_attempt = ++(*generation);
-                            auto handle_cb = [command, name, logger, setup, generation, this_attempt](std::shared_ptr<rmf_fleet_adapter::agv::RobotUpdateHandle> handle)
+                            auto handle_cb = [command, name, logger, charger_index, responsive_wait, generation, this_attempt](std::shared_ptr<rmf_fleet_adapter::agv::RobotUpdateHandle> handle)
                             {
                                 if (generation->load() != this_attempt)
                                 {
@@ -307,16 +414,16 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                                     return;
                                 }
                                 // Apply settings owned by the FullControl caller.
-                                if (setup.charger_index.has_value())
+                                if (charger_index.has_value())
                                 {
-                                    handle->set_charger_waypoint(*setup.charger_index);
+                                    handle->set_charger_waypoint(*charger_index);
                                 }
-                                handle->enable_responsive_wait(setup.responsive_wait);
-                                command->set_update_handle(std::move(handle));
+                                handle->enable_responsive_wait(responsive_wait);
+                                command->set_update_handle(handle);
                                 RCLCPP_INFO(logger, "Robot '%s' added to RMF fleet", name.c_str());
                             };
 
-                            registration_started[name] = std::chrono::steady_clock::now();
+                            entry->registration_started = std::chrono::steady_clock::now();
                             fleet->add_robot(command, name, traits->profile(), std::move(starts), std::move(handle_cb));
                             continue;
                         }
@@ -333,7 +440,19 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                         RCLCPP_ERROR(logger, "update_loop error for '%s': %s", name.c_str(), e.what());
                     }
                 }
-                std::this_thread::sleep_for(std::chrono::duration_cast<std::chrono::milliseconds>(period));
+                const auto overruns_before = pacer.overruns();
+                const auto pass_ended = std::chrono::steady_clock::now();
+                const auto wake = pacer.next(pass_ended);
+                loop_pass.record(pass_ended - pass_started);
+                if (pacer.overruns() > overruns_before)
+                {
+                    loop_overruns.add(pacer.overruns() - overruns_before);
+                    RCLCPP_WARN_THROTTLE(logger, *adapter->node()->get_clock(), 10000,
+                        "Update loop pass took %.0f ms, over the %.0f ms period (%zu overrun(s) so far)",
+                        std::chrono::duration<double, std::milli>(pass_ended - pass_started).count(),
+                        std::chrono::duration<double, std::milli>(period).count(), pacer.overruns());
+                }
+                std::this_thread::sleep_until(wake);
             }
         });
 
@@ -349,7 +468,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
     catch (const std::exception &e)
     {
         RCLCPP_FATAL(logger, "Fleet adapter startup failed: %s", e.what());
-        return 1;
+        exit_now(1);
     }
 
     rclcpp::shutdown();

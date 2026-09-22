@@ -54,11 +54,69 @@ vda5050:
   stitch_on_replan: true
   # Reject orders and actions that break the factsheet.
   strict_validation: true
+  # Consecutive state messages with an old headerId and timestamp dropped before the sender counts as restarted; 0 keeps every message.
+  stale_state_streak: 3
+  # Seconds to wait for an AGV to answer a cancelOrder before judging it; 0 turns the tracking off.
+  cancel_confirm_timeout_s: 5
+  # Times a cancelOrder may be sent for one order, counting the first.
+  cancel_attempts: 3
+  # Seconds without a state message after which an AGV counts as offline.
+  state_timeout_s: 10
+  # Seconds an order may stay unacknowledged by the AGV before RMF is asked to replan.
+  order_stuck_timeout_s: 15
+  # Seconds a traffic hold may last before the order is cancelled.
+  traffic_pause_timeout_s: 10
+  # Seconds to wait for the AGV's retained factsheet before the first factsheetRequest, and between further requests.
+  factsheet_first_wait_s: 5
+  factsheet_retry_wait_s: 20
+  # Factsheet requests sent to one AGV before giving up; 0 turns the requests off.
+  factsheet_request_attempts: 3
+  # Metres from a waypoint within which it counts as reached when the AGV reports no nodeId.
+  waypoint_reached_m: 0.5
+  # Poses this close in position (m) and heading (rad) count as the same waypoint.
+  same_pose_m: 0.05
+  same_pose_rad: 0.05
+  # Measured speeds (m/s) below this are replaced by the fleet's nominal speed in arrival estimates.
+  usable_speed_mps: 0.05
+  # Seconds ahead of RMF's plan beyond which an early arrival is logged.
+  early_arrival_warn_s: 2.0
+  # Seconds between metrics reports (a log line and a JSON message on ~/metrics); 0 turns them off.
+  metrics_period_s: 60
+  # Robots added while the adapter runs (see the README, "Add a robot at runtime").
+  registration:
+    # Seconds after startup before robots unknown to every fleet are reported.
+    discovery_grace_s: 8.0
+    # Seconds between checks of the broker for such robots.
+    discovery_period_s: 2.0
+    # Seconds RMF may take to complete a robot's registration before it is tried again.
+    timeout_s: 30
+    # Relative margin a new robot's speed and acceleration may differ from the fleet's.
+    limit_tolerance: 0.05
+    # Where runtime-added robots are kept for the next start; relative to this file.
+    # Default: <this file's name>.runtime_robots.yaml next to it.
+    # runtime_robots_file: robots.runtime.yaml
   mqtt:
-    host: "192.168.10.97"
+    host: "192.168.1.122"
     port: 1883
+    # username and password may be written as ${VARIABLE} to read them from the environment.
     username: null
     password: null
+    # TLS to the broker; relative paths are relative to this file.
+    tls:
+      enabled: false
+      # ca_file: certs/ca.crt
+      # client_cert: certs/client.crt
+      # client_key: certs/client.key
+      # verify_hostname: true
+    # Seconds between keep-alive packets that let the broker and the adapter notice a dead connection.
+    keep_alive_s: 60
+    # Seconds one connect attempt may take.
+    connect_timeout_s: 10
+    # Wait before the first reconnect attempt; it doubles up to reconnect_max_s.
+    reconnect_min_s: 1
+    reconnect_max_s: 30
+    # Largest message payload handled, in bytes; a larger message is dropped unread.
+    max_payload_bytes: 1048576
 
   robots:
     amr_1:

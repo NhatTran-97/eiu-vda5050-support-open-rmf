@@ -4,14 +4,34 @@
 
 namespace vda5050_fleet_adapter_full_control::mqtt {
 
-MqttClient::MqttClient(std::string broker_url, std::string client_id,
+MqttClient::MqttClient(const std::string &broker_url, const std::string &client_id,
                         std::optional<std::string> username,
-                        std::optional<std::string> password): _client(std::make_shared<::mqtt::async_client>(broker_url, client_id))
+                        std::optional<std::string> password,
+                        const MqttOptions &options): _client(std::make_shared<::mqtt::async_client>(broker_url, client_id))
 {
     _client->set_callback(*this);
     _conn_opts.set_clean_session(true);
-    _conn_opts.set_keep_alive_interval(60);
-    _conn_opts.set_automatic_reconnect(true);
+    _conn_opts.set_keep_alive_interval(static_cast<int>(options.keep_alive.count()));
+    _max_payload_bytes = options.max_payload_bytes;
+    _tls_enabled = options.tls.enabled;
+    if (options.tls.enabled)
+    {
+        ::mqtt::ssl_options ssl;
+        if (!options.tls.ca_file.empty())
+        {
+            ssl.set_trust_store(options.tls.ca_file);
+        }
+        if (!options.tls.client_cert.empty())
+        {
+            ssl.set_key_store(options.tls.client_cert);
+            ssl.set_private_key(options.tls.client_key);
+        }
+        ssl.set_enable_server_cert_auth(true);
+        ssl.set_verify(options.tls.verify_hostname);
+        _conn_opts.set_ssl(ssl);
+    }
+    _conn_opts.set_connect_timeout(options.connect_timeout);
+    _conn_opts.set_automatic_reconnect(options.retry_min, options.retry_max);
     
     if (username.has_value())
     {
@@ -21,6 +41,7 @@ MqttClient::MqttClient(std::string broker_url, std::string client_id,
     {
         _conn_opts.set_password(*password);
     }
+    _connected_worker = std::thread([this] { run_connected_worker(); });
 }
 
 MqttClient::~MqttClient()
@@ -52,12 +73,38 @@ void MqttClient::connect()
 {
     if (_shutdown) { return; }
     if (_client->is_connected()) { return; }
-    _client->connect(_conn_opts)->wait();
+    _client->connect(_conn_opts, nullptr, _connect_listener);
+}
+
+void MqttClient::ConnectListener::on_failure(const ::mqtt::token &token)
+{
+    if (_owner._shutdown) { return; }
+    std::string what = ::mqtt::exception::error_str(token.get_return_code()) + " (rc " + std::to_string(token.get_return_code()) + ")";
+    if (_owner._tls_enabled)
+    {
+        what += " -- TLS is on: check the CA file, that the broker's certificate names this host, the client certificate, and that the port speaks TLS";
+    }
+    _owner.report_error("connect to " + _owner._client->get_server_uri(), what);
 }
 
 void MqttClient::shutdown()
 {
     if (_shutdown.exchange(true)) { return; }
+    {
+        std::lock_guard<std::mutex> lock(_connected_mutex);
+    }
+    _connected_cv.notify_all();
+    if (_connected_worker.joinable())
+    {
+        if (std::this_thread::get_id() == _connected_worker.get_id())
+        {
+            _connected_worker.detach();
+        }
+        else
+        {
+            _connected_worker.join();
+        }
+    }
     if (_client && _client->is_connected())
     {
         try
@@ -73,8 +120,14 @@ bool MqttClient::is_connected() const
     return _client->is_connected();
 }
 
+MqttClient::Stats MqttClient::stats() const
+{
+    return {_connects.value(), _connections_lost.value(), _oversize_dropped.value(), _errors.value()};
+}
+
 void MqttClient::report_error(const std::string &context, const std::string &what) noexcept
 {
+    _errors.add();
     if (!_on_error) { return; }
     try
     {
@@ -151,18 +204,43 @@ void MqttClient::resubscribe_all()
 
 void MqttClient::connected(const std::string &)
 {
-    if (_shutdown) { return; }
-    resubscribe_all();
-    try
-    {
-        if (_on_connected) 
-        { 
-            _on_connected(); 
-        }
+    if (_shutdown) 
+    { 
+        return; 
     }
-    catch (const std::exception &e)
+    _connects.add();
+    resubscribe_all();
     {
-        report_error("on_connected callback", e.what());
+        std::lock_guard<std::mutex> lock(_connected_mutex);
+        _connected_pending = true;
+    }
+    _connected_cv.notify_one();
+}
+
+void MqttClient::run_connected_worker()
+{
+    std::unique_lock<std::mutex> lock(_connected_mutex);
+    while (true)
+    {
+        _connected_cv.wait(lock, [this] { return _connected_pending || _shutdown; });
+        if (_shutdown) 
+        { 
+            return; 
+        }
+        _connected_pending = false;
+        lock.unlock();
+        try
+        {
+            if (_on_connected)
+            {
+                _on_connected();
+            }
+        }
+        catch (const std::exception &e)
+        {
+            report_error("on_connected callback", e.what());
+        }
+        lock.lock();
     }
 }
 
@@ -170,6 +248,7 @@ void MqttClient::connected(const std::string &)
 void MqttClient::connection_lost(const std::string &cause)
 {
     if (_shutdown) { return; }
+    _connections_lost.add();
     try
     {
         if (_on_connection_lost) 
@@ -186,6 +265,14 @@ void MqttClient::connection_lost(const std::string &cause)
 void MqttClient::message_arrived(::mqtt::const_message_ptr msg)
 {
     if (_shutdown) { return; }
+    const std::size_t size = msg->get_payload().size();
+    if (size > _max_payload_bytes)
+    {
+        _oversize_dropped.add();
+        report_error("dropped message on " + msg->get_topic(),
+                     std::to_string(size) + " bytes exceed the limit of " + std::to_string(_max_payload_bytes) + " bytes");
+        return;
+    }
     try
     {
         if (_on_message) 

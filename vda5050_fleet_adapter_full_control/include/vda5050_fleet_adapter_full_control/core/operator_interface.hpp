@@ -4,6 +4,7 @@
 #include <chrono>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -32,7 +33,14 @@ class OperatorInterface
 {
 public:
     // The node and connector must outlive this interface.
-    OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, std::map<std::string, RobotHooks> hooks);
+    OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, const std::map<std::string, RobotHooks> &hooks);
+
+    // Create the controls of one more robot while the adapter runs, or switch back on those of a removed robot;
+    // the robot must already be in the connector.
+    void add_robot(const std::string &name, const RobotHooks &robot_hooks);
+
+    // Stops accepting controls for a robot that left the fleet; its services and topics answer that it was removed.
+    void remove_robot(const std::string &name);
 
 private:
     // An initPosition request awaiting the AGV's result.
@@ -44,11 +52,17 @@ private:
 
     void on_init_position(const std::string &robot_name, const geometry_msgs::msg::PoseWithCovarianceStamped &msg);
 
+    // Whether `name` has controls in this interface.
+    bool has_robot(const std::string &name) const;
+
+    // Publish an initPosition outcome on the robot's result topic.
+    void publish_init_result(const std::string &robot_name, const std::string &result);
+
     // Publish the result of each pending initPosition request or its timeout.
     void poll_pending_init_actions();
 
     // Validate speed-limit updates before ROS commits them.
-    rcl_interfaces::msg::SetParametersResult on_set_parameters(const std::vector<rclcpp::Parameter> &parameters);
+    rcl_interfaces::msg::SetParametersResult on_set_parameters(const std::vector<rclcpp::Parameter> &parameters) const;
 
     // Apply speed-limit updates after ROS commits them.
     void on_parameters_set(const std::vector<rclcpp::Parameter> &parameters);
@@ -62,7 +76,11 @@ private:
 
     rclcpp::Node &_node;
     rmf::Connector &_connector;
+    // Guards _hooks and _init_position_result_pubs, which grow while the adapter runs.
+    mutable std::mutex _robots_mutex;
     std::map<std::string, RobotHooks> _hooks;
+    // Robots whose services, topics and speed-limit parameter exist; they stay when a robot is removed.
+    std::set<std::string> _interfaces;
 
     std::map<std::string, rclcpp::Publisher<std_msgs::msg::String>::SharedPtr> _init_position_result_pubs;
     std::mutex _pending_mutex;

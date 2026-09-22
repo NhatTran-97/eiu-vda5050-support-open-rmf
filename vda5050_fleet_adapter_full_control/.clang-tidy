@@ -1,0 +1,16 @@
+# Checks run by scripts/static_analysis.sh.
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  concurrency-*,
+  performance-*,
+  cert-*,
+  misc-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-exception-escape,
+  -cert-err33-c,
+  -misc-non-private-member-variables-in-classes,
+  -performance-inefficient-string-concatenation
+# Report findings in this package's headers, not in ROS or third-party ones.
+HeaderFilterRegex: 'vda5050_fleet_adapter_full_control/include/.*'

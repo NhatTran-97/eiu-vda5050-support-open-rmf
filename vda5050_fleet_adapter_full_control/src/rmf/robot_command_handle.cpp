@@ -12,22 +12,6 @@
 namespace vda5050_fleet_adapter_full_control::rmf {
 
 namespace {
-// Position tolerance for waypoint progress when nodeId is unavailable.
-constexpr double kWaypointReachedMetres = 0.5;
-
-// Speeds below this threshold use the configured nominal speed for estimates.
-constexpr double kUsableSpeedMetresPerSecond = 0.05;
-
-// Early-arrival threshold for schedule diagnostics.
-constexpr double kEarlyArrivalWarnSeconds = 2.0;
-
-// Treat near-identical poses as the same waypoint.
-constexpr double kSamePoseMetres = 0.05;
-constexpr double kSamePoseRadians = 0.05;
-
-// Allow this long for a new path before a traffic hold becomes a cancellation.
-constexpr double kTrafficPauseTimeoutSeconds = 10.0;
-
 // Count route points whose release time has passed; the first point is always released.
 std::size_t releasable_count(const std::vector<rmf_traffic::Time> &times, rmf_traffic::Time now)
 {
@@ -59,15 +43,16 @@ bool has_lane(const rmf_traffic::agv::Graph &graph, std::size_t from, std::size_
 }  // namespace
 
 VdaRobotCommandHandle::VdaRobotCommandHandle(
-    rclcpp::Logger logger, std::string name, Connector &connector,
+    const rclcpp::Logger &logger, std::string name, Connector &connector,
     std::shared_ptr<const rmf_traffic::agv::Graph> graph, double nominal_speed,
-    rclcpp::Clock::SharedPtr clock, bool honor_waypoint_timing, bool stitch_on_replan)
-  : _logger(std::move(logger)), _name(std::move(name)), _connector(connector),
+    rclcpp::Clock::SharedPtr clock, bool honor_waypoint_timing, bool stitch_on_replan, const RoutePolicy &route_policy)
+  : _logger(logger), _name(std::move(name)), _connector(connector),
     _graph(std::move(graph)),
     _nominal_speed(nominal_speed > 0.0 ? nominal_speed : 0.5),
     _clock(std::move(clock)),
     _honor_waypoint_timing(honor_waypoint_timing),
-    _stitch_on_replan(stitch_on_replan)
+    _stitch_on_replan(stitch_on_replan),
+    _route_policy(route_policy)
 {
 }
 
@@ -92,7 +77,7 @@ std::string VdaRobotCommandHandle::derive_node_id(const std::string &name, std::
 std::string VdaRobotCommandHandle::node_id_for(
     const rmf_traffic::agv::Plan::Waypoint &wp) const
 {
-    const Eigen::Vector3d p = wp.position();
+    const Eigen::Vector3d &p = wp.position();
     std::string name;
     if (_graph && wp.graph_index().has_value())
     {
@@ -138,7 +123,7 @@ double VdaRobotCommandHandle::estimate_seconds(
 {
     // Use measured speed while moving, otherwise the fleet's nominal speed.
     double speed = _nominal_speed;
-    if (velocity.has_value() && velocity->speed() >= kUsableSpeedMetresPerSecond)
+    if (velocity.has_value() && velocity->speed() >= _route_policy.usable_speed_mps)
     {
         speed = velocity->speed();
     }
@@ -163,16 +148,22 @@ void VdaRobotCommandHandle::follow_new_path(
         return;
     }
 
+    // An AGV without a valid pose cannot start from anywhere, so no order goes out until it has one.
+    const auto current = _connector.get_data(_name);
+    if (!current.has_value())
+    {
+        RCLCPP_WARN(_logger, "[%s] follow_new_path: the AGV has no valid pose -- not sending the order", _name.c_str());
+        return;
+    }
+
     // Skip the first RMF waypoint only when its pose matches the AGV's current pose.
     std::size_t start_index = 0;
-    const auto current = _connector.get_data(_name);
-    if (current.has_value())
     {
         const Eigen::Vector3d first = waypoints.front().position();
         double dtheta = first.z() - current->position[2];
         dtheta = std::atan2(std::sin(dtheta), std::cos(dtheta));
         const double dxy = std::hypot(first.x() - current->position[0], first.y() - current->position[1]);
-        if (dxy < kSamePoseMetres && std::fabs(dtheta) < kSamePoseRadians)
+        if (dxy < _route_policy.same_pose_m && std::fabs(dtheta) < _route_policy.same_pose_rad)
         {
             start_index = 1;
         }
@@ -215,7 +206,7 @@ void VdaRobotCommandHandle::follow_new_path(
     for (std::size_t i = start_index; i < waypoints.size(); ++i)
     {
         const auto &wp = waypoints[i];
-        const Eigen::Vector3d p = wp.position();
+        const Eigen::Vector3d &p = wp.position();
         const std::string node_id = node_id_for(wp);
 
         if (_graph && wp.graph_index().has_value())
@@ -230,7 +221,8 @@ void VdaRobotCommandHandle::follow_new_path(
             }
             map_name = wp_map;
 
-            if (i > start_index && waypoints[i - 1].graph_index().has_value() && !has_lane(*_graph, *waypoints[i - 1].graph_index(), *wp.graph_index()))
+            if (i > start_index && waypoints[i - 1].graph_index().has_value() && waypoints[i - 1].graph_index() != wp.graph_index() &&
+                !has_lane(*_graph, *waypoints[i - 1].graph_index(), *wp.graph_index()))
             {
                 RCLCPP_WARN(_logger, "[%s] no graph lane from '%s' to '%s' in this order", _name.c_str(), active.node_ids.back().c_str(), node_id.c_str());
             }
@@ -346,6 +338,17 @@ void VdaRobotCommandHandle::follow_new_path(
 
 void VdaRobotCommandHandle::stop()
 {
+    // An AGV with no order and no pose has nothing to hold; RMF keeps replanning until it localizes.
+    bool has_order = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        has_order = _path.has_value();
+    }
+    if (!has_order && !_connector.get_data(_name).has_value())
+    {
+        return;
+    }
+
     // Pause on stop and cancel only if no replacement path arrives.
     if (_connector.pause(_name) == CommandStatus::transport_failed)
     {
@@ -353,7 +356,11 @@ void VdaRobotCommandHandle::stop()
         return;
     }
     std::lock_guard<std::mutex> lock(_mutex);
-    _traffic_pause_deadline = std::chrono::steady_clock::now() +  std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(kTrafficPauseTimeoutSeconds));
+    // A repeated stop keeps the hold's first deadline, so replans cannot postpone the cancellation forever.
+    if (!_traffic_pause_deadline.has_value())
+    {
+        _traffic_pause_deadline = std::chrono::steady_clock::now() +  std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(_route_policy.traffic_pause_timeout_s));
+    }
     RCLCPP_INFO(_logger, "[%s] stop (startPause, awaiting resume or cancel)", _name.c_str());
 }
 
@@ -454,23 +461,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         RCLCPP_INFO(_logger, "[%s] AGV pause state changed to %s outside pause()/resume() -- syncing RMF",  _name.c_str(), data.paused ? "paused" : "not paused");
     }
 
-    // Cancel a traffic hold that received no replacement path.
-    bool escalate_to_cancel = false;
-    {
-        std::lock_guard<std::mutex> lock(_mutex);
-        if (_traffic_pause_deadline && std::chrono::steady_clock::now() >= *_traffic_pause_deadline)
-        {
-            _traffic_pause_deadline.reset();
-            _path.reset();
-            escalate_to_cancel = true;
-        }
-    }
-    if (escalate_to_cancel)
-    {
-        RCLCPP_WARN(_logger, "[%s] stop: no resume arrived -- cancelling for real", _name.c_str());
-        _connector.stop(_name);
-        release_traffic_hold();
-    }
+    expire_traffic_hold();
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -558,8 +549,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                 {
                     action_failed = (status == "FAILED");
                     action_id_done = _action_id;
-                    action_exec = std::move(_action_exec);
-                    _action_exec.reset();
+                    action_exec = std::exchange(_action_exec, std::nullopt);
                     _action_id.clear();
                 }
             }
@@ -599,7 +589,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
             {
                 const auto &target = path.positions[path.next_index];
                 const bool reported =  !data.last_node_id.empty() && path.node_ids[path.next_index] == data.last_node_id;
-                const bool standing_on_it = std::hypot(target.x() - here.x(), target.y() - here.y()) <= kWaypointReachedMetres;
+                const bool standing_on_it = std::hypot(target.x() - here.x(), target.y() - here.y()) <= _route_policy.waypoint_reached_m;
                 bool reached = reported || standing_on_it;
 
                 // Keep repeated node IDs for in-place turns.
@@ -607,7 +597,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                 {
                     double dtheta = target.z() - here.z();
                     dtheta = std::atan2(std::sin(dtheta), std::cos(dtheta));
-                    reached = std::fabs(dtheta) < kSamePoseRadians;
+                    reached = std::fabs(dtheta) < _route_policy.same_pose_rad;
                 }
 
                 if (!reached)
@@ -620,7 +610,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                 {
                     const double early = std::chrono::duration<double>( path.times[path.next_index] - rmf_traffic_ros2::convert(_clock->now())).count();
 
-                    if (early > kEarlyArrivalWarnSeconds)
+                    if (early > _route_policy.early_arrival_warn_s)
                     {
                         RCLCPP_WARN(_logger, "[%s] reached waypoint %zu ~%.1fs ahead of the time RMF " "planned around -- other itineraries assumed this robot ""would not be here yet",  _name.c_str(), path.next_index, early);
                     }
@@ -709,7 +699,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
     }
 }
 
-void VdaRobotCommandHandle::set_update_handle(std::shared_ptr<RobotUpdateHandle> handle)
+void VdaRobotCommandHandle::set_update_handle(const std::shared_ptr<RobotUpdateHandle> &handle)
 {
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -846,6 +836,22 @@ void VdaRobotCommandHandle::set_ready_for_orders(bool ready, const std::string &
         }
     }
     apply_commission();
+}
+
+void VdaRobotCommandHandle::expire_traffic_hold()
+{
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (!_traffic_pause_deadline || std::chrono::steady_clock::now() < *_traffic_pause_deadline)
+        {
+            return;
+        }
+        _traffic_pause_deadline.reset();
+        _path.reset();
+    }
+    RCLCPP_WARN(_logger, "[%s] stop: no resume arrived -- cancelling for real", _name.c_str());
+    _connector.stop(_name);
+    release_traffic_hold();
 }
 
 void VdaRobotCommandHandle::release_traffic_hold()

@@ -12,6 +12,10 @@ namespace vda5050_fleet_adapter_full_control::vda5050 {
 // Returns true for terminal VDA5050 action states: FINISHED and FAILED.
 bool is_terminal_action_status(const std::string &status);
 
+// Parse an ISO 8601 UTC timestamp such as "2026-09-20T10:00:00.123Z" into milliseconds since the epoch.
+// Returns nullopt for any other form.
+std::optional<std::int64_t> parse_timestamp_ms(const std::string &text);
+
 // Velocity reported in the AGV frame.
 struct Velocity
 {
@@ -40,6 +44,10 @@ class ParsedState
 public:
     ParsedState() = default;
     explicit ParsedState(const nlohmann::json &raw);
+
+    // headerId and timestamp (epoch milliseconds) of the message, when present and well formed.
+    std::optional<std::uint32_t> header_id;
+    std::optional<std::int64_t> timestamp_ms;
 
     // agvPosition
     std::optional<double> x;
@@ -90,7 +98,7 @@ public:
     std::string first_fatal_error() const;
 
     // Check whether the tracked order reached its target node.
-    bool order_finished(const std::string &order_id, const std::string &target_node_id = "", const std::vector<std::string> &order_action_ids = {}) const;
+    bool order_finished(const std::string &expected_order_id, const std::string &target_node_id = "", const std::vector<std::string> &order_action_ids = {}) const;
 
     // Check whether the supplied actions all reached terminal states.
     bool actions_settled(const std::vector<std::string> &action_ids) const;

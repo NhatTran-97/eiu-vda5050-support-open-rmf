@@ -81,8 +81,8 @@ std::optional<StitchPlan> attach(const std::vector<RouteWaypoint> &current_route
     const std::size_t remaining = released_count - traversed;
 
     StitchPlan plan;
-    plan.route.assign(current_route.begin(), current_route.begin() + released_count);
-    plan.route.insert(plan.route.end(), new_route.begin() + n, new_route.end());
+    plan.route.assign(current_route.begin(), current_route.begin() + static_cast<std::ptrdiff_t>(released_count));
+    plan.route.insert(plan.route.end(), new_route.begin() + static_cast<std::ptrdiff_t>(n), new_route.end());
     // Order points the new route does not repeat count as already passed.
     plan.consumed = traversed + (remaining - matched);
     plan.stitch_index = released_count;
@@ -130,6 +130,17 @@ std::optional<StitchPlan> plan_stitch(const std::vector<RouteWaypoint> &current_
         }
     }
     return std::nullopt;
+}
+
+std::size_t stitched_released_count(const StitchPlan &plan, std::size_t sent_released, std::size_t requested_released)
+{
+    // An unchanged route keeps the horizon last sent.
+    if (plan.unchanged)
+    {
+        return sent_released;
+    }
+    const std::size_t wanted = plan.consumed + (requested_released > plan.leading ? requested_released - plan.leading : 0);
+    return std::max(sent_released, std::min(wanted, plan.route.size()));
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050

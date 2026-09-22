@@ -57,7 +57,7 @@ std::string make_uuid()
 std::string topic(const std::string &interface_name, const std::string &manufacturer,
                   const std::string &serial, const std::string &leaf)
 {
-    return interface_name + "/v2/" + manufacturer + "/" + serial + "/" + leaf;
+    return interface_name + "/" + TOPIC_VERSION + "/" + manufacturer + "/" + serial + "/" + leaf;
 }
 
 nlohmann::json make_node(const std::string &node_id, int sequence_id,

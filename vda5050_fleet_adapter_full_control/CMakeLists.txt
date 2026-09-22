@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.8)
 project(vda5050_fleet_adapter_full_control)
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
+
 if(NOT CMAKE_CXX_STANDARD)
   set(CMAKE_CXX_STANDARD 17)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,8 +22,11 @@ find_package(rmf_traffic REQUIRED)
 find_package(rmf_traffic_ros2 REQUIRED)
 find_package(rmf_battery REQUIRED)
 find_package(rmf_fleet_msgs REQUIRED)
+find_package(rmf_utils REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(rcl_interfaces REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(nlohmann_json REQUIRED)
@@ -42,11 +49,21 @@ add_library(${PROJECT_NAME}_core SHARED
   src/vda5050/order_handler.cpp
   src/vda5050/order_validation.cpp
   src/vda5050/route_stitch.cpp
+  src/vda5050/state_sequence.cpp
+  src/vda5050/cancel_tracker.cpp
+  src/util/log_throttle.cpp
+  src/util/loop_pacer.cpp
+  src/util/metrics.cpp
   src/vda5050/instant_action_handler.cpp
   src/rmf/connector.cpp
   src/rmf/robot_command_handle.cpp
   src/core/config.cpp
+  src/core/metrics_report.cpp
   src/core/operator_interface.cpp
+  src/core/robot_registration.cpp
+  src/core/runtime_robots.cpp
+  src/core/robot_manager.cpp
+  src/core/registration_interface.cpp
 )
 
 
@@ -64,7 +81,7 @@ target_link_libraries(${PROJECT_NAME}_core PUBLIC
   ${PAHO_MQTT_C_LIB}
 )
 ament_target_dependencies(${PROJECT_NAME}_core PUBLIC
-  rclcpp rmf_traffic rmf_traffic_ros2 rmf_battery rmf_fleet_msgs geometry_msgs std_srvs)
+  rclcpp rmf_traffic rmf_traffic_ros2 rmf_battery rmf_fleet_msgs rmf_utils geometry_msgs std_msgs std_srvs rcl_interfaces)
 
 # Build the adapter node.
 add_executable(fleet_adapter
@@ -88,6 +105,8 @@ install(PROGRAMS
         scripts/dispatch_patrol.py
         scripts/dispatch_delivery.py
         scripts/cancel_task.py
+        scripts/register_robot.py
+        scripts/registration_sandbox.py
         scripts/mock_mqtt_robot.py
         scripts/mock_dispenser.py
         scripts/mock_ingestor.py
@@ -108,6 +127,38 @@ if(BUILD_TESTING)
   target_link_libraries(test_order_validation ${PROJECT_NAME}_core)
   ament_add_gtest(test_route_stitch test/test_route_stitch.cpp)
   target_link_libraries(test_route_stitch ${PROJECT_NAME}_core)
+  ament_add_gtest(test_robot_registration test/test_robot_registration.cpp)
+  target_link_libraries(test_robot_registration ${PROJECT_NAME}_core)
+  ament_add_gtest(test_runtime_robots test/test_runtime_robots.cpp)
+  target_link_libraries(test_runtime_robots ${PROJECT_NAME}_core)
+  ament_add_gtest(test_connector_discovery test/test_connector_discovery.cpp)
+  target_link_libraries(test_connector_discovery ${PROJECT_NAME}_core)
+  ament_add_gtest(test_cancel_tracker test/test_cancel_tracker.cpp)
+  target_link_libraries(test_cancel_tracker ${PROJECT_NAME}_core)
+  ament_add_gtest(test_loop_pacer test/test_loop_pacer.cpp)
+  target_link_libraries(test_loop_pacer ${PROJECT_NAME}_core)
+  ament_add_gtest(test_metrics test/test_metrics.cpp)
+  target_link_libraries(test_metrics ${PROJECT_NAME}_core)
+  ament_add_gtest(test_metrics_report test/test_metrics_report.cpp)
+  target_link_libraries(test_metrics_report ${PROJECT_NAME}_core)
+  ament_add_gtest(test_log_throttle test/test_log_throttle.cpp)
+  target_link_libraries(test_log_throttle ${PROJECT_NAME}_core)
+  ament_add_gtest(test_mqtt_client test/test_mqtt_client.cpp)
+  target_link_libraries(test_mqtt_client ${PROJECT_NAME}_core)
+  ament_add_gtest(test_state_sequence test/test_state_sequence.cpp)
+  target_link_libraries(test_state_sequence ${PROJECT_NAME}_core)
+  ament_add_gtest(test_connector_routing test/test_connector_routing.cpp)
+  target_link_libraries(test_connector_routing ${PROJECT_NAME}_core)
+  ament_add_gtest(test_registration_config test/test_registration_config.cpp)
+  target_link_libraries(test_registration_config ${PROJECT_NAME}_core)
+  ament_add_gtest(test_mqtt_config test/test_mqtt_config.cpp)
+  target_link_libraries(test_mqtt_config ${PROJECT_NAME}_core)
+  ament_add_gtest(test_threshold_config test/test_threshold_config.cpp)
+  target_link_libraries(test_threshold_config ${PROJECT_NAME}_core)
+
+  # Load-test probe: not a test; built with them and run by tools/load_test/load_run.py.
+  add_executable(load_probe tools/load_test/load_probe.cpp)
+  target_link_libraries(load_probe ${PROJECT_NAME}_core)
 endif()
 
 ament_package()

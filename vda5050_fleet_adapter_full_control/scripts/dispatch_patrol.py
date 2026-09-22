@@ -18,7 +18,11 @@ def main():
     parser.add_argument("-n", "--rounds", type=int, default=1,
                         help="number of loops over the places (default 1)")
     parser.add_argument("--fleet", default="", help="optional fleet name to target")
+    parser.add_argument("--robot", default="",
+                        help="assign the task to this robot of --fleet instead of letting RMF choose")
     args = parser.parse_args()
+    if args.robot and not args.fleet:
+        parser.error("--robot needs --fleet")
 
     rclpy.init()
     node = rclpy.create_node("rmf_cli_dispatch")
@@ -37,12 +41,16 @@ def main():
         "unix_millis_earliest_start_time": 0,
         "requester": "cli",
     }
-    if args.fleet:
-        request["fleet_name"] = args.fleet
+    if args.robot:
+        envelope = {"type": "robot_task_request", "robot": args.robot, "fleet": args.fleet, "request": request}
+    else:
+        if args.fleet:
+            request["fleet_name"] = args.fleet
+        envelope = {"type": "dispatch_task_request", "request": request}
 
     msg = ApiRequest()
     msg.request_id = "cli-" + uuid.uuid4().hex[:8]
-    msg.json_msg = json.dumps({"type": "dispatch_task_request", "request": request})
+    msg.json_msg = json.dumps(envelope)
 
     # Match RMF's response to the requested task ID.
     result = {"task_id": None}

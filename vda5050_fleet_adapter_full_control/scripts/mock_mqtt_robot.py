@@ -63,7 +63,9 @@ class MockRobot:
     def _on_connect(self, client, userdata, flags, rc):
         client.subscribe(f"{self.base}/order", qos=1)
         client.subscribe(f"{self.base}/instantActions", qos=1)
+        client.subscribe(f"{self.base}/mock_control", qos=1)
         self.publish_connection("ONLINE")
+        self.publish_factsheet()
         self.publish_state()
         print(f"[mock] connected — identity {self.base}", flush=True)
 
@@ -76,6 +78,8 @@ class MockRobot:
             self._handle_order(payload)
         elif msg.topic.endswith("/instantActions"):
             self._handle_instant_actions(payload)
+        elif msg.topic.endswith("/mock_control"):
+            self._handle_control(payload)
 
     # Publish VDA5050 messages.
 
@@ -93,6 +97,34 @@ class MockRobot:
         self.client.publish(f"{self.base}/connection",
                             json.dumps(self._connection_payload(state)),
                             qos=1, retain=True)
+
+    def publish_factsheet(self):
+        """Publish the retained factsheet unless the mock runs without one."""
+        if self.args.no_factsheet:
+            return
+        a = self.args
+        actions = [{"actionType": t, "actionScopes": ["INSTANT"], "blockingTypes": ["NONE", "SOFT", "HARD"]}
+                   for t in ("startPause", "stopPause", "cancelOrder", "stateRequest", "factsheetRequest")]
+        msg = {
+            "headerId": self._next_header(),
+            "timestamp": iso_now(),
+            "version": "2.1.0",
+            "manufacturer": a.manufacturer,
+            "serialNumber": a.serial,
+            "typeSpecification": {
+                "seriesName": a.series, "agvKinematic": a.kinematic, "agvClass": a.agv_class,
+                "maxLoadMass": 0, "localizationTypes": ["NATURAL"], "navigationTypes": ["AUTONOMOUS"],
+            },
+            "physicalParameters": {
+                "speedMin": 0.0, "speedMax": a.speed_max, "accelerationMax": a.accel_max,
+                "decelerationMax": a.accel_max, "heightMax": 0.3, "width": a.width, "length": a.length,
+            },
+            "protocolLimits": {"maxStringLens": {}, "maxArrayLens": {}, "timing": {
+                "minOrderInterval": 0.1, "minStateInterval": 0.1, "defaultStateInterval": 1.0}},
+            "protocolFeatures": {"optionalParameters": [], "agvActions": actions},
+            "agvGeometry": {}, "loadSpecification": {}, "localizationParameters": {},
+        }
+        self.client.publish(f"{self.base}/factsheet", json.dumps(msg), qos=1, retain=True)
 
     def publish_state(self):
         with self.lock:
@@ -113,10 +145,10 @@ class MockRobot:
                 "paused": self.paused.is_set(),
                 "newBaseRequest": self.new_base_request,
                 "operatingMode": "AUTOMATIC",
-                "batteryState": {"batteryCharge": 95.0, "charging": False},
+                "batteryState": {"batteryCharge": self.args.battery, "charging": False},
                 "agvPosition": {
                     "x": self.x, "y": self.y, "theta": self.theta,
-                    "mapId": self.map_id, "positionInitialized": True,
+                    "mapId": self.map_id, "positionInitialized": not self.args.pose_uninitialized,
                 },
                 "errors": [], "information": [],
                 "safetyState": {"eStop": "NONE", "fieldViolation": False},
@@ -138,9 +170,9 @@ class MockRobot:
             if is_update:
                 if update_id <= self.order_update_id:
                     return  # Ignore stale order updates
-                # Extend the active order and wake the drive loop.
-                self.nodes = nodes
-                self.edges = edges
+                # An update carries the route from its stitching node on: merge it by sequenceId.
+                self.nodes = self._merge(self.nodes, nodes, "sequenceId")
+                self.edges = self._merge(self.edges, edges, "sequenceId")
                 self.order_update_id = update_id
                 self.cond.notify_all()
 
@@ -169,6 +201,13 @@ class MockRobot:
 
         self._drive_thread = threading.Thread(target=self._drive_route, daemon=True)
         self._drive_thread.start()
+
+    @staticmethod
+    def _merge(current: list, update: list, key: str) -> list:
+        """Overlay `update` on `current` by `key`, keeping the sequence order."""
+        merged = {item.get(key, 0): item for item in current}
+        merged.update({item.get(key, 0): item for item in update})
+        return [merged[k] for k in sorted(merged)]
 
     @staticmethod
     def _node_state(node: dict) -> dict:
@@ -218,7 +257,13 @@ class MockRobot:
             print(f"[mock] already at {self.last_node_id}", flush=True)
             return
 
-        for index in range(1, total):
+        index = 0
+        while True:
+            index += 1
+            with self.lock:
+                total = len(self.nodes)
+            if index >= total:
+                return
             if not self._await_release(index):
                 return
 
@@ -267,8 +312,8 @@ class MockRobot:
                 with self.lock:
                     self.driving = True
 
-            last = index + 1 >= total
             with self.lock:
+                last = index + 1 >= len(self.nodes)
                 self.x, self.y, self.theta = tx, ty, tth
                 self.last_node_id = node_id
                 self.last_node_sequence_id = node.get("sequenceId", 0)
@@ -278,12 +323,45 @@ class MockRobot:
             self.publish_state()
             print(f"[mock] {'arrived' if last else 'reached'} {node_id}", flush=True)
 
+    def _handle_control(self, control: dict):
+        """Test hook on <base>/mock_control: {"pose_initialized": false} makes the robot lose its localization."""
+        if isinstance(control.get("pose_initialized"), bool):
+            self.args.pose_uninitialized = not control["pose_initialized"]
+            print(f"[mock] pose_initialized -> {control['pose_initialized']}", flush=True)
+            self.publish_state()
+
+    def _handle_init_position(self, action: dict):
+        """Take the pose of an initPosition action and report the robot as localized."""
+        raw = action.get("actionParameters") or []
+        params = ({p.get("key"): p.get("value") for p in raw if isinstance(p, dict)}
+                  if isinstance(raw, list) else dict(raw))
+        try:
+            x, y, theta = float(params["x"]), float(params["y"]), float(params["theta"])
+        except (KeyError, TypeError, ValueError):
+            status = "FAILED"
+        else:
+            status = "FINISHED"
+            with self.lock:
+                self.x, self.y, self.theta = x, y, theta
+                self.map_id = str(params.get("mapId") or self.map_id)
+            self.args.pose_uninitialized = False
+        with self.lock:
+            self.action_states.append({"actionId": action.get("actionId", ""), "actionType": "initPosition",
+                                       "actionStatus": status})
+        self.publish_state()
+        print(f"[mock] initPosition -- {status}", flush=True)
+
     def _handle_instant_actions(self, ia: dict):
         for a in ia.get("actions", []):
             kind = a.get("actionType")
             aid = a.get("actionId", "")
             if kind == "stateRequest":
                 self.publish_state()
+            elif kind == "initPosition":
+                self._handle_init_position(a)
+            elif kind == "factsheetRequest":
+                self.publish_factsheet()
+                print("[mock] factsheetRequest -- factsheet sent", flush=True)
             elif kind == "startPause":
                 self.paused.set()
                 with self.lock:
@@ -342,6 +420,18 @@ def main():
                    help="seconds per simulated motion step")
     p.add_argument("--state-period", type=float, default=1.0,
                    help="seconds between idle state publishes")
+    p.add_argument("--battery", type=float, default=95.0, help="reported battery charge, percent")
+    p.add_argument("--pose-uninitialized", action="store_true",
+                   help="report positionInitialized=false")
+    p.add_argument("--no-factsheet", action="store_true",
+                   help="publish no factsheet and ignore factsheetRequest")
+    p.add_argument("--series", default="TurtleBot3 Burger", help="factsheet typeSpecification.seriesName")
+    p.add_argument("--kinematic", default="DIFF", help="factsheet typeSpecification.agvKinematic")
+    p.add_argument("--agv-class", default="CARRIER", help="factsheet typeSpecification.agvClass")
+    p.add_argument("--speed-max", type=float, default=0.22, help="factsheet speedMax, m/s")
+    p.add_argument("--accel-max", type=float, default=1.0, help="factsheet accelerationMax, m/s^2")
+    p.add_argument("--length", type=float, default=0.138, help="factsheet length, m")
+    p.add_argument("--width", type=float, default=0.178, help="factsheet width, m")
     MockRobot(p.parse_args()).run()
 
 
