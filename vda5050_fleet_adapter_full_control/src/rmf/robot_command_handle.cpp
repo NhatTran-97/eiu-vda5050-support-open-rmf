@@ -174,7 +174,7 @@ void VdaRobotCommandHandle::follow_new_path(
         RCLCPP_INFO(_logger, "[%s] follow_new_path: already at the only waypoint given, nothing to " "travel to", _name.c_str());
         if (path_finished_callback)
         {
-            path_finished_callback();
+            path_finished_callback(); 
         }
         return;
     }

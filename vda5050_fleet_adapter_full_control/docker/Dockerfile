@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ros-jazzy-rmf-traffic-ros2 \
       ros-jazzy-rmf-task-ros2 \
       ros-jazzy-rmf-task-msgs \
+      ros-jazzy-rmf-building-map-tools \
       ros-jazzy-nav2-msgs \
       libpaho-mqtt-dev \
       libpaho-mqttpp-dev \

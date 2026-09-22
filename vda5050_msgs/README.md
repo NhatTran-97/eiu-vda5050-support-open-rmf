@@ -29,7 +29,7 @@ straight to MQTT JSON (`factsheet_handler.cpp`), so there's no `Factsheet.msg`.
 ### Top-level protocol messages
 
 | Message | VDA5050 topic | Description |
-|---|---|---|
+|:---:|:---:|---|
 | `Order` | order | Navigation order: orderId, updateId, nodes, edges |
 | `InstantActions` | instantActions | Header + a set of actions to execute immediately |
 | `State` | state | Full robot state: order/action progress, position, velocity, battery, safety, errors, operating mode, loads, maps |
@@ -39,7 +39,7 @@ straight to MQTT JSON (`factsheet_handler.cpp`), so there's no `Factsheet.msg`.
 ### Supporting / nested types
 
 | Message | Description |
-|---|---|
+|:---:|---|
 | `Action` | Action with id, type, parameters, and blocking type |
 | `ActionParameter` | Key/value parameter for an action |
 | `ActionState` | Action lifecycle status (WAITING / INITIALIZING / RUNNING / PAUSED / FINISHED / FAILED) |

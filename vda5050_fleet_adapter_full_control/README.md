@@ -214,7 +214,6 @@ keep `*.runtime_robots.yaml*` out of version control.
 
 ```bash
 ros2 run vda5050_fleet_adapter_full_control registration_sandbox.py up      # private broker, RMF core, both fleets
-export ROS_DOMAIN_ID=77
 ros2 run vda5050_fleet_adapter_full_control register_robot.py discovered    # after about 12 s
 ros2 run vda5050_fleet_adapter_full_control registration_sandbox.py restart-adapters   # runtime robots come back
 ros2 run vda5050_fleet_adapter_full_control registration_sandbox.py down
@@ -270,21 +269,20 @@ one-second sample, to watch a broker outage. Point it at a private broker, never
 
 ## Reviewer recommendations
 
-| Recommendation | Status |
-|:---:|---|
-| Request and consume the factsheet | ✅ Done — [`factsheet_handler.cpp`](src/vda5050/factsheet_handler.cpp) reads capabilities and limits from the AGV's factsheet, and [`poll()`](src/rmf/connector.cpp#L733) sends `factsheetRequest` when none arrived; the checks gate (see validation below). Only exercised against a simulated robot without a retained factsheet |
-| Drive per-action blocking from the factsheet | ✅ Done — [`blocking_type_for()`](src/rmf/connector.cpp#L883) reads the blocking type from `agvActions`; hardcoded values are only a fallback |
-| Demonstrate multi-robot | ✅ Done — `tb3_fleet` ([`config_tb3.yaml`](config/config_tb3.yaml)) runs two robots (`tb3_1`, `tb3_2`); `amr_fleet` ([`config_amr.yaml`](config/config_amr.yaml)) runs single-robot (`amr_1`) |
-| Act on connection loss | ✅ Done — [`apply_commission()`](src/rmf/robot_command_handle.cpp#L866) calls `RobotUpdateHandle::set_commission()`/`decommission()` when VDA5050 state goes stale |
-| Pause and resume instead of cancel | ✅ Done — an RMF-initiated stop pauses first ([`stop()`](src/rmf/robot_command_handle.cpp#L347)); only escalates to `cancelOrder` if no new path arrives before the deadline, and [`release_traffic_hold()`](src/rmf/robot_command_handle.cpp#L851) unpauses the AGV afterwards |
-| Add initPosition for re-localization | ✅ Done — `~/<robot>/init_position` topic + UI re-localize control ([`on_init_position()`](src/core/operator_interface.cpp#L170)); the AGV's verdict is published on `init_position_result` |
-| Add validation as the inputs arrive | ✅ Done — startup config validation ([`config.cpp`](src/core/config.cpp)), a runtime [`has_lane()`](src/rmf/robot_command_handle.cpp#L47) check that two consecutive order waypoints have a graph lane between them, and pre-send order/action validation with a severity split ([`order_validation.cpp`](src/vda5050/order_validation.cpp)): hard violations are rejected, soft ones warned (`strict_validation`) |
-| Model physical actions with mock dispenser and ingestor workcells | ✅ Done — [`mock_dispenser.py`](scripts/mock_dispenser.py) + [`mock_ingestor.py`](scripts/mock_ingestor.py) + a Delivery task (pickup → wait → dropoff → wait) |
-| Try multi-node orders from the /fleet_states path | ✅ Done — [`follow_new_path()`](src/rmf/robot_command_handle.cpp#L151) sends the whole planned route as one VDA5050 order, not one destination at a time |
-| Multi-node orders and order updates (stitching on replan) | ✅ Done — with `stitch_on_replan`, [`replan_route()`](src/rmf/connector.cpp#L292) attaches the replanned tail to the live order ([`route_stitch.cpp`](src/vda5050/route_stitch.cpp)) so the client's stitching runs; verified on a real AMR. A replan that changes the part already released still replaces the order, since VDA5050 cannot withdraw released nodes |
-| Explore the full_control branch | ✅ Done — built directly on [`RobotCommandHandle`](include/vda5050_fleet_adapter_full_control/rmf/robot_command_handle.hpp#L24)/`FleetUpdateHandle` (full control), not `EasyFullControl` |
-| Dynamic robot registration (add/remove at runtime) | ✅ Done — [`RegistrationInterface`](src/core/registration_interface.cpp) checks and adds a robot the broker reports, with a matching dashboard flow; a removed robot's name/identity/charger stay reserved and it can be registered again to restore it, no restart either way. See [Add a robot at runtime](#add-a-robot-at-runtime) |
-| Test against a third-party VDA5050 client | ⬜ Not done — only tested against this project's own client ([`vda5050_client_adapter`](../vda5050_client_adapter/README.md)) and mocks |
+| Round | Recommendation | Status |
+|:---:|:---:|---|
+| **Round 1** | Drive per-action blocking from the factsheet | ✅ Done — [`blocking_type_for()`](src/rmf/connector.cpp#L883) reads the blocking type from `agvActions`; hardcoded values are only a fallback |
+| **Round 1** | Demonstrate multi-robot | ✅ Done — `tb3_fleet` ([`config_tb3.yaml`](config/config_tb3.yaml)) runs two robots (`tb3_1`, `tb3_2`); `amr_fleet` ([`config_amr.yaml`](config/config_amr.yaml)) runs single-robot (`amr_1`) |
+| **Round 1** | Act on connection loss | ✅ Done — [`apply_commission()`](src/rmf/robot_command_handle.cpp#L866) calls `RobotUpdateHandle::set_commission()`/`decommission()` when VDA5050 state goes stale |
+| **Round 1** | Pause and resume instead of cancel | ✅ Done — an RMF-initiated stop pauses first ([`stop()`](src/rmf/robot_command_handle.cpp#L347)); only escalates to `cancelOrder` if no new path arrives before the deadline, and [`release_traffic_hold()`](src/rmf/robot_command_handle.cpp#L851) unpauses the AGV afterwards |
+| **Round 1** | Add initPosition for re-localization | ✅ Done — `~/<robot>/init_position` topic + UI re-localize control ([`on_init_position()`](src/core/operator_interface.cpp#L170)); the AGV's verdict is published on `init_position_result` |
+| **Round 1** | Model physical actions with mock dispenser and ingestor workcells | ✅ Done — [`mock_dispenser.py`](scripts/mock_dispenser.py) + [`mock_ingestor.py`](scripts/mock_ingestor.py) + a Delivery task (pickup → wait → dropoff → wait) |
+| **Round 1** | Try multi-node orders from the /fleet_states path | ✅ Done — [`follow_new_path()`](src/rmf/robot_command_handle.cpp#L151) sends the whole planned route as one VDA5050 order, not one destination at a time |
+| **Round 1** | Explore the full_control branch | ✅ Done — built directly on [`RobotCommandHandle`](include/vda5050_fleet_adapter_full_control/rmf/robot_command_handle.hpp#L24)/`FleetUpdateHandle` (full control), not `EasyFullControl` |
+| **Round 1** | Test against a third-party VDA5050 client | ⬜ Not done — only tested against this project's own client ([`vda5050_client_adapter`](../vda5050_client_adapter/README.md)) and mocks |
+| **Round 2** | Request and consume the factsheet | ✅ Done — [`factsheet_handler.cpp`](src/vda5050/factsheet_handler.cpp) reads capabilities and limits from the AGV's factsheet, and [`poll()`](src/rmf/connector.cpp#L733) sends `factsheetRequest` when none arrived; the checks gate (see validation below). Only exercised against a simulated robot without a retained factsheet |
+| **Round 2** | Add validation as the inputs arrive | ✅ Done — startup config validation ([`config.cpp`](src/core/config.cpp)), a runtime [`has_lane()`](src/rmf/robot_command_handle.cpp#L47) check that two consecutive order waypoints have a graph lane between them, and pre-send order/action validation with a severity split ([`order_validation.cpp`](src/vda5050/order_validation.cpp)): hard violations are rejected, soft ones warned (`strict_validation`) |
+| **Round 2** | Multi-node orders and order updates (stitching on replan) | ✅ Done — with `stitch_on_replan`, [`replan_route()`](src/rmf/connector.cpp#L292) attaches the replanned tail to the live order ([`route_stitch.cpp`](src/vda5050/route_stitch.cpp)) so the client's stitching runs; verified on a real AMR. A replan that changes the part already released still replaces the order, since VDA5050 cannot withdraw released nodes |
 
 ## Other capabilities
 
@@ -298,3 +296,4 @@ Added along the way; the last four are also listed as done in the M2 follow-up r
 | Operating mode (AUTOMATIC / MANUAL) | ✅ Done — a non-automatic `operatingMode` decommissions the robot (`operable()` in [`state_handler.cpp`](src/vda5050/state_handler.cpp)) |
 | Speed limit override | ✅ Done — per-robot `speed_limit.<robot>` ROS parameter, applied live ([`speed_limit_parameter()`](src/core/operator_interface.cpp#L32)) |
 | Stuck-order replan | ✅ Done — [`is_order_stuck()`](src/rmf/connector.cpp#L1294) asks RMF to replan when an AGV never acknowledges an order |
+| Dynamic robot registration (add/remove at runtime) | ✅ Done — [`RegistrationInterface`](src/core/registration_interface.cpp) checks and adds a robot the broker reports, with a matching dashboard flow; a removed robot's name/identity/charger stay reserved and it can be registered again to restore it, no restart either way. See [Add a robot at runtime](#add-a-robot-at-runtime) |
