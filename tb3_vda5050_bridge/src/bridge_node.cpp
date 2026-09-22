@@ -646,9 +646,13 @@ void BridgeNode::send_navigation_goal(const NavigationTarget& target)
       goal_pending_preemption_.reset();
 
       if (!handle) {
-        state_machine_.on_navigation_failed();
+        // A rejection is often transient (AMCL not converged yet, costmap not
+        // populated yet) -- hold and retry like an unready action server,
+        // instead of failing FATAL on the first attempt.
+        RCLCPP_WARN(get_logger(), "Nav2 rejected the goal for node %s — holding, will retry", node_id.c_str());
+        state_machine_.on_dispatching();
         publish_bridge_status();
-        publish_navigation_error("Nav2 goal rejected", node_id);
+        arm_nav2_retry();
         if (preempted_goal) {
                                     nav2_client_->async_cancel_goal(preempted_goal);
                                     RCLCPP_WARN(get_logger(),
