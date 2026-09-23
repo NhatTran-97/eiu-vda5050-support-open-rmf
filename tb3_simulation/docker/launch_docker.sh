@@ -1,5 +1,10 @@
 #!/bin/bash
-set -e
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yaml"
+CONTAINER_NAME="tb3-simulation"
+CLEANED_UP=0
 
 # Verify that an X display is available before starting the container.
 if [ -z "$DISPLAY" ]; then
@@ -24,14 +29,26 @@ echo ">>> Granting X11 access to local connections"
 xhost +local:
 
 cleanup() {
-  echo ""
-  echo ">>> Stopping Docker Compose..."
-  docker compose down --remove-orphans
-  echo ">>> Revoking X11 access"
-  xhost -local:
-}
-trap cleanup INT TERM
+  if [ "$CLEANED_UP" -eq 1 ]; then
+    return
+  fi
+  CLEANED_UP=1
 
-echo ">>> Starting tb3-simulation container..."
-docker compose up
-cleanup
+  echo ""
+  echo ">>> Stopping and removing ${CONTAINER_NAME}..."
+  docker compose -f "$COMPOSE_FILE" down --remove-orphans || true
+  echo ">>> Revoking X11 access"
+  xhost -local: || true
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+echo ">>> Removing any old ${CONTAINER_NAME} container..."
+docker compose -f "$COMPOSE_FILE" down --remove-orphans
+
+echo ">>> Starting a fresh ${CONTAINER_NAME} container..."
+docker compose -f "$COMPOSE_FILE" up -d --force-recreate
+
+echo ">>> Entering ${CONTAINER_NAME}. Type 'exit' or press Ctrl+D to stop it."
+docker exec -it "$CONTAINER_NAME" bash

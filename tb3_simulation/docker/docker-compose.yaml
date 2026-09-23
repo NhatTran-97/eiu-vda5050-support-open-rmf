@@ -30,12 +30,17 @@ services:
       - __VK_LAYER_NV_optimus=NVIDIA_only
       - TURTLEBOT3_MODEL=burger
       - ROS_DOMAIN_ID=1
+      # 3 full Nav2 stacks create 60-80+ ROS 2 nodes in one domain, past
+      # CycloneDDS's default auto-participant-index pool ("Failed to find a
+      # free participant index for domain 1" -> node aborts on startup).
+      - CYCLONEDDS_URI=file:///home/eiu/sim_ws/src/tb3_simulation/config/cyclonedds_sim.xml
 
     devices:
       - /dev/dri:/dev/dri
 
     group_add:
       - video
+      - "110"  # host's "render" group (GID for /dev/dri/renderD128) — lets eiu open the GPU render node
 
     privileged: true
 

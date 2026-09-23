@@ -1,0 +1,19 @@
+
+/**:
+  ros__parameters:
+    adapter_ns: "/tb3_1/vda5050_client_adapter"    # namespaced to match GroupAction(PushRosNamespace('tb3_1')) in vda5050_bridge_fleet.launch.py
+    odom_topic: "/tb3_1/odom"
+    amcl_pose_topic: "/tb3_1/amcl_pose"
+    battery_topic: "/tb3_1/battery_state"
+    nav2_action_name: "/tb3_1/navigate_to_pose"     
+    map_id: "tb3_world"
+    nav2_frame_id: "map"
+    position_covariance_threshold: 1.5
+    supported_action_types:
+      - "initPosition"
+    initial_pose_topic: "/tb3_1/initialpose"
+
+    nav2_dispatch_timeout_sec: 120.0
+    amcl_pose_timeout_sec: 45.0
+    pose_stale_move_tolerance_m: 0.15
+    speed_limit_topic: "/tb3_1/speed_limit"

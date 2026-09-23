@@ -1,0 +1,18 @@
+/**:
+  ros__parameters:
+    adapter_ns: "/tb3_2/vda5050_client_adapter"
+    odom_topic: "/tb3_2/odom"
+    amcl_pose_topic: "/tb3_2/amcl_pose"
+    battery_topic: "/tb3_2/battery_state"
+    nav2_action_name: "/tb3_2/navigate_to_pose"     # absolute: matches tb3_1's pattern regardless of namespace push
+    map_id: "tb3_world"
+    nav2_frame_id: "map"
+    position_covariance_threshold: 1.5
+    supported_action_types:
+      - "initPosition"
+    initial_pose_topic: "/tb3_2/initialpose"
+
+    nav2_dispatch_timeout_sec: 120.0
+    amcl_pose_timeout_sec: 45.0
+    pose_stale_move_tolerance_m: 0.15
+    speed_limit_topic: "/tb3_2/speed_limit"

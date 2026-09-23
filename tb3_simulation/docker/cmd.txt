@@ -14,3 +14,10 @@ docker compose \
 
 docker exec -it tb3-simulation bash
 nvidia-smi
+
+
+ros2 launch tb3_simulation tb3_simulation_nav2.launch.py robot_count:=3 use_gz_gui:=False
+ros2 launch tb3_simulation vda5050_bridge_fleet.launch.py broker_url:=tcp://localhost:1883
+ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py \
+    config_file:=/ros2_ws/src/vda5050_fleet_adapter_full_control/config/config_tb3_sim.yaml \
+    node_name:=vda5050_fleet_adapter_tb3
