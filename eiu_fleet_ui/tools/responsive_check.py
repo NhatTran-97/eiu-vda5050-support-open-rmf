@@ -21,6 +21,7 @@ PKG_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PKG_ROOT))
 
 from PySide6.QtCore import QEventLoop, QRectF, QTimer  # noqa: E402
+from PySide6.QtGui import QWindow  # noqa: E402
 # Import QQuickWindow to enable capturing the QML window.
 from PySide6.QtQuick import QQuickWindow  # noqa: E402,F401
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -141,6 +142,8 @@ def main():
 
     app, engine, _backends, waypoint_names = build_engine()
     window = engine.rootObjects()[0]
+    # A maximized window ignores resize(); each case sets its own size.
+    window.setVisibility(QWindow.Visibility.Windowed)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
 

@@ -8,9 +8,10 @@ Dialog {
     id: dlg
 
     property var places: []      // Waypoint names from nav_graph
-    property var robotsOnline: ({})
     // Only online robots can take a task.
-    property var robotNames: JSON.parse(cfg.robotNamesJson).filter(function (n) { return !!robotsOnline[n] })
+    property var onlineRobots: []
+    // The robot the operator picked; kept while the list of online robots changes.
+    property string chosenRobot: ""
     property string errorMessage: ""
     // Id of the request this dialog sent; results of other requests are not ours.
     property string requestId: ""
@@ -32,10 +33,25 @@ Dialog {
     }
 
     onAboutToShow: {
+        dlg.chosenRobot = ""
         robotCombo.currentIndex = 0
         dlg.requestId = ""
         dlg.errorMessage = ""
     }
+
+    // A new list of online robots resets the combo box; put the operator's choice back, or say it went away.
+    onOnlineRobotsChanged: Qt.callLater(function() {
+        if (dlg.chosenRobot === "") return
+        var index = robotCombo.find(dlg.chosenRobot)
+        if (index > 0) {
+            robotCombo.currentIndex = index
+        } else {
+            robotCombo.currentIndex = 0
+            if (dlg.opened)
+                dlg.errorMessage = dlg.chosenRobot + " went offline; choose a robot again"
+            dlg.chosenRobot = ""
+        }
+    })
 
     Connections {
         target: ros
@@ -61,8 +77,8 @@ Dialog {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     background: Rectangle {
-        color: C.surface; radius: 16
-        border.color: C.border; border.width: 1
+        color: Theme.surface; radius: 16
+        border.color: Theme.border; border.width: 1
     }
 
     contentItem: ColumnLayout {
@@ -73,7 +89,7 @@ Dialog {
             Layout.fillWidth: true
             Layout.topMargin: 18; Layout.leftMargin: 18; Layout.rightMargin: 18
             text: "CREATE NEW MISSION"
-            font.pixelSize: 16; font.bold: true; color: C.text
+            font.pixelSize: 16; font.bold: true; color: Theme.text
             font.letterSpacing: 1.0
             horizontalAlignment: Text.AlignHCenter
 
@@ -97,7 +113,7 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             text: "Dispatch a task to the Open-RMF fleet"
-            font.pixelSize: 10; color: C.textDim
+            font.pixelSize: 10; color: Theme.textDim
             horizontalAlignment: Text.AlignHCenter
         }
 
@@ -106,20 +122,20 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
-            Text { text: "TASK CATEGORY"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+            Text { text: "TASK CATEGORY"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
             ComboBox {
                 id: catCombo
                 Layout.fillWidth: true
                 model: cfg.taskCategories
                 font.pixelSize: 13
                 contentItem: Text {
-                    text: catCombo.displayText; color: C.text; font: catCombo.font
+                    text: catCombo.displayText; color: Theme.text; font: catCombo.font
                     leftPadding: 10; elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
                 }
                 background: Rectangle {
                     implicitHeight: 42; radius: 10
-                    color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                 }
             }
         }
@@ -130,20 +146,20 @@ Dialog {
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
             visible: catCombo.currentText !== "delivery"
-            Text { text: "DESTINATION WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+            Text { text: "DESTINATION WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
             ComboBox {
                 id: placeCombo
                 Layout.fillWidth: true
                 model: dlg.places
                 font.pixelSize: 13
                 contentItem: Text {
-                    text: placeCombo.displayText; color: C.text; font: placeCombo.font
+                    text: placeCombo.displayText; color: Theme.text; font: placeCombo.font
                     leftPadding: 10; elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
                 }
                 background: Rectangle {
                     implicitHeight: 42; radius: 10
-                    color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                 }
             }
         }
@@ -153,22 +169,23 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
-            Text { text: "ASSIGN TO ROBOT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+            Text { text: "ASSIGN TO ROBOT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
             ComboBox {
                 id: robotCombo
                 objectName: "robotCombo"
                 Layout.fillWidth: true
-                model: ["Auto (RMF chooses)"].concat(dlg.robotNames)
+                model: ["Auto (RMF chooses)"].concat(dlg.onlineRobots)
                 font.pixelSize: 13
+                onActivated: (index) => dlg.chosenRobot = index > 0 ? currentText : ""
                 contentItem: Text {
-                    text: robotCombo.displayText; color: robotCombo.currentIndex > 0 ? C.text : C.textDim
+                    text: robotCombo.displayText; color: robotCombo.currentIndex > 0 ? Theme.text : Theme.textDim
                     font: robotCombo.font
                     leftPadding: 10; elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
                 }
                 background: Rectangle {
                     implicitHeight: 42; radius: 10
-                    color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                 }
             }
         }
@@ -179,7 +196,7 @@ Dialog {
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 12
             visible: catCombo.currentText !== "delivery"
-            Text { text: "PATROL LOOPS"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim
+            Text { text: "PATROL LOOPS"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim
                    Layout.alignment: Qt.AlignVCenter }
             SpinBox {
                 id: loopsSpin
@@ -188,7 +205,7 @@ Dialog {
                 font.pixelSize: 13
                 contentItem: TextInput {
                     text: loopsSpin.textFromValue(loopsSpin.value, loopsSpin.locale)
-                    color: C.text
+                    color: Theme.text
                     horizontalAlignment: Qt.AlignHCenter
                     verticalAlignment: Qt.AlignVCenter
                     readOnly: !loopsSpin.editable
@@ -197,7 +214,7 @@ Dialog {
                 }
                 background: Rectangle {
                     implicitWidth: 100; implicitHeight: 42; radius: 10
-                    color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                 }
             }
             Item { Layout.fillWidth: true }
@@ -212,26 +229,26 @@ Dialog {
 
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 4
-                Text { text: "PICKUP WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                Text { text: "PICKUP WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                 ComboBox {
                     id: pickupCombo
                     Layout.fillWidth: true
                     model: dlg.places
                     font.pixelSize: 13
                     contentItem: Text {
-                        text: pickupCombo.displayText; color: C.text; font: pickupCombo.font
+                        text: pickupCombo.displayText; color: Theme.text; font: pickupCombo.font
                         leftPadding: 10; elide: Text.ElideRight
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
                         implicitHeight: 42; radius: 10
-                        color: C.surfaceAlt; border.color: C.border; border.width: 1
+                        color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                     }
                 }
             }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 4
-                Text { text: "DISPENSER (PICKUP HANDLER)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                Text { text: "DISPENSER (PICKUP HANDLER)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                 ComboBox {
                     id: pickupHandlerField
                     Layout.fillWidth: true
@@ -240,32 +257,32 @@ Dialog {
                     font.pixelSize: 13
                     background: Rectangle {
                         implicitHeight: 42; radius: 10
-                        color: C.surfaceAlt; border.color: C.border; border.width: 1
+                        color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                     }
                 }
             }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 4
-                Text { text: "DROPOFF WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                Text { text: "DROPOFF WAYPOINT"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                 ComboBox {
                     id: dropoffCombo
                     Layout.fillWidth: true
                     model: dlg.places
                     font.pixelSize: 13
                     contentItem: Text {
-                        text: dropoffCombo.displayText; color: C.text; font: dropoffCombo.font
+                        text: dropoffCombo.displayText; color: Theme.text; font: dropoffCombo.font
                         leftPadding: 10; elide: Text.ElideRight
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
                         implicitHeight: 42; radius: 10
-                        color: C.surfaceAlt; border.color: C.border; border.width: 1
+                        color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                     }
                 }
             }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 4
-                Text { text: "INGESTOR (DROPOFF HANDLER)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                Text { text: "INGESTOR (DROPOFF HANDLER)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                 ComboBox {
                     id: dropoffHandlerField
                     Layout.fillWidth: true
@@ -274,7 +291,7 @@ Dialog {
                     font.pixelSize: 13
                     background: Rectangle {
                         implicitHeight: 42; radius: 10
-                        color: C.surfaceAlt; border.color: C.border; border.width: 1
+                        color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                     }
                 }
             }
@@ -282,23 +299,23 @@ Dialog {
                 Layout.fillWidth: true; spacing: 12
                 ColumnLayout {
                     Layout.fillWidth: true; spacing: 4
-                    Text { text: "PAYLOAD (SKU)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                    Text { text: "PAYLOAD (SKU)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                     TextField {
                         id: skuField
                         Layout.fillWidth: true
                         font.pixelSize: 13
-                        color: C.text
+                        color: Theme.text
                         placeholderText: "as the workcells expect it"
-                        placeholderTextColor: C.placeholderText
+                        placeholderTextColor: Theme.placeholderText
                         background: Rectangle {
                             implicitHeight: 42; radius: 10
-                            color: C.surfaceAlt; border.color: C.border; border.width: 1
+                            color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                         }
                     }
                 }
                 ColumnLayout {
                     spacing: 4
-                    Text { text: "QUANTITY"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                    Text { text: "QUANTITY"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                     SpinBox {
                         id: quantitySpin
                         from: 1; to: 999; value: 1
@@ -306,7 +323,7 @@ Dialog {
                         font.pixelSize: 13
                         contentItem: TextInput {
                             text: quantitySpin.textFromValue(quantitySpin.value, quantitySpin.locale)
-                            color: C.text
+                            color: Theme.text
                             horizontalAlignment: Qt.AlignHCenter
                             verticalAlignment: Qt.AlignVCenter
                             readOnly: !quantitySpin.editable
@@ -315,7 +332,7 @@ Dialog {
                         }
                         background: Rectangle {
                             implicitWidth: 100; implicitHeight: 42; radius: 10
-                            color: C.surfaceAlt; border.color: C.border; border.width: 1
+                            color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                         }
                     }
                 }
@@ -327,7 +344,7 @@ Dialog {
             Layout.leftMargin: 18; Layout.rightMargin: 18
             visible: dlg.errorMessage !== ""
             text: dlg.errorMessage
-            color: C.err
+            color: Theme.err
             font.pixelSize: 11
             wrapMode: Text.WordWrap
         }
@@ -337,7 +354,7 @@ Dialog {
             Layout.leftMargin: 18; Layout.rightMargin: 18
             visible: dlg.missingFields !== ""
             text: "Still needed: " + dlg.missingFields
-            color: C.textDim
+            color: Theme.textDim
             font.pixelSize: 11
             wrapMode: Text.WordWrap
         }
@@ -354,13 +371,13 @@ Dialog {
                 text: "CANCEL"
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 contentItem: Text {
-                    text: cancelBtn.text; color: C.text; font.pixelSize: 13
+                    text: cancelBtn.text; color: Theme.text; font.pixelSize: 13
                     verticalAlignment: Text.AlignVCenter
                     horizontalAlignment: Text.AlignHCenter
                 }
                 background: Rectangle {
-                    radius: 10; color: cancelBtn.down ? C.border : C.surfaceAlt
-                    border.color: C.border; border.width: 1
+                    radius: 10; color: cancelBtn.down ? Theme.border : Theme.surfaceAlt
+                    border.color: Theme.border; border.width: 1
                 }
                 onClicked: dlg.close()
             }
@@ -372,14 +389,14 @@ Dialog {
                 enabled: dlg.missingFields === ""
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 contentItem: Text {
-                    text: submitBtn.text; color: "#ffffff"; font.pixelSize: 13; font.bold: true
+                    text: submitBtn.text; color: Theme.textOnAccent; font.pixelSize: 13; font.bold: true
                     verticalAlignment: Text.AlignVCenter
                     horizontalAlignment: Text.AlignHCenter
                 }
                 background: Rectangle {
                     radius: 10
-                    color: !submitBtn.enabled ? C.border
-                          : (submitBtn.down ? C.accentDark : C.accent)
+                    color: !submitBtn.enabled ? Theme.border
+                          : (submitBtn.down ? Theme.accentDark : Theme.accent)
                 }
                 onClicked: {
                     dlg.errorMessage = ""

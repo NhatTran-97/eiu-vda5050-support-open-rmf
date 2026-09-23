@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import EiuFleet
 
 // VDA5050 order layer under the RMF task: order and update id, route progress, running action and picked node details.
 Rectangle {
@@ -23,8 +24,8 @@ Rectangle {
     onOrderIdChanged: pickedSeq = null
 
     radius: 10
-    color: C.surface
-    border.color: C.border
+    color: Theme.surface
+    border.color: Theme.border
     border.width: 1
     opacity: offline ? 0.6 : 1.0
     implicitHeight: column.implicitHeight + 20
@@ -77,6 +78,31 @@ Rectangle {
                        theta: node.theta, actions: node.actions || [], edge: edge })
         }
         return out
+    }
+
+    // Route tiles keyed by sequence id; a tile keeps its state while the order progresses.
+    KeyedListModel { id: routeTiles }
+    function syncRouteTiles() {
+        routeTiles.setRows(route.map(function(n) {
+            return { key: String(n.seq), nodeId: n.nodeId, seq: n.seq, state: n.state }
+        }))
+    }
+    onRouteChanged: syncRouteTiles()
+
+    // Actions of the shown node, keyed by action id.
+    KeyedListModel { id: shownActions }
+    function syncShownActions() {
+        var actions = shownNode ? shownNode.actions : []
+        shownActions.setRows(actions.map(function(a, i) {
+            return { key: a.actionId || ("#" + i), actionId: a.actionId, actionType: a.actionType,
+                     blockingType: a.blockingType }
+        }))
+    }
+    onShownNodeChanged: syncShownActions()
+
+    Component.onCompleted: {
+        syncRouteTiles()
+        syncShownActions()
     }
 
     readonly property int doneCount: {
@@ -135,7 +161,7 @@ Rectangle {
             spacing: 10
             Text {
                 text: "VDA5050 ORDER"
-                color: C.textDim
+                color: Theme.textDim
                 font.pixelSize: 11 * root.uiScale
                 font.bold: true
                 font.letterSpacing: 1.0
@@ -143,7 +169,7 @@ Rectangle {
             Text {
                 visible: root.hasOrder && root.route.length > 0
                 text: root.doneCount + "/" + root.route.length + " nodes"
-                color: C.textDim
+                color: Theme.textDim
                 font.family: fontMono
                 font.pixelSize: 11 * root.uiScale
             }
@@ -153,7 +179,7 @@ Rectangle {
                 text: root.runningActions.length > 0
                       ? root.runningActions.map(function(a) { return (a.actionType || a.actionId) + root.blockTag(a) + " · RUNNING" }).join("  ·  ")
                       : "no action running"
-                color: root.runningActions.length > 0 ? C.warn : C.textDim
+                color: root.runningActions.length > 0 ? Theme.warn : Theme.textDim
                 font.family: fontMono
                 font.pixelSize: 11 * root.uiScale
                 elide: Text.ElideRight
@@ -166,7 +192,7 @@ Rectangle {
                 Layout.minimumWidth: implicitWidth
                 horizontalAlignment: Text.AlignRight
                 text: "Order " + root.shortOrderId + "  ·  Update " + root.updateId
-                color: C.cyan
+                color: Theme.cyan
                 font.family: fontMono
                 font.pixelSize: 11 * root.uiScale
                 font.bold: true
@@ -185,7 +211,7 @@ Rectangle {
             visible: !root.hasOrder
             Layout.fillWidth: true
             text: !root.hasTele ? "No telemetry received" : "No active order"
-            color: C.textDim
+            color: Theme.textDim
             font.pixelSize: 12 * root.uiScale
         }
 
@@ -195,9 +221,12 @@ Rectangle {
             Layout.fillWidth: true
             spacing: 4
             Repeater {
-                model: root.route
+                model: routeTiles
                 delegate: Row {
-                    readonly property string tileState: modelData.state
+                    id: tile
+                    required property var row
+                    required property int index
+                    readonly property string tileState: row.state
                     spacing: 4
                     Rectangle {
                         width: 74 * root.uiScale
@@ -205,26 +234,26 @@ Rectangle {
                         radius: 8
                         anchors.verticalCenter: parent.verticalCenter
                         opacity: tileState === "horizon" ? 0.55 : 1.0
-                        readonly property bool picked: root.shownIndex === index
+                        readonly property bool picked: root.shownIndex === tile.index
                         color: tileState === "current" ? Qt.rgba(0.09, 0.78, 0.89, 0.12)
                                : (picked ? Qt.rgba(1, 1, 1, 0.07) : "transparent")
                         border.width: tileState === "current" || picked ? 2 : 1
-                        border.color: tileState === "done" ? C.success
-                                      : (tileState === "current" ? C.cyan
-                                         : (picked ? C.textDim : C.border))
+                        border.color: tileState === "done" ? Theme.success
+                                      : (tileState === "current" ? Theme.cyan
+                                         : (picked ? Theme.textDim : Theme.border))
                         MouseArea {
                             anchors.fill: parent
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: root.pickedSeq = modelData.seq
+                            onClicked: root.pickedSeq = tile.row.seq
                         }
                         Column {
                             anchors.centerIn: parent
                             spacing: 1
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
-                                text: modelData.nodeId || ("#" + index)
-                                color: tileState === "done" ? C.success
-                                       : (tileState === "current" ? C.cyan : C.textDim)
+                                text: tile.row.nodeId || ("#" + tile.index)
+                                color: tileState === "done" ? Theme.success
+                                       : (tileState === "current" ? Theme.cyan : Theme.textDim)
                                 font.family: fontMono
                                 font.pixelSize: 11 * root.uiScale
                                 font.bold: true
@@ -235,16 +264,16 @@ Rectangle {
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: tileState === "done" ? "passed" : (tileState === "current" ? "next" : tileState)
-                                color: C.textDim
+                                color: Theme.textDim
                                 font.pixelSize: 9 * root.uiScale
                             }
                         }
                     }
                     Text {
-                        visible: index < root.route.length - 1
+                        visible: tile.index < root.route.length - 1
                         anchors.verticalCenter: parent.verticalCenter
                         text: "→"
-                        color: C.textDim
+                        color: Theme.textDim
                         font.pixelSize: 13 * root.uiScale
                     }
                 }
@@ -252,7 +281,7 @@ Rectangle {
         }
 
         // Node details: pose and actions of the shown node, and the edge that leaves it.
-        Rectangle { visible: detailBox.visible; Layout.fillWidth: true; Layout.preferredHeight: 1; color: C.border }
+        Rectangle { visible: detailBox.visible; Layout.fillWidth: true; Layout.preferredHeight: 1; color: Theme.border }
         Column {
             id: detailBox
             visible: root.hasOrder && root.shownNode !== null
@@ -264,20 +293,21 @@ Rectangle {
                       ? ("NODE " + root.shownNode.nodeId + "  ·  x " + root.num(root.shownNode.x, " m")
                          + "  y " + root.num(root.shownNode.y, " m") + "  θ " + root.num(root.shownNode.theta, " rad"))
                       : ""
-                color: C.text
+                color: Theme.text
                 font.family: fontMono
                 font.pixelSize: 11 * root.uiScale
                 font.bold: true
                 elide: Text.ElideRight
             }
             Repeater {
-                model: root.shownNode ? root.shownNode.actions : []
+                model: shownActions
                 delegate: Text {
+                    required property var row
                     width: detailBox.width
-                    readonly property string status: root.statusOf(modelData.actionId)
-                    text: "⚙ " + modelData.actionType + root.blockTag(modelData) + " · " + status
-                    color: status === "RUNNING" ? C.warn : (status === "FINISHED" ? C.success
-                           : (status === "FAILED" ? C.err : C.textDim))
+                    readonly property string status: root.statusOf(row.actionId)
+                    text: "⚙ " + row.actionType + root.blockTag(row) + " · " + status
+                    color: status === "RUNNING" ? Theme.warn : (status === "FINISHED" ? Theme.success
+                           : (status === "FAILED" ? Theme.err : Theme.textDim))
                     font.family: fontMono
                     font.pixelSize: 11 * root.uiScale
                     elide: Text.ElideRight
@@ -295,7 +325,7 @@ Rectangle {
                     }
                     return root.shownIndex === root.route.length - 1 ? "last node of the order" : ""
                 }
-                color: C.textDim
+                color: Theme.textDim
                 font.family: fontMono
                 font.pixelSize: 11 * root.uiScale
                 elide: Text.ElideRight

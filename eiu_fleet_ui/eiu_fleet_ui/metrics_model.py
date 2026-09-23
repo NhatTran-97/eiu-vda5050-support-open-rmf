@@ -165,31 +165,37 @@ class MetricsModel:
             name = history.fleet or history.node
             if status == ABSENT:
                 since = "Its metrics stopped" if history.latest is not None else "Nothing"
-                items.append({"severity": "warning", "robot": "", "title": f"{name} adapter not found",
+                items.append({"key": f"adapter:{history.node}:absent", "severity": "warning", "robot": "",
+                              "title": f"{name} adapter not found",
                               "detail": f"{since} publishes /{history.node}/metrics; is the fleet adapter running on this ROS domain?"})
                 continue
             if status == SILENT:
-                items.append({"severity": "warning", "robot": "", "title": f"{name} adapter metrics stopped",
+                items.append({"key": f"adapter:{history.node}:silent", "severity": "warning", "robot": "",
+                              "title": f"{name} adapter metrics stopped",
                               "detail": f"No report for {now - history.received:.0f} s, it reports every {history.interval():.0f} s"})
                 continue
             if history.latest is None:
                 continue
             if status == CRITICAL:
-                items.append({"severity": "critical", "robot": "", "title": f"{name} adapter lost the MQTT broker",
+                items.append({"key": f"adapter:{history.node}:mqtt", "severity": "critical", "robot": "",
+                              "title": f"{name} adapter lost the MQTT broker",
                               "detail": "The adapter cannot reach its robots; it reconnects on its own"})
             d = history.delta
             dropped = {kind: n for kind, n in d["dropped"].items() if n > 0}
             if dropped:
                 kinds = ", ".join(f"{kind.replace('_', ' ')} {int(n)}" for kind, n in dropped.items())
-                items.append({"severity": "warning", "robot": "", "title": f"{name} adapter dropped {int(sum(dropped.values()))} message(s)",
+                items.append({"key": f"adapter:{history.node}:dropped", "severity": "warning", "robot": "",
+                              "title": f"{name} adapter dropped {int(sum(dropped.values()))} message(s)",
                               "detail": f"In the last report: {kinds}"})
             if d["overruns"] > 0:
                 period = _number(history.latest, "update_loop", "period_ms")
                 slow = _number(history.latest, "update_loop", "pass_us", "max") / 1000.0
-                items.append({"severity": "warning", "robot": "", "title": f"{name} update loop fell behind",
+                items.append({"key": f"adapter:{history.node}:overruns", "severity": "warning", "robot": "",
+                              "title": f"{name} update loop fell behind",
                               "detail": f"{int(d['overruns'])} pass(es) over the {period:.0f} ms period, slowest {slow:.1f} ms"})
             if d["publish_failed"] > 0:
-                items.append({"severity": "warning", "robot": "", "title": f"{name} adapter could not send {int(d['publish_failed'])} message(s)",
+                items.append({"key": f"adapter:{history.node}:publish_failed", "severity": "warning", "robot": "",
+                              "title": f"{name} adapter could not send {int(d['publish_failed'])} message(s)",
                               "detail": "The MQTT connection refused them"})
         return items
 

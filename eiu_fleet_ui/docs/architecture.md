@@ -10,10 +10,10 @@ cancels, and directly controls robots through the same channels.
 
 | Area | What it does |
 |:---:|---|
-| Live navigation map | Occupancy grid + nav-graph overlay, lane direction arrows, blocked-lane highlighting from live RMF traffic state, multi-robot markers with heading/pulse, planned-path overlay, click-to-pick a pose or waypoint |
+| Live navigation map | Occupancy grid + nav-graph overlay, lane direction arrows, blocked-lane highlighting from live RMF traffic state, multi-robot markers with heading/pulse that glide between updates, each robot's route and task destination, click-to-pick a pose or waypoint |
 | Fleet Command dashboard | KPI cards (system health: Healthy/Degraded/Critical/Offline, fleet + VDA5050-connected count, traffic status, tasks), RMF/MQTT online indicators, a Needs Attention panel listing every active issue |
 | Active Robots panel | Search/filter, battery, round progress, live telemetry badges (not-localized, no-recent-data, safety/eStop/fatal-error) |
-| Robot Control dialog | Pause/resume, speed-limit override, re-localize (click-on-map or typed pose), direct "go to waypoint" pinned to that one robot |
+| Robot Control dialog | Pause/resume, speed-limit override, re-localize (click-on-map or typed pose), direct "go to waypoint" pinned to that one robot; a command shows as waiting until the adapter answers and fails after `commands.timeout_s` |
 | Recent Tasks table | Search/filter, underway-first sort, cancel button, dispatch confirmed synchronously with error feedback and a server-side timeout for a dispatcher that never responds |
 | New Task dialog | Fleet-wide patrol or delivery dispatch (destinations, handlers, loop count) — RMF bids it to whichever robot it picks; draggable |
 | Fleet Analytics | Battery/task-distribution gauges, current task progress, live distance-since-last-node, eStop/safety status per robot, delivery pickup/dropoff wait countdown, AGV-reported load while a delivery is underway |
@@ -66,62 +66,74 @@ flowchart LR
 RMF's own frame (`/fleet_states`) and the robot's VDA5050 frame (MQTT
 `state`) are two independent sources of truth about the same robot; the UI
 never lets one silently overwrite the other — it merges them per field (see
-`displayRobots` in `main.qml`).
+`display_robots` in `dashboard_model.py`).
 
 ## Component view
 
 ```mermaid
 flowchart TB
     subgraph QML ["QML"]
-        main["main.qml\nKPI row · robot table · task table"]
-        map["MapPage.qml"]
-        ana["FleetAnalytics.qml"]
-        newTask["NewTaskDialog.qml"]
-        ctrl["RobotControlDialog.qml"]
-        reg["RegisterRobotDialog.qml\nToast.qml"]
-        vda["VdaOrderPanel.qml\nVdaTrafficPanel.qml"]
+        main["main.qml\nlayout · dialogs · shared robot selection"]
+        panels["TopBar · KpiRow · NeedsAttentionPanel\nRobotListPanel · TasksPanel"]
+        mapcard["MapCard: MapPage + FleetAnalytics"]
+        dialogs["NewTaskDialog · RobotControlDialog\nRegisterRobotDialog · SystemMetricsDialog"]
+        theme["Theme.qml · Format.js"]
     end
 
     subgraph PY ["Python backend"]
-        cfg["config.py\nreads the adapter's own config.yaml"]
-        mp["MapProvider\nmap.yaml + nav_graph.yaml"]
+        dash["Dashboard\nrefresh every dashboard.refresh_period_s"]
+        dm["dashboard_model.py\npure: rows · attention · health · routes"]
+        klm["KeyedListModel\nrows changed in place"]
+        cfg["config.py · ui_settings.py"]
+        mp["MapProvider"]
         rb["RosBridge\nfleet state · tasks · traffic"]
-        rc["RosControl\npause/resume/speed/init_position"]
-        mc["MqttClient\nVDA5050 state + connection + traffic log"]
-        vs["vda5050/state.py + traffic.py\npure parsing, no Qt"]
-        ws["TaskEventServer\nwebsocket, optional"]
-        rr["RobotRegistry\nregistration requests · registry · discovery"]
-        am["AdapterMetrics\nadapter metrics reports · charts · attention items"]
-        mm["metrics_model.py\npure: rates · series · attention"]
-        rmodel["registry_model.py\npure: followed robots · pending · suggestions"]
-        ge["graph_editor.py\nedit + save nav_graph.yaml"]
+        ts["task_state.py\npure: ranked task state · epoch times"]
+        rc["RosControl\npause · resume · speed · init_position\npending + timeout"]
+        mc["MqttClient\nstate · connection · order · instantActions"]
+        rr["RobotRegistry"]
+        am["AdapterMetrics"]
+        ws["TaskEventServer (optional)"]
+        ge["GraphEditor"]
     end
 
-    cfg --> mp & rb & rc & mc & ws & rr
-    rr --> rmodel
-    am --> mm
-    am -->|metricsJson · attentionJson| main
-    rr -->|robotAdded · robotRemoved| rb & rc & mc & cfg
-    rr -->|fleetsJson · pendingJson · checkResult · requestResult| main & reg
-    reg -->|check · register · remove| rr
-    ctrl -->|remove| rr
-
-    mp  -->|imagePath · wpJson · lanesJson · laneIndexMapJson| map
-    rb  -->|robotsJson · tasksJson · blockedLanes · activeConflicts| main
-    rb  -->|dispatchResult ok/err| newTask
-    rb  -->|dispatchResult ok/err| ctrl
-    rc  -->|speedLimitsJson · commandResult| ctrl
-    mc  -->|telemetryJson · robotsOnlineJson · trafficJson| main & vda
-    mc  --> vs
-    ws  -->|taskStateUpdate| rb
-    main --> map & ana
-    ana --> vda
-    newTask -->|dispatch| rb
-    ctrl -->|dispatchToRobot| rb
-    map -->|closeLanes · openLanes| rb
-    map -->|loadFromFile · addVertex · addLane · saveAs| ge
-    ctrl -->|pauseRobot · setSpeedLimit · initPosition| rc
+    rb & mc & rc & rr & am -->|snapshots| dash
+    dash --> dm
+    dash --> klm
+    klm -->|robots · mapRobots · attention · tasks · traffic| panels & mapcard
+    dash -->|robotRows · telemetry · routes · summary| panels & mapcard & dialogs
+    rb --> ts
+    ws -->|taskStateUpdate| rb
+    cfg --> mp & rb & rc & mc & rr & dash
+    mp -->|waypoints · lanes| main
+    dialogs -->|dispatch · cancel| rb
+    dialogs -->|pause · speed · init_position| rc
+    dialogs -->|check · register · remove| rr
+    mapcard -->|closeLanes · openLanes| rb
+    mapcard -->|edit · save| ge
+    theme --- panels & mapcard & dialogs
 ```
+
+### Refresh pipeline
+
+The ROS executor thread and the paho thread only record what arrives: `RosBridge` keeps
+the robots of each fleet and the task records, `MqttClient` the parsed state per robot and
+the message log. Nothing is serialised per message.
+
+On the GUI thread, `Dashboard.refresh()` runs every `dashboard.refresh_period_s` (0.2 s by
+default). It takes one snapshot of every backend, derives what the panels show with the pure
+functions of `dashboard_model.py`, and hands it over as
+
+- `KeyedListModel`s for every list (robots, map markers, Needs Attention, tasks, traffic log):
+  a row that changed emits `dataChanged` for itself only, new rows are inserted, gone rows
+  removed, reordered rows moved — the model is never reset, so delegates, scroll position,
+  hover and running animations survive every update;
+- values (`robotRows`, `telemetry`, `routes`, the KPI summary, …) that notify only when they
+  actually changed.
+
+Needs Attention items carry a stable key (`robot:tb3_1:offline`) and the time an issue
+started; the "last seen … ago" text ticks in the delegate itself. Robot markers glide to each
+new pose over one refresh period. The map draws the graph (lanes, arrows, zones, editor)
+and the routes on two canvases, so only the route layer is repainted as robots move.
 
 ## Key flows
 
@@ -215,14 +227,29 @@ sequenceDiagram
     participant Robot as Robot (MQTT state)
     participant RB as RosBridge
     participant MC as MqttClient
-    participant UI as main.qml (displayRobots)
+    participant D as Dashboard (GUI thread)
+    participant UI as QML panels
 
     RMF->>RB: position, battery (planning value), mode, path
     Robot->>MC: speed, real battery_soc, safety, errors
-    RB->>UI: robotsJson
-    MC->>UI: telemetryJson (+ stale flag after 5s silence)
-    UI->>UI: merge per-field, prefer telemetry's real battery_soc
+    loop every dashboard.refresh_period_s
+        D->>RB: robots_snapshot(), tasks_snapshot(), stale_fleets()
+        D->>MC: snapshot() (+ stale flag after vda5050.state_stale_after_s)
+        D->>D: display_robots: merge per field, prefer the real battery_soc
+        D->>UI: changed rows only (KeyedListModel), changed values only
+    end
 ```
+
+### Task state from several sources
+
+`/task_api_responses`, the websocket task events, `/dispatch_states` and the robots' task ids
+in `/fleet_states` all say something about a task, in any order. `task_state.set_state` ranks
+them — task events and API answers, then the dispatcher, then a robot picking up or dropping a
+task id, then the dashboard's own timeouts. A better-informed source may change the state
+either way; an equal or weaker one only moves it forward (queued, underway, finished). So a
+late `/dispatch_states` "queued" cannot undo "underway", and "completed because the robot
+dropped the task id" is replaced by RMF's "failed" when that is what happened. A finished
+task gets its real end time; while it runs, the end RMF expects is shown with `~`.
 
 ## Process boundaries, at a glance
 

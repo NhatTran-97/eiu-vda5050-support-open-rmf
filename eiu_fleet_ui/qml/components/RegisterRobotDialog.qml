@@ -179,8 +179,8 @@ Dialog {
     closePolicy: Popup.CloseOnEscape
 
     background: Rectangle {
-        color: C.surface; radius: 16
-        border.color: C.border; border.width: 1
+        color: Theme.surface; radius: 16
+        border.color: Theme.border; border.width: 1
     }
 
     contentItem: Flickable {
@@ -200,7 +200,7 @@ Dialog {
                 Layout.fillWidth: true
                 Layout.topMargin: 18; Layout.leftMargin: 18; Layout.rightMargin: 18
                 text: "REGISTER NEW ROBOT"
-                font.pixelSize: 16; font.bold: true; color: C.text; font.letterSpacing: 1.0
+                font.pixelSize: 16; font.bold: true; color: Theme.text; font.letterSpacing: 1.0
                 horizontalAlignment: Text.AlignHCenter
             }
 
@@ -209,7 +209,7 @@ Dialog {
                 Layout.fillWidth: true
                 Layout.leftMargin: 18; Layout.rightMargin: 18
                 implicitHeight: identityColumn.implicitHeight + 20
-                radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1
+                radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                 ColumnLayout {
                     id: identityColumn
                     anchors.fill: parent; anchors.margins: 10
@@ -217,13 +217,13 @@ Dialog {
                     Text {
                         Layout.fillWidth: true
                         text: dlg.robot ? dlg.robot.manufacturer + " / " + dlg.robot.serial : ""
-                        color: C.text; font.pixelSize: 15; font.bold: true; elide: Text.ElideRight
+                        color: Theme.text; font.pixelSize: 15; font.bold: true; elide: Text.ElideRight
                     }
-                    Text { Layout.fillWidth: true; text: dlg.facts; color: C.textDim; font.pixelSize: 12; wrapMode: Text.WordWrap }
+                    Text { Layout.fillWidth: true; text: dlg.facts; color: Theme.textDim; font.pixelSize: 12; wrapMode: Text.WordWrap }
                     Text {
                         Layout.fillWidth: true
                         text: dlg.poseText
-                        color: (dlg.robot && dlg.robot.pose && !dlg.robot.pose.initialized) ? C.warn : C.textDim
+                        color: (dlg.robot && dlg.robot.pose && !dlg.robot.pose.initialized) ? Theme.warn : Theme.textDim
                         font.pixelSize: 12; wrapMode: Text.WordWrap
                     }
                 }
@@ -233,7 +233,7 @@ Dialog {
                 Layout.fillWidth: true
                 Layout.leftMargin: 18; Layout.rightMargin: 18
                 spacing: 4
-                Text { text: "FLEET"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                Text { text: "FLEET"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                 ComboBox {
                     id: fleetCombo
                     objectName: "fleetCombo"
@@ -243,30 +243,30 @@ Dialog {
                     font.pixelSize: 13
                     contentItem: Text {
                         text: fleetCombo.currentIndex >= 0 ? fleetCombo.currentText : "Select the fleet of this robot's type"
-                        color: fleetCombo.currentIndex >= 0 ? C.text : C.textDim
+                        color: fleetCombo.currentIndex >= 0 ? Theme.text : Theme.textDim
                         font: fleetCombo.font; leftPadding: 10; elide: Text.ElideRight
                         verticalAlignment: Text.AlignVCenter
                     }
-                    background: Rectangle { implicitHeight: 42; radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    background: Rectangle { implicitHeight: 42; radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                     onActivated: dlg.applySuggestions()
                 }
                 Text {
                     Layout.fillWidth: true
                     visible: dlg.fleets.length === 0
                     text: "No fleet adapter has published its robots yet."
-                    color: C.warn; font.pixelSize: 11; wrapMode: Text.WordWrap
+                    color: Theme.warn; font.pixelSize: 11; wrapMode: Text.WordWrap
                 }
                 Text {
                     Layout.fillWidth: true
                     visible: dlg.typeHint !== ""
                     text: dlg.typeHint
-                    color: C.warn; font.pixelSize: 11; wrapMode: Text.WordWrap
+                    color: Theme.warn; font.pixelSize: 11; wrapMode: Text.WordWrap
                 }
                 Text {
                     Layout.fillWidth: true
                     visible: dlg.fleetFacts !== ""
                     text: dlg.fleetFacts
-                    color: C.textDim; font.pixelSize: 11; wrapMode: Text.WordWrap
+                    color: Theme.textDim; font.pixelSize: 11; wrapMode: Text.WordWrap
                 }
             }
 
@@ -274,16 +274,16 @@ Dialog {
                 Layout.fillWidth: true
                 Layout.leftMargin: 18; Layout.rightMargin: 18
                 spacing: 4
-                Text { text: "ROBOT NAME"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                Text { text: "ROBOT NAME"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                 TextField {
                     id: nameField
                     objectName: "nameField"
                     Layout.fillWidth: true
                     font.pixelSize: 13
-                    color: C.text
+                    color: Theme.text
                     placeholderText: "e.g. the name RMF will show"
-                    placeholderTextColor: C.placeholderText
-                    background: Rectangle { implicitHeight: 42; radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    placeholderTextColor: Theme.placeholderText
+                    background: Rectangle { implicitHeight: 42; radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                     onTextEdited: dlg.scheduleCheck()
                 }
             }
@@ -292,7 +292,7 @@ Dialog {
                 Layout.fillWidth: true
                 Layout.leftMargin: 18; Layout.rightMargin: 18
                 spacing: 4
-                Text { text: "CHARGER"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+                Text { text: "CHARGER"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
                 ComboBox {
                     id: chargerCombo
                     objectName: "chargerCombo"
@@ -303,11 +303,11 @@ Dialog {
                     font.pixelSize: 13
                     contentItem: Text {
                         text: chargerCombo.currentIndex >= 0 ? chargerCombo.currentText : "Select a charger of the nav graph"
-                        color: chargerCombo.currentIndex >= 0 ? C.text : C.textDim
+                        color: chargerCombo.currentIndex >= 0 ? Theme.text : Theme.textDim
                         font: chargerCombo.font; leftPadding: 10; elide: Text.ElideRight
                         verticalAlignment: Text.AlignVCenter
                     }
-                    background: Rectangle { implicitHeight: 42; radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    background: Rectangle { implicitHeight: 42; radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                     delegate: ItemDelegate {
                         required property var modelData
                         required property int index
@@ -322,12 +322,12 @@ Dialog {
                     Layout.fillWidth: true
                     visible: dlg.fleet !== null && dlg.freeChargers === 0
                     text: "Every charger of this fleet's nav graph is in use."
-                    color: C.warn; font.pixelSize: 11; wrapMode: Text.WordWrap
+                    color: Theme.warn; font.pixelSize: 11; wrapMode: Text.WordWrap
                 }
                 Text {
                     Layout.fillWidth: true
                     text: "Each robot of a fleet needs its own charger; the list is the chargers of the fleet's nav graph."
-                    color: C.textDim; font.pixelSize: 11; wrapMode: Text.WordWrap
+                    color: Theme.textDim; font.pixelSize: 11; wrapMode: Text.WordWrap
                 }
             }
 
@@ -341,40 +341,40 @@ Dialog {
 
                 Text {
                     text: (advanced.expanded ? "▾ " : "▸ ") + "MAP FRAME (OPTIONAL)"
-                    font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim
+                    font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: advanced.expanded = !advanced.expanded }
                 }
                 Text {
                     Layout.fillWidth: true
                     visible: advanced.expanded
                     text: "How the robot's own map maps onto the fleet's. Leave blank when they are the same."
-                    color: C.textDim; font.pixelSize: 11; wrapMode: Text.WordWrap
+                    color: Theme.textDim; font.pixelSize: 11; wrapMode: Text.WordWrap
                 }
                 GridLayout {
                     Layout.fillWidth: true
                     visible: advanced.expanded
                     columns: 4
                     columnSpacing: 6
-                    Text { text: "ROTATION"; font.pixelSize: 9; color: C.textDim }
-                    Text { text: "SCALE"; font.pixelSize: 9; color: C.textDim }
-                    Text { text: "X SHIFT"; font.pixelSize: 9; color: C.textDim }
-                    Text { text: "Y SHIFT"; font.pixelSize: 9; color: C.textDim }
+                    Text { text: "ROTATION"; font.pixelSize: 9; color: Theme.textDim }
+                    Text { text: "SCALE"; font.pixelSize: 9; color: Theme.textDim }
+                    Text { text: "X SHIFT"; font.pixelSize: 9; color: Theme.textDim }
+                    Text { text: "Y SHIFT"; font.pixelSize: 9; color: Theme.textDim }
                     TextField { id: rotationField; Layout.fillWidth: true; placeholderText: "rad"; onTextEdited: dlg.scheduleCheck()
-                        color: C.text; font.pixelSize: 13; placeholderTextColor: C.placeholderText
+                        color: Theme.text; font.pixelSize: 13; placeholderTextColor: Theme.placeholderText
                         validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                        background: Rectangle { implicitHeight: 38; radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 } }
+                        background: Rectangle { implicitHeight: 38; radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 } }
                     TextField { id: scaleField; Layout.fillWidth: true; placeholderText: "1"; onTextEdited: dlg.scheduleCheck()
-                        color: C.text; font.pixelSize: 13; placeholderTextColor: C.placeholderText
+                        color: Theme.text; font.pixelSize: 13; placeholderTextColor: Theme.placeholderText
                         validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                        background: Rectangle { implicitHeight: 38; radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 } }
+                        background: Rectangle { implicitHeight: 38; radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 } }
                     TextField { id: txField; Layout.fillWidth: true; placeholderText: "m"; onTextEdited: dlg.scheduleCheck()
-                        color: C.text; font.pixelSize: 13; placeholderTextColor: C.placeholderText
+                        color: Theme.text; font.pixelSize: 13; placeholderTextColor: Theme.placeholderText
                         validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                        background: Rectangle { implicitHeight: 38; radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 } }
+                        background: Rectangle { implicitHeight: 38; radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 } }
                     TextField { id: tyField; Layout.fillWidth: true; placeholderText: "m"; onTextEdited: dlg.scheduleCheck()
-                        color: C.text; font.pixelSize: 13; placeholderTextColor: C.placeholderText
+                        color: Theme.text; font.pixelSize: 13; placeholderTextColor: Theme.placeholderText
                         validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                        background: Rectangle { implicitHeight: 38; radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 } }
+                        background: Rectangle { implicitHeight: 38; radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 } }
                 }
             }
 
@@ -400,8 +400,8 @@ Dialog {
                                                    : "✓ All checks passed"
                         return dlg.verdict.needs_confirmation ? "Some checks could not be made" : "✗ Cannot register yet"
                     }
-                    color: (dlg.verdict && dlg.verdict.ok) ? C.success
-                           : ((dlg.verdict && !dlg.verdict.ok && !dlg.verdict.needs_confirmation) ? C.err : C.textDim)
+                    color: (dlg.verdict && dlg.verdict.ok) ? Theme.success
+                           : ((dlg.verdict && !dlg.verdict.ok && !dlg.verdict.needs_confirmation) ? Theme.err : Theme.textDim)
                 }
 
                 Repeater {
@@ -413,12 +413,12 @@ Dialog {
                         Rectangle {
                             Layout.preferredWidth: 8; Layout.preferredHeight: 8; radius: 4
                             Layout.alignment: Qt.AlignTop; Layout.topMargin: 4
-                            color: modelData.kind === "error" ? C.err : C.warn
+                            color: modelData.kind === "error" ? Theme.err : Theme.warn
                         }
                         Text {
                             Layout.fillWidth: true
                             text: modelData.message
-                            color: C.text; font.pixelSize: 12; wrapMode: Text.WordWrap
+                            color: Theme.text; font.pixelSize: 12; wrapMode: Text.WordWrap
                         }
                     }
                 }
@@ -429,7 +429,7 @@ Dialog {
                     visible: !!dlg.verdict && (dlg.verdict.needs_confirmation || checked)
                     text: "Add it anyway: I accept that the checks above could not be made"
                     font.pixelSize: 12
-                    contentItem: Text { text: confirmBox.text; color: C.text; font: confirmBox.font; wrapMode: Text.WordWrap
+                    contentItem: Text { text: confirmBox.text; color: Theme.text; font: confirmBox.font; wrapMode: Text.WordWrap
                                          leftPadding: confirmBox.indicator.width + 8; verticalAlignment: Text.AlignVCenter }
                     onToggled: dlg.scheduleCheck()
                 }
@@ -445,9 +445,9 @@ Dialog {
                     id: cancelBtn
                     text: "CANCEL"
                     implicitHeight: 36; leftPadding: 16; rightPadding: 16
-                    contentItem: Text { text: cancelBtn.text; color: C.text; font.pixelSize: 13
+                    contentItem: Text { text: cancelBtn.text; color: Theme.text; font.pixelSize: 13
                                          verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter }
-                    background: Rectangle { radius: 10; color: cancelBtn.down ? C.border : C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    background: Rectangle { radius: 10; color: cancelBtn.down ? Theme.border : Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                     onClicked: dlg.close()
                 }
 
@@ -457,9 +457,9 @@ Dialog {
                     text: "REGISTER ROBOT"
                     enabled: !!dlg.verdict && dlg.verdict.ok && !dlg.checking && !dlg.registering
                     implicitHeight: 36; leftPadding: 16; rightPadding: 16
-                    contentItem: Text { text: registerBtn.text; color: "#ffffff"; font.pixelSize: 13; font.bold: true
+                    contentItem: Text { text: registerBtn.text; color: Theme.textOnAccent; font.pixelSize: 13; font.bold: true
                                          verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter }
-                    background: Rectangle { radius: 10; color: !registerBtn.enabled ? C.border : (registerBtn.down ? C.accentDark : C.accent) }
+                    background: Rectangle { radius: 10; color: !registerBtn.enabled ? Theme.border : (registerBtn.down ? Theme.accentDark : Theme.accent) }
                     onClicked: {
                         dlg.registering = true
                         dlg.registerId = registry.register(dlg.requestJson())

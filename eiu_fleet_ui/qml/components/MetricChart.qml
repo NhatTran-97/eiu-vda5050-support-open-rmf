@@ -14,7 +14,7 @@ Rectangle {
     property real limit: 0
     property string limitLabel: ""
     property int decimals: 1
-    property color lineColor: C.cyan
+    property color lineColor: Theme.cyan
     // Scale of the text and spacing; the parent raises it as the page grows.
     property real s: 1.0
 
@@ -52,8 +52,8 @@ Rectangle {
 
     implicitHeight: 230 * s
     radius: 12 * s
-    color: C.surfaceAlt
-    border.color: C.border
+    color: Theme.surfaceAlt
+    border.color: Theme.border
     border.width: 1
     onAgesChanged: canvas.requestPaint()
     onValuesChanged: canvas.requestPaint()
@@ -66,14 +66,14 @@ Rectangle {
         anchors.left: parent.left; anchors.top: parent.top
         anchors.leftMargin: 16 * chart.s; anchors.topMargin: 14 * chart.s
         text: chart.title.toUpperCase()
-        color: C.textDim
+        color: Theme.textDim
         font.pixelSize: 13 * chart.s; font.bold: true; font.letterSpacing: 1.0
     }
     Text {
         anchors.right: parent.right; anchors.top: parent.top
         anchors.rightMargin: 16 * chart.s; anchors.topMargin: 9 * chart.s
         text: chart.hasData ? chart.fmt(chart.values[chart.lastIndex]) : "—"
-        color: C.text
+        color: Theme.text
         font.family: "IBM Plex Mono"; font.pixelSize: 24 * chart.s; font.bold: true
     }
 
@@ -101,8 +101,8 @@ Rectangle {
 
             // Hairline grid with the values it stands for.
             ctx.lineWidth = 1
-            ctx.strokeStyle = C.border
-            ctx.fillStyle = C.textDim
+            ctx.strokeStyle = Theme.border
+            ctx.fillStyle = Theme.textDim
             ctx.textAlign = "right"
             ctx.textBaseline = "middle"
             for (var g = 0; g <= 2; g++) {
@@ -122,10 +122,10 @@ Rectangle {
             // The level the measure is judged against.
             if (chart.limit > 0) {
                 var ly = Math.round(chart.yOf(chart.limit, topY, h)) + 0.5
-                ctx.strokeStyle = C.warn
+                ctx.strokeStyle = Theme.warn
                 ctx.beginPath(); ctx.moveTo(left, ly); ctx.lineTo(left + w, ly); ctx.stroke()
                 if (chart.limitLabel !== "") {
-                    ctx.fillStyle = C.textDim
+                    ctx.fillStyle = Theme.textDim
                     ctx.textAlign = "left"
                     ctx.fillText(chart.limitLabel, left + 6 * chart.s, ly - 5 * chart.s)
                 }
@@ -151,7 +151,7 @@ Rectangle {
             if (chart.hoverIndex >= 0 && chart.values[chart.hoverIndex] !== null && chart.values[chart.hoverIndex] !== undefined) {
                 var hx = Math.round(chart.xOf(chart.ages[chart.hoverIndex], left, w)) + 0.5
                 ctx.lineWidth = 1
-                ctx.strokeStyle = C.textDim
+                ctx.strokeStyle = Theme.textDim
                 ctx.beginPath(); ctx.moveTo(hx, topY); ctx.lineTo(hx, plotBottom); ctx.stroke()
             }
 
@@ -159,7 +159,7 @@ Rectangle {
             var mark = (chart.hoverIndex >= 0 && chart.values[chart.hoverIndex] !== null && chart.values[chart.hoverIndex] !== undefined)
                        ? chart.hoverIndex : chart.lastIndex
             var mx = chart.xOf(chart.ages[mark], left, w), my = chart.yOf(chart.values[mark], topY, h)
-            ctx.fillStyle = C.surfaceAlt
+            ctx.fillStyle = Theme.surfaceAlt
             ctx.beginPath(); ctx.arc(mx, my, 4.5 * Math.max(1, chart.s * 0.9) + 2, 0, Math.PI * 2); ctx.fill()
             ctx.fillStyle = chart.lineColor
             ctx.beginPath(); ctx.arc(mx, my, 4.5 * Math.max(1, chart.s * 0.9), 0, Math.PI * 2); ctx.fill()
@@ -170,7 +170,7 @@ Rectangle {
         anchors.centerIn: canvas
         visible: !chart.hasData
         text: "Waiting for reports"
-        color: C.textDim
+        color: Theme.textDim
         font.pixelSize: 14 * chart.s
     }
 
@@ -205,8 +205,8 @@ Rectangle {
         width: readoutRow.implicitWidth + 24 * chart.s
         height: 32 * chart.s
         radius: 8
-        color: C.surfaceRaised
-        border.color: C.border
+        color: Theme.surfaceRaised
+        border.color: Theme.border
         Row {
             id: readoutRow
             anchors.centerIn: parent
@@ -214,12 +214,12 @@ Rectangle {
             Rectangle { anchors.verticalCenter: parent.verticalCenter; width: 14 * chart.s; height: 2; radius: 1; color: chart.lineColor }
             Text {
                 text: chart.hoverIndex >= 0 ? chart.fmt(chart.values[chart.hoverIndex]) : ""
-                color: C.text
+                color: Theme.text
                 font.family: "IBM Plex Mono"; font.pixelSize: 14 * chart.s; font.bold: true
             }
             Text {
                 text: chart.hoverIndex >= 0 ? chart.agoText(chart.ages[chart.hoverIndex]) : ""
-                color: C.textDim
+                color: Theme.textDim
                 font.pixelSize: 13 * chart.s
             }
         }

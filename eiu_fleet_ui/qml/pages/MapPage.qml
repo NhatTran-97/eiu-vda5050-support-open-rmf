@@ -6,19 +6,18 @@ import "../components"
 Rectangle {
     id: root
     radius: 12
-    color: "#081521"
-    border.color: C.border
+    color: Theme.mapBg
+    border.color: Theme.border
     border.width: 1
     clip: true
 
     property var  waypoints:   []
     property var  edges:       []
     property var  blockedEdgeIndices: []
-    property var  mapRobots:   []
-    property var  robotsOnline: ({})   // VDA5050 connection state by robot name
-    property var  telemetry:   ({})
-    property string plannedDest: ""
-    property var activeDestinations: ({})   // waypoint name -> true, for any robot's underway task
+    // Waypoint name -> true, for any robot's underway task.
+    readonly property var activeDestinations: dashboard.activeDestinations
+    // Route polylines and destinations of the connected robots, in world coordinates.
+    readonly property var routes: dashboard.routes
     property string selectedRobotName: ""
     property url robotIconSource: ""
     property var robotIconUrls: ({})   // robot name -> icon url; falls back to robotIconSource
@@ -39,14 +38,15 @@ Rectangle {
         font.pixelSize: 15 * root.labelScale
     }
 
-    // Place each waypoint label where it overlaps least.
+    // Place each waypoint label where it overlaps least: eight spots around its pin, other labels and
+    // every pin count as obstacles, and so does leaving the map image. A first pass places the labels left to right, later passes let
+    // each label move to its best spot given all the others, until nothing moves.
     readonly property var labelOffsets: {
-        var placed = []
-        var offsets = new Array(waypoints.length)
-        var order = waypoints.map(function(w, i) { return i })
-                             .sort(function(a, b) { return waypoints[a].x - waypoints[b].x })
-        for (var k = 0; k < order.length; k++) {
-            var i = order[k]
+        var n = waypoints.length
+        var pins = new Array(n)
+        var candidates = new Array(n)
+        var pinHalf = 12
+        for (var i = 0; i < n; i++) {
             var w = waypoints[i]
             var grow = activeDestinations[w.name] ? 17 / 15 : 1
             var lw = labelMetrics.advanceWidth(w.name || "") * grow
@@ -55,27 +55,63 @@ Rectangle {
             var px = p.x * overlay.displayScale
             var py = p.y * overlay.displayScale
             var gap = 16 * labelScale
-            var candidates = [
-                { x: -lw / 2,    y: -30 * labelScale },
-                { x: -lw / 2,    y: 14 * labelScale },
-                { x: gap,        y: -lh / 2 },
-                { x: -lw - gap,  y: -lh / 2 }
+            var near = 8 * labelScale
+            pins[i] = { l: px - pinHalf, t: py - pinHalf, r: px + pinHalf, b: py + pinHalf }
+            var spots = [
+                { x: -lw / 2,           y: -30 * labelScale },
+                { x: -lw / 2,           y: 14 * labelScale },
+                { x: gap,               y: -lh / 2 },
+                { x: -lw - gap,         y: -lh / 2 },
+                { x: gap * 0.6,         y: -lh - near },
+                { x: -lw - gap * 0.6,   y: -lh - near },
+                { x: gap * 0.6,         y: near },
+                { x: -lw - gap * 0.6,   y: near }
             ]
-            var best = candidates[0], bestCost = Infinity
-            for (var c = 0; c < candidates.length && bestCost > 0; c++) {
-                var r = { l: px + candidates[c].x - 4, t: py + candidates[c].y,
-                          r: px + candidates[c].x + lw + 4, b: py + candidates[c].y + lh }
-                var cost = placed.reduce(function(sum, o) { return sum + overlapArea(o, r) }, 0)
-                if (cost < bestCost) {
-                    best = candidates[c]
-                    bestCost = cost
-                    best.rect = r
-                }
-            }
-            offsets[i] = best
-            placed.push(best.rect)
+            for (var c = 0; c < spots.length; c++)
+                spots[c].rect = { l: px + spots[c].x - 4, t: py + spots[c].y,
+                                  r: px + spots[c].x + lw + 4, b: py + spots[c].y + lh }
+            candidates[i] = spots
         }
-        return offsets
+
+        var mapW = overlay.width * overlay.displayScale
+        var mapH = overlay.height * overlay.displayScale
+        var choice = new Array(n)
+        function cost(i, c) {
+            var r = candidates[i][c].rect
+            // A small penalty keeps the preferred spots first when nothing overlaps.
+            var total = c * 0.01
+            var inside = overlapArea({ l: 0, t: 0, r: mapW, b: mapH }, r)
+            total += (r.r - r.l) * (r.b - r.t) - inside
+            for (var j = 0; j < n; j++) {
+                total += overlapArea(pins[j], r)
+                if (j !== i && choice[j] !== undefined)
+                    total += overlapArea(candidates[j][choice[j]].rect, r)
+            }
+            return total
+        }
+        function bestSpot(i) {
+            var best = 0, bestCost = Infinity
+            for (var c = 0; c < candidates[i].length; c++) {
+                var k = cost(i, c)
+                if (k < bestCost) { best = c; bestCost = k }
+            }
+            return best
+        }
+
+        var order = waypoints.map(function(w, i) { return i })
+                             .sort(function(a, b) { return waypoints[a].x - waypoints[b].x })
+        for (var k = 0; k < order.length; k++)
+            choice[order[k]] = bestSpot(order[k])
+        for (var pass = 0; pass < 4; pass++) {
+            var moved = false
+            for (var m = 0; m < order.length; m++) {
+                var idx = order[m]
+                var spot = bestSpot(idx)
+                if (spot !== choice[idx]) { choice[idx] = spot; moved = true }
+            }
+            if (!moved) break
+        }
+        return choice.map(function(c, i) { return candidates[i][c] })
     }
 
     function overlapArea(a, b) {
@@ -100,7 +136,7 @@ Rectangle {
     // Find the nearest waypoint within the pick radius.
     function nearestWaypoint(wx, wy) {
         var best = ""
-        var bestDist = 0.6
+        var bestDist = uiConfig.pickRadiusM
         for (var i = 0; i < waypoints.length; i++) {
             var w = waypoints[i]
             var d = Math.hypot(w.x - wx, w.y - wy)
@@ -121,14 +157,18 @@ Rectangle {
     }
     onGraphVerticesChanged: laneCanvas.requestPaint()
     onGraphLanesChanged: laneCanvas.requestPaint()
+    onGraphEditModeChanged: laneCanvas.requestPaint()
 
     property int _laneFromIndex: -1        // first endpoint picked for a new lane
     property var _pendingVertexPos: null   // world {x,y} awaiting the name dialog
     property int selectedGraphVertex: -1
     property var selectedGraphLane: null   // {from, to}
+    on_LaneFromIndexChanged: laneCanvas.requestPaint()
+    onSelectedGraphVertexChanged: laneCanvas.requestPaint()
+    onSelectedGraphLaneChanged: laneCanvas.requestPaint()
 
     function nearestGraphVertex(wx, wy) {
-        var best = -1, bestDist = 0.6
+        var best = -1, bestDist = uiConfig.pickRadiusM
         for (var i = 0; i < root.graphVertices.length; i++) {
             var v = root.graphVertices[i]
             var d = Math.hypot(v.x - wx, v.y - wy)
@@ -139,7 +179,7 @@ Rectangle {
 
     // Nearest graph lane whose segment passes within range of this point.
     function nearestGraphLane(wx, wy) {
-        var best = null, bestDist = 0.35
+        var best = null, bestDist = uiConfig.lanePickRadiusM
         for (var i = 0; i < root.graphLanes.length; i++) {
             var l = root.graphLanes[i]
             var v1 = root.graphVertices[l.from], v2 = root.graphVertices[l.to]
@@ -168,8 +208,8 @@ Rectangle {
         return null
     }
 
-    property real minScale: 0.4
-    property real maxScale: 8.0
+    readonly property real minScale: uiConfig.minZoom
+    readonly property real maxScale: uiConfig.maxZoom
 
     // No-go zones: each closes the lanes it overlaps via RMF's lane_closure_requests.
     property var zoneRect: null   // {x1,y1,x2,y2} in world coordinates, while dragging
@@ -279,38 +319,23 @@ Rectangle {
 
     function requestAllPaint() {
         laneCanvas.requestPaint()
+        routeCanvas.requestPaint()
     }
 
     function scheduleGeometryPaint() {
         geometryPaintTimer.restart()
     }
 
-    // Repaint routes only when their released-node state changes.
-    readonly property string releasedSignature: {
-        var names = Object.keys(telemetry).sort()
-        var sig = ""
-        for (var i = 0; i < names.length; i++) {
-            var nodeStates = (telemetry[names[i]] && telemetry[names[i]].node_states) || []
-            sig += names[i] + ":"
-            for (var j = 0; j < nodeStates.length; j++)
-                sig += nodeStates[j].nodeId + (nodeStates[j].released ? "1" : "0")
-            sig += "|"
-        }
-        return sig
-    }
-
+    // The graph layer changes with the graph, lane closures and zones; the route layer with the robots.
     onWaypointsChanged: requestAllPaint()
     onEdgesChanged: laneCanvas.requestPaint()
     onBlockedEdgeIndicesChanged: laneCanvas.requestPaint()
-    onMapRobotsChanged: laneCanvas.requestPaint()
-    onReleasedSignatureChanged: laneCanvas.requestPaint()
-    onPlannedDestChanged: laneCanvas.requestPaint()
-    onPickPointChanged: laneCanvas.requestPaint()
-    onPickedPoseChanged: laneCanvas.requestPaint()
-    onPickedWaypointChanged: laneCanvas.requestPaint()
     onZoneRectChanged: laneCanvas.requestPaint()
     onClosedZonesChanged: laneCanvas.requestPaint()
     onSelectedZoneIdChanged: laneCanvas.requestPaint()
+    onRoutesChanged: routeCanvas.requestPaint()
+    onPickPointChanged: routeCanvas.requestPaint()
+    onPickedPoseChanged: routeCanvas.requestPaint()
 
     Timer {
         id: geometryPaintTimer
@@ -418,9 +443,9 @@ Rectangle {
                         var rx = Math.min(p1.x, p2.x), ry = Math.min(p1.y, p2.y)
                         var rw = Math.abs(p2.x - p1.x), rh = Math.abs(p2.y - p1.y)
                         ctx2d.setLineDash(selected ? [] : [8 / uiScale, 5 / uiScale])
-                        ctx2d.fillStyle = "#F05265"; ctx2d.globalAlpha = selected ? 0.28 : 0.16
+                        ctx2d.fillStyle = Theme.mapBlocked; ctx2d.globalAlpha = selected ? 0.28 : 0.16
                         ctx2d.fillRect(rx, ry, rw, rh)
-                        ctx2d.strokeStyle = "#F05265"; ctx2d.globalAlpha = selected ? 1.0 : 0.7
+                        ctx2d.strokeStyle = Theme.mapBlocked; ctx2d.globalAlpha = selected ? 1.0 : 0.7
                         ctx2d.lineWidth = (selected ? 3 : 2) / uiScale
                         ctx2d.strokeRect(rx, ry, rw, rh)
                     }
@@ -446,7 +471,7 @@ Rectangle {
                         // Blocked indices refer to deduplicated edges.
                         var blocked = root.blockedEdgeIndices.indexOf(i) >= 0
 
-                        ctx2d.strokeStyle = blocked ? "#F05265" : "#f5c400"
+                        ctx2d.strokeStyle = blocked ? Theme.mapBlocked : Theme.mapLane
                         ctx2d.lineWidth   = (blocked ? 6 : 4) / uiScale
                         ctx2d.globalAlpha = blocked ? 0.9 : 0.75
                         ctx2d.beginPath()
@@ -455,7 +480,7 @@ Rectangle {
                         ctx2d.stroke()
 
                         var direction = Math.atan2(p2.y - p1.y, p2.x - p1.x)
-                        ctx2d.fillStyle   = "rgba(41,121,255,0.95)"
+                        ctx2d.fillStyle   = Theme.mapLaneArrow
                         ctx2d.globalAlpha = 1.0
                         if (e.bidir) {
                             fillTriangle(p1.x + (p2.x-p1.x)*0.33,
@@ -482,7 +507,7 @@ Rectangle {
                             var isSelLane = root.selectedGraphLane
                                 && ((root.selectedGraphLane.from === gl.from && root.selectedGraphLane.to === gl.to)
                                     || (root.selectedGraphLane.from === gl.to && root.selectedGraphLane.to === gl.from))
-                            ctx2d.strokeStyle = isSelLane ? "#ffffff" : "#00D9FF"
+                            ctx2d.strokeStyle = isSelLane ? Theme.mapHighlight : Theme.mapEditor
                             ctx2d.lineWidth = (isSelLane ? 5 : 3) / uiScale
                             ctx2d.globalAlpha = 0.9
                             ctx2d.beginPath()
@@ -490,7 +515,7 @@ Rectangle {
                             ctx2d.lineTo(gp2.x, gp2.y)
                             ctx2d.stroke()
                             var gdir = Math.atan2(gp2.y - gp1.y, gp2.x - gp1.x)
-                            ctx2d.fillStyle = "#00D9FF"
+                            ctx2d.fillStyle = Theme.mapEditor
                             if (gl.bidir) {
                                 fillTriangle(gp1.x + (gp2.x-gp1.x)*0.33, gp1.y + (gp2.y-gp1.y)*0.33, gdir, 6 / uiScale)
                                 fillTriangle(gp1.x + (gp2.x-gp1.x)*0.67, gp1.y + (gp2.y-gp1.y)*0.67, gdir + Math.PI, 6 / uiScale)
@@ -503,7 +528,7 @@ Rectangle {
                         if (root._laneFromIndex >= 0 && root.graphVertices[root._laneFromIndex]) {
                             var fv = root.graphVertices[root._laneFromIndex]
                             var fp = root.worldToScreen(fv.x, fv.y)
-                            ctx2d.strokeStyle = "#00D9FF"; ctx2d.globalAlpha = 0.9; ctx2d.lineWidth = 2 / uiScale
+                            ctx2d.strokeStyle = Theme.mapEditor; ctx2d.globalAlpha = 0.9; ctx2d.lineWidth = 2 / uiScale
                             ctx2d.beginPath(); ctx2d.arc(fp.x, fp.y, 16 / uiScale, 0, Math.PI*2); ctx2d.stroke()
                         }
 
@@ -512,100 +537,95 @@ Rectangle {
                             var vp = root.worldToScreen(gv.x, gv.y)
                             var selected = gv.index === root.selectedGraphVertex
                             ctx2d.globalAlpha = 1.0
-                            ctx2d.fillStyle = gv.is_charger ? "#F39C12" : "#00D9FF"
+                            ctx2d.fillStyle = gv.is_charger ? Theme.mapCharger : Theme.mapEditor
                             ctx2d.beginPath(); ctx2d.arc(vp.x, vp.y, 8 / uiScale, 0, Math.PI*2); ctx2d.fill()
-                            ctx2d.strokeStyle = selected ? "#ffffff" : "#04202b"
+                            ctx2d.strokeStyle = selected ? Theme.mapHighlight : Theme.mapEditorStroke
                             ctx2d.lineWidth = (selected ? 3 : 1.5) / uiScale
                             ctx2d.stroke()
-                            ctx2d.fillStyle = "#ffffff"
+                            ctx2d.fillStyle = Theme.mapHighlight
                             ctx2d.font = (12 / uiScale) + "px sans-serif"
                             ctx2d.textAlign = "center"
                             ctx2d.fillText(gv.name || ("#" + gv.index), vp.x, vp.y - 14 / uiScale)
                         }
                     }
+                }
+            }
 
-                    // Draw a planned path for each robot.
-                    for (var ri = 0; ri < root.mapRobots.length; ri++) {
-                        var rob = root.mapRobots[ri]
-                        // A disconnected robot's last-known path/position is stale -- don't draw it.
-                        if (!root.robotsOnline[rob.name]) continue
-                        var rmfPath = rob.path || []
+            // Draw the connected robots' routes and the pose being picked; repainted as the robots move.
+            Canvas {
+                id: routeCanvas
+                anchors.fill: parent
+                z: 1
+                renderTarget: Canvas.Image
+                renderStrategy: Canvas.Immediate
+                onPaint: {
+                    var ctx2d = getContext("2d")
+                    ctx2d.clearRect(0, 0, width, height)
+                    ctx2d.globalAlpha = 1.0
+                    ctx2d.setLineDash([])
+                    var uiScale = Math.max(0.001, overlay.displayScale)
 
-                        // Mark the destination of an active path.
-                        var destPt = null
-                        if (root.plannedDest !== "") {
-                            for (var j = 0; j < root.waypoints.length; j++) {
-                                if (root.waypoints[j].name === root.plannedDest) {
-                                    destPt = root.worldToScreen(root.waypoints[j].x, root.waypoints[j].y)
-                                    break
-                                }
-                            }
-                        }
-                        if (!destPt && rmfPath.length > 0) {
-                            var last = rmfPath[rmfPath.length - 1]
-                            destPt = root.worldToScreen(last.x, last.y)
-                        }
+                    function fillTriangle(cx, cy, dir, sz) {
+                        ctx2d.save()
+                        ctx2d.translate(cx, cy)
+                        ctx2d.rotate(dir)
+                        ctx2d.beginPath()
+                        ctx2d.moveTo( sz,      0)
+                        ctx2d.lineTo(-sz, -sz * 0.6)
+                        ctx2d.lineTo(-sz,  sz * 0.6)
+                        ctx2d.closePath()
+                        ctx2d.fill()
+                        ctx2d.restore()
+                    }
+
+                    for (var ri = 0; ri < root.routes.length; ri++) {
+                        var route = root.routes[ri]
+
+                        // Destination rings.
+                        var destPt = route.dest ? root.worldToScreen(route.dest.x, route.dest.y) : null
                         if (destPt) {
                             ctx2d.setLineDash([])
-                            ctx2d.strokeStyle = "#00e676"; ctx2d.lineWidth = 2 / uiScale
+                            ctx2d.strokeStyle = Theme.mapRoute; ctx2d.lineWidth = 2 / uiScale
                             ctx2d.globalAlpha = 0.20; ctx2d.beginPath(); ctx2d.arc(destPt.x, destPt.y, 28 / uiScale, 0, Math.PI*2); ctx2d.stroke()
                             ctx2d.globalAlpha = 0.35; ctx2d.beginPath(); ctx2d.arc(destPt.x, destPt.y, 18 / uiScale, 0, Math.PI*2); ctx2d.stroke()
                             ctx2d.globalAlpha = 0.55; ctx2d.beginPath(); ctx2d.arc(destPt.x, destPt.y, 10 / uiScale, 0, Math.PI*2); ctx2d.stroke()
-                            ctx2d.fillStyle = "#00e676"; ctx2d.globalAlpha = 0.45
+                            ctx2d.fillStyle = Theme.mapRoute; ctx2d.globalAlpha = 0.45
                             ctx2d.beginPath(); ctx2d.arc(destPt.x, destPt.y, 6 / uiScale, 0, Math.PI*2); ctx2d.fill()
                         }
 
-                        // Draw released path segments more strongly than planned segments.
-                        if (rmfPath.length > 0 && (rob.x !== 0 || rob.y !== 0)) {
-                            var rp = root.worldToScreen(rob.x, rob.y)
-                            var tele = root.telemetry[rob.name]
-                            var nodeStates = (tele && tele.node_states) || []
-                            ctx2d.strokeStyle = "#00e676"
-
-                            if (nodeStates.length > 0) {
-                                var prevScreen = rp
-                                for (var ns = 0; ns < nodeStates.length; ns++) {
-                                    var wp = root.waypointByName(nodeStates[ns].nodeId)
-                                    if (!wp) continue
-                                    var segPt = root.worldToScreen(wp.x, wp.y)
-                                    if (nodeStates[ns].released) {
-                                        ctx2d.lineWidth = 3 / uiScale; ctx2d.globalAlpha = 0.9
-                                        ctx2d.setLineDash([10 / uiScale, 5 / uiScale])
-                                    } else {
-                                        ctx2d.lineWidth = 2 / uiScale; ctx2d.globalAlpha = 0.4
-                                        ctx2d.setLineDash([3 / uiScale, 6 / uiScale])
-                                    }
-                                    ctx2d.beginPath()
-                                    ctx2d.moveTo(prevScreen.x, prevScreen.y)
-                                    ctx2d.lineTo(segPt.x, segPt.y)
-                                    ctx2d.stroke()
-                                    prevScreen = segPt
-                                }
+                        // Released legs are drawn stronger than the planned ones ahead of them.
+                        ctx2d.strokeStyle = Theme.mapRoute
+                        for (var li = 0; li < route.lines.length; li++) {
+                            var line = route.lines[li]
+                            if (line.style === "released") {
+                                ctx2d.lineWidth = 3 / uiScale; ctx2d.globalAlpha = 0.9
+                                ctx2d.setLineDash([10 / uiScale, 5 / uiScale])
                             } else {
-                                ctx2d.lineWidth = 3 / uiScale
-                                ctx2d.globalAlpha = 0.9; ctx2d.setLineDash([10 / uiScale, 5 / uiScale])
-                                ctx2d.beginPath(); ctx2d.moveTo(rp.x, rp.y)
-                                for (var m = 0; m < rmfPath.length; m++) {
-                                    var pp = root.worldToScreen(rmfPath[m].x, rmfPath[m].y)
-                                    ctx2d.lineTo(pp.x, pp.y)
-                                }
-                                ctx2d.stroke()
+                                ctx2d.lineWidth = 2 / uiScale; ctx2d.globalAlpha = 0.4
+                                ctx2d.setLineDash([3 / uiScale, 6 / uiScale])
                             }
-                            // Arrowhead at the end of the path.
-                            if (destPt) {
-                                ctx2d.setLineDash([]); ctx2d.globalAlpha = 0.9
-                                var prevPt = rmfPath.length >= 2
-                                    ? root.worldToScreen(rmfPath[rmfPath.length-2].x, rmfPath[rmfPath.length-2].y)
-                                    : rp
-                                var ang = Math.atan2(destPt.y - prevPt.y, destPt.x - prevPt.x)
-                                var al = 12 / uiScale, aa = 0.45
-                                ctx2d.beginPath()
-                                ctx2d.moveTo(destPt.x, destPt.y)
-                                ctx2d.lineTo(destPt.x - al*Math.cos(ang-aa), destPt.y - al*Math.sin(ang-aa))
-                                ctx2d.moveTo(destPt.x, destPt.y)
-                                ctx2d.lineTo(destPt.x - al*Math.cos(ang+aa), destPt.y - al*Math.sin(ang+aa))
-                                ctx2d.stroke()
+                            ctx2d.beginPath()
+                            for (var pi = 0; pi < line.points.length; pi++) {
+                                var pt = root.worldToScreen(line.points[pi][0], line.points[pi][1])
+                                if (pi === 0) ctx2d.moveTo(pt.x, pt.y)
+                                else ctx2d.lineTo(pt.x, pt.y)
                             }
+                            ctx2d.stroke()
+                        }
+
+                        // Arrowhead at the destination.
+                        if (destPt && route.tail && route.lines.length > 0) {
+                            var prevPt = root.worldToScreen(route.tail.x, route.tail.y)
+                            ctx2d.setLineDash([]); ctx2d.globalAlpha = 0.9
+                            ctx2d.lineWidth = 3 / uiScale
+                            var ang = Math.atan2(destPt.y - prevPt.y, destPt.x - prevPt.x)
+                            var al = 12 / uiScale, aa = 0.45
+                            ctx2d.beginPath()
+                            ctx2d.moveTo(destPt.x, destPt.y)
+                            ctx2d.lineTo(destPt.x - al*Math.cos(ang-aa), destPt.y - al*Math.sin(ang-aa))
+                            ctx2d.moveTo(destPt.x, destPt.y)
+                            ctx2d.lineTo(destPt.x - al*Math.cos(ang+aa), destPt.y - al*Math.sin(ang+aa))
+                            ctx2d.stroke()
                         }
                     }
 
@@ -614,9 +634,9 @@ Rectangle {
                         var pk = root.worldToScreen(root.pickPoint.x, root.pickPoint.y)
                         var screenYaw = -root.pickPoint.yaw
                         ctx2d.setLineDash([])
-                        ctx2d.fillStyle = "#ffffff"; ctx2d.globalAlpha = 0.9
+                        ctx2d.fillStyle = Theme.mapHighlight; ctx2d.globalAlpha = 0.9
                         ctx2d.beginPath(); ctx2d.arc(pk.x, pk.y, 6 / uiScale, 0, Math.PI*2); ctx2d.fill()
-                        ctx2d.strokeStyle = "#ffffff"; ctx2d.lineWidth = 2 / uiScale
+                        ctx2d.strokeStyle = Theme.mapHighlight; ctx2d.lineWidth = 2 / uiScale
                         var arm = 22 / uiScale
                         var tipX = pk.x + arm * Math.cos(screenYaw)
                         var tipY = pk.y + arm * Math.sin(screenYaw)
@@ -632,11 +652,11 @@ Rectangle {
                         var cp = root.worldToScreen(root.pickedPose.x, root.pickedPose.y)
                         var cpYaw = -root.pickedPose.yaw
                         ctx2d.setLineDash([])
-                        ctx2d.strokeStyle = "#FF3DAE"; ctx2d.globalAlpha = 0.5
+                        ctx2d.strokeStyle = Theme.mapPicked; ctx2d.globalAlpha = 0.5
                         ctx2d.beginPath(); ctx2d.arc(cp.x, cp.y, 14 / uiScale, 0, Math.PI*2); ctx2d.stroke()
-                        ctx2d.fillStyle = "#FF3DAE"; ctx2d.globalAlpha = 1.0
+                        ctx2d.fillStyle = Theme.mapPicked; ctx2d.globalAlpha = 1.0
                         ctx2d.beginPath(); ctx2d.arc(cp.x, cp.y, 6 / uiScale, 0, Math.PI*2); ctx2d.fill()
-                        ctx2d.strokeStyle = "#FF3DAE"; ctx2d.lineWidth = 2.5 / uiScale
+                        ctx2d.strokeStyle = Theme.mapPicked; ctx2d.lineWidth = 2.5 / uiScale
                         var cArm = 26 / uiScale
                         var cTipX = cp.x + cArm * Math.cos(cpYaw)
                         var cTipY = cp.y + cArm * Math.sin(cpYaw)
@@ -654,8 +674,8 @@ Rectangle {
                 model: root.waypoints
                 delegate: Item {
                     property var   sp: root.worldToScreen(modelData.x, modelData.y)
-                    property color pinColor: modelData.charger ? "#F39C12"
-                              : (modelData.parking ? "#2980B9" : "#27AE60")
+                    property color pinColor: modelData.charger ? Theme.mapCharger
+                              : (modelData.parking ? Theme.mapParking : Theme.mapWaypoint)
                     property bool  picked: modelData.name === root.pickedWaypoint
                     property bool  hasTarget: Object.keys(root.activeDestinations).length > 0
                     property bool  isTaskTarget: !!root.activeDestinations[modelData.name]
@@ -673,20 +693,20 @@ Rectangle {
                         x: -18; y: -18
                         width: 36; height: 36; radius: 18
                         color: "transparent"
-                        border.color: "#FF3DAE"; border.width: 3
+                        border.color: Theme.mapPicked; border.width: 3
                     }
                     Rectangle {
                         x: -11; y: -11
                         width: 22; height: 22; radius: 11
                         color: parent.pinColor
-                        border.color: parent.picked ? "#FF3DAE" : C.bg
+                        border.color: parent.picked ? Theme.mapPicked : Theme.bg
                         border.width: parent.picked ? 2.5 : 1.5
                         opacity: parent.emphasized ? 1.0 : 0.55
                     }
                     Rectangle {
                         x: -4; y: -4
                         width: 8; height: 8; radius: 4
-                        color: "#ffffff"
+                        color: Theme.mapHighlight
                         opacity: parent.emphasized ? 1.0 : 0.55
                     }
                     Text {
@@ -697,26 +717,31 @@ Rectangle {
                         text: modelData.name
                         font.pixelSize: (parent.isTaskTarget ? 17 : 15) * root.labelScale
                         font.bold: true
-                        color: parent.emphasized ? "#EAF4FF" : C.textDim
+                        color: parent.emphasized ? Theme.mapLabel : Theme.textDim
                         opacity: parent.emphasized ? 1.0 : 0.65
-                        style: Text.Outline; styleColor: C.bg
+                        style: Text.Outline; styleColor: Theme.bg
                     }
                 }
             }
 
             // One marker per robot; disconnected robots stay at their last-known position, dimmed with a static outline.
             Repeater {
-                model: root.mapRobots
+                model: dashboard.mapRobots
                 delegate: Item {
                     id: robotMarker
+                    required property var row
                     z: 3
-                    readonly property bool online: !!root.robotsOnline[modelData.name]
-                    readonly property bool selected: modelData.name !== "" && modelData.name === root.selectedRobotName
-                    property var sp: root.worldToScreen(modelData.x, modelData.y)
+                    readonly property bool online: row.online
+                    readonly property bool selected: row.name !== "" && row.name === root.selectedRobotName
+                    property var sp: root.worldToScreen(row.x, row.y)
                     x: sp.x; y: sp.y
                     width: 1; height: 1
                     transformOrigin: Item.TopLeft
                     scale: 1 / Math.max(0.001, overlay.displayScale)
+
+                    // Glide between pose updates, which arrive once per dashboard refresh.
+                    Behavior on x { NumberAnimation { duration: dashboard.refreshPeriodMs } }
+                    Behavior on y { NumberAnimation { duration: dashboard.refreshPeriodMs } }
 
                     // Selection shared with Fleet Robots and the telemetry panel; an offline robot shows it as a bolder red ring.
                     Rectangle {
@@ -725,7 +750,7 @@ Rectangle {
                         width: root.robotMarkerSize * 1.4
                         height: width
                         radius: width / 2
-                        color: C.cyanBright
+                        color: Theme.cyanBright
                         opacity: 0.12
                     }
                     Rectangle {
@@ -735,7 +760,7 @@ Rectangle {
                         height: width
                         radius: width / 2
                         color: "transparent"
-                        border.color: C.cyanBright
+                        border.color: Theme.cyanBright
                         border.width: 2
                     }
 
@@ -748,7 +773,7 @@ Rectangle {
                         height: width
                         radius: width / 2
                         color: "transparent"
-                        border.color: "#2979ff"
+                        border.color: Theme.mapRobot
                         border.width: 2
                         opacity: 0.7
                         scale: 0.7
@@ -773,7 +798,7 @@ Rectangle {
                         width: root.robotMarkerSize * 1.4
                         height: width
                         radius: width / 2
-                        color: C.textDim
+                        color: Theme.textDim
                         opacity: 0.15
                     }
                     Rectangle {
@@ -783,7 +808,7 @@ Rectangle {
                         height: width
                         radius: width / 2
                         color: "transparent"
-                        border.color: C.textDim
+                        border.color: Theme.textDim
                         border.width: robotMarker.selected ? 3 : 2
                         opacity: robotMarker.selected ? 0.9 : 0.6
                     }
@@ -794,29 +819,32 @@ Rectangle {
                         height: root.robotMarkerSize
                         x: -width / 2
                         y: -height / 2
-                        source: root.iconForRobot(modelData.name)
+                        source: root.iconForRobot(robotMarker.row.name)
                         fillMode: Image.PreserveAspectFit
                         smooth: true
                         mipmap: true
                         asynchronous: true
                         opacity: robotMarker.online ? 1.0 : 0.45
                         // Center the robot icon on its marker.
-                        rotation: -(modelData.yaw * 180 / Math.PI) + 90
+                        rotation: -(robotMarker.row.yaw * 180 / Math.PI) + 90
+                        Behavior on rotation {
+                            RotationAnimation { duration: dashboard.refreshPeriodMs; direction: RotationAnimation.Shortest }
+                        }
                     }
                     Rectangle {
-                        visible: modelData.status === "WAITING"
+                        visible: robotMarker.row.status === "WAITING"
                         anchors.horizontalCenter: parent.horizontalCenter
                         y: -root.robotMarkerSize / 2 - 22 * root.labelScale
                         width: waitText.implicitWidth + 12
                         height: 18 * root.labelScale
                         radius: height / 2
-                        color: "#5A4A26"
-                        border.color: "#F3AE3D"; border.width: 1
+                        color: Theme.warnBorder
+                        border.color: Theme.mapWait; border.width: 1
                         Text {
                             id: waitText
                             anchors.centerIn: parent
                             text: "WAIT"
-                            color: "#F3AE3D"
+                            color: Theme.mapWait
                             font.pixelSize: 10 * root.labelScale
                             font.bold: true
                         }
@@ -825,21 +853,21 @@ Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter
                         y: root.robotMarkerSize / 2 + 6
                         horizontalAlignment: Text.AlignHCenter
-                        text: modelData.name || cfg.primaryRobot
+                        text: robotMarker.row.name || cfg.primaryRobot
                         font.pixelSize: 15 * root.labelScale; font.bold: true
-                        color: robotMarker.online ? "#6FB2FF" : C.textDim
+                        color: robotMarker.online ? Theme.mapRobotLabel : Theme.textDim
                         opacity: robotMarker.online ? 1.0 : 0.75
-                        style: Text.Outline; styleColor: C.bg
+                        style: Text.Outline; styleColor: Theme.bg
                     }
 
                     MouseArea {
                         anchors.fill: robotIcon
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.robotPicked(modelData.name)
+                        onClicked: root.robotPicked(robotMarker.row.name)
                         ToolTip.visible: containsMouse
                         ToolTip.delay: 300
-                        ToolTip.text: modelData.name + (robotMarker.online ? " · LIVE"
+                        ToolTip.text: robotMarker.row.name + (robotMarker.online ? " · LIVE"
                                                          : " · OFFLINE · Last known position")
                     }
                 }
@@ -961,8 +989,8 @@ Rectangle {
         anchors.topMargin: 10
         z: 20
         radius: 10
-        color: C.surfaceRaised
-        border.color: C.accent
+        color: Theme.surfaceRaised
+        border.color: Theme.accent
         border.width: 1
         implicitWidth: hintRow.implicitWidth + 20
         implicitHeight: hintRow.implicitHeight + 14
@@ -984,13 +1012,13 @@ Rectangle {
                          ? "Click the first waypoint of the new lane"
                          : "Click the second waypoint to connect it")
                       : "Click and drag to set position + heading"
-                color: C.text
+                color: Theme.text
                 font.pixelSize: 12
             }
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: "✕ Cancel"
-                color: C.err
+                color: Theme.err
                 font.pixelSize: 12
                 font.bold: true
                 MouseArea {
@@ -1019,9 +1047,9 @@ Rectangle {
 
         Rectangle {
             width: zoneBtnRow.implicitWidth + 16; height: 30; radius: 6
-            color: root.pickMode === "zone" ? C.accent
-                   : (zoneBtnMa.containsMouse ? C.surfaceRaised : C.surface)
-            border.color: C.border; border.width: 1
+            color: root.pickMode === "zone" ? Theme.accent
+                   : (zoneBtnMa.containsMouse ? Theme.surfaceRaised : Theme.surface)
+            border.color: Theme.border; border.width: 1
             opacity: 0.95
             Row {
                 id: zoneBtnRow
@@ -1033,7 +1061,7 @@ Rectangle {
                 }
                 Text {
                     text: "NO-GO ZONE"
-                    color: root.pickMode === "zone" ? "#ffffff" : C.text
+                    color: root.pickMode === "zone" ? Theme.textOnAccent : Theme.text
                     font.pixelSize: 11; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -1050,7 +1078,7 @@ Rectangle {
         Rectangle {
             visible: root.selectedZoneId >= 0
             width: deleteZoneRow.implicitWidth + 16; height: 30; radius: 6
-            color: deleteZoneMa.containsMouse ? Qt.darker(C.err, 1.15) : C.err
+            color: deleteZoneMa.containsMouse ? Qt.darker(Theme.err, 1.15) : Theme.err
             opacity: 0.95
             Row {
                 id: deleteZoneRow
@@ -1059,7 +1087,7 @@ Rectangle {
                 Text { text: "🗑"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                 Text {
                     text: "DELETE ZONE"
-                    color: "#ffffff"; font.pixelSize: 11; font.bold: true
+                    color: Theme.textOnAccent; font.pixelSize: 11; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
@@ -1097,8 +1125,8 @@ Rectangle {
 
         Rectangle {
             width: editGraphRow.implicitWidth + 16; height: 30; radius: 6
-            color: root.graphEditMode ? C.accent : (editGraphMa.containsMouse ? C.surfaceRaised : C.surface)
-            border.color: C.border; border.width: 1
+            color: root.graphEditMode ? Theme.accent : (editGraphMa.containsMouse ? Theme.surfaceRaised : Theme.surface)
+            border.color: Theme.border; border.width: 1
             opacity: 0.95
             Row {
                 id: editGraphRow
@@ -1107,7 +1135,7 @@ Rectangle {
                 Text { text: "🛠"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                 Text {
                     text: "EDIT GRAPH"
-                    color: root.graphEditMode ? "#ffffff" : C.text
+                    color: root.graphEditMode ? Theme.textOnAccent : Theme.text
                     font.pixelSize: 11; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -1132,15 +1160,15 @@ Rectangle {
         Rectangle {
             visible: root.graphEditMode
             width: newGraphRow.implicitWidth + 16; height: 30; radius: 6
-            color: newGraphMa.containsMouse ? C.surfaceRaised : C.surface
-            border.color: C.border; border.width: 1
+            color: newGraphMa.containsMouse ? Theme.surfaceRaised : Theme.surface
+            border.color: Theme.border; border.width: 1
             opacity: 0.95
             Row {
                 id: newGraphRow
                 anchors.centerIn: parent
                 spacing: 6
                 Text { text: "＋"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "NEW"; color: C.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "NEW"; color: Theme.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea {
                 id: newGraphMa
@@ -1154,15 +1182,15 @@ Rectangle {
         Rectangle {
             visible: root.graphEditMode
             width: reloadGraphRow.implicitWidth + 16; height: 30; radius: 6
-            color: reloadGraphMa.containsMouse ? C.surfaceRaised : C.surface
-            border.color: C.border; border.width: 1
+            color: reloadGraphMa.containsMouse ? Theme.surfaceRaised : Theme.surface
+            border.color: Theme.border; border.width: 1
             opacity: 0.95
             Row {
                 id: reloadGraphRow
                 anchors.centerIn: parent
                 spacing: 6
                 Text { text: "↺"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "RELOAD"; color: C.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "RELOAD"; color: Theme.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea {
                 id: reloadGraphMa
@@ -1181,8 +1209,8 @@ Rectangle {
         Rectangle {
             visible: root.graphEditMode
             width: addVertexRow.implicitWidth + 16; height: 30; radius: 6
-            color: root.pickMode === "graph_vertex" ? C.accent : (addVertexMa.containsMouse ? C.surfaceRaised : C.surface)
-            border.color: C.border; border.width: 1
+            color: root.pickMode === "graph_vertex" ? Theme.accent : (addVertexMa.containsMouse ? Theme.surfaceRaised : Theme.surface)
+            border.color: Theme.border; border.width: 1
             opacity: 0.95
             Row {
                 id: addVertexRow
@@ -1191,7 +1219,7 @@ Rectangle {
                 Text { text: "📍"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
                 Text {
                     text: "WAYPOINT"
-                    color: root.pickMode === "graph_vertex" ? "#ffffff" : C.text
+                    color: root.pickMode === "graph_vertex" ? Theme.textOnAccent : Theme.text
                     font.pixelSize: 11; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -1211,8 +1239,8 @@ Rectangle {
         Rectangle {
             visible: root.graphEditMode
             width: addLaneRow.implicitWidth + 16; height: 30; radius: 6
-            color: root.pickMode === "graph_lane" ? C.accent : (addLaneMa.containsMouse ? C.surfaceRaised : C.surface)
-            border.color: C.border; border.width: 1
+            color: root.pickMode === "graph_lane" ? Theme.accent : (addLaneMa.containsMouse ? Theme.surfaceRaised : Theme.surface)
+            border.color: Theme.border; border.width: 1
             opacity: 0.95
             Row {
                 id: addLaneRow
@@ -1221,7 +1249,7 @@ Rectangle {
                 Text { text: "↔"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                 Text {
                     text: "LANE"
-                    color: root.pickMode === "graph_lane" ? "#ffffff" : C.text
+                    color: root.pickMode === "graph_lane" ? Theme.textOnAccent : Theme.text
                     font.pixelSize: 11; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -1241,15 +1269,15 @@ Rectangle {
         Rectangle {
             visible: root.graphEditMode
             width: saveGraphRow.implicitWidth + 16; height: 30; radius: 6
-            color: saveGraphMa.containsMouse ? C.surfaceRaised : C.surface
-            border.color: C.border; border.width: 1
+            color: saveGraphMa.containsMouse ? Theme.surfaceRaised : Theme.surface
+            border.color: Theme.border; border.width: 1
             opacity: 0.95
             Row {
                 id: saveGraphRow
                 anchors.centerIn: parent
                 spacing: 6
                 Text { text: "💾"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "SAVE AS"; color: C.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "SAVE AS"; color: Theme.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea {
                 id: saveGraphMa
@@ -1266,7 +1294,7 @@ Rectangle {
         Rectangle {
             visible: root.graphEditMode && (root.selectedGraphVertex >= 0 || root.selectedGraphLane !== null)
             width: graphDeleteRow.implicitWidth + 16; height: 30; radius: 6
-            color: graphDeleteMa.containsMouse ? Qt.darker(C.err, 1.15) : C.err
+            color: graphDeleteMa.containsMouse ? Qt.darker(Theme.err, 1.15) : Theme.err
             opacity: 0.95
             Row {
                 id: graphDeleteRow
@@ -1275,7 +1303,7 @@ Rectangle {
                 Text { text: "🗑"; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
                 Text {
                     text: root.selectedGraphVertex >= 0 ? "DELETE WAYPOINT" : "DELETE LANE"
-                    color: "#ffffff"; font.pixelSize: 11; font.bold: true
+                    color: Theme.textOnAccent; font.pixelSize: 11; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
@@ -1299,15 +1327,15 @@ Rectangle {
         Rectangle {
             visible: root.graphEditMode && root.selectedGraphVertex >= 0
             width: renameRow.implicitWidth + 16; height: 30; radius: 6
-            color: renameMa.containsMouse ? C.surfaceRaised : C.surface
-            border.color: C.border; border.width: 1
+            color: renameMa.containsMouse ? Theme.surfaceRaised : Theme.surface
+            border.color: Theme.border; border.width: 1
             opacity: 0.95
             Row {
                 id: renameRow
                 anchors.centerIn: parent
                 spacing: 6
                 Text { text: "✏"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "RENAME"; color: C.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "RENAME"; color: Theme.text; font.pixelSize: 11; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea {
                 id: renameMa
@@ -1330,9 +1358,9 @@ Rectangle {
         anchors.margins: 10
         z: 10
         text: root.graphStatusText
-        color: C.text
+        color: Theme.text
         font.pixelSize: 11
-        style: Text.Outline; styleColor: C.bg
+        style: Text.Outline; styleColor: Theme.bg
     }
 
     GraphPromptDialog {
@@ -1400,13 +1428,13 @@ Rectangle {
             model: [ { t: "+", a: "in" }, { t: "−", a: "out" }, { t: "⌂", a: "reset" } ]
             delegate: Rectangle {
                 width: 30; height: 30; radius: 6
-                color: btnMa.containsMouse ? C.surfaceRaised : C.surface
-                border.color: C.border; border.width: 1
+                color: btnMa.containsMouse ? Theme.surfaceRaised : Theme.surface
+                border.color: Theme.border; border.width: 1
                 opacity: 0.95
                 Text {
                     anchors.centerIn: parent
                     text: modelData.t
-                    color: C.text; font.pixelSize: 16; font.bold: true
+                    color: Theme.text; font.pixelSize: 16; font.bold: true
                 }
                 MouseArea {
                     id: btnMa
@@ -1427,6 +1455,6 @@ Rectangle {
         anchors.centerIn: parent
         visible: mapImg.status !== Image.Ready
         text: "Loading map…"
-        color: C.textDim; font.pixelSize: 13
+        color: Theme.textDim; font.pixelSize: 13
     }
 }

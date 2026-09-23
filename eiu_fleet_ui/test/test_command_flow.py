@@ -32,12 +32,11 @@ class CommandFlowTest(unittest.TestCase):
         self.bridge = RosBridge()
         self.bridge._ok = True
         self.bridge._task_pub = object()
-        self.bridge._robots_json = json.dumps([{"name": "robot_a", "x": 0, "y": 0}])
+        self.bridge._rmf_rows = {"fleet_a/robot_a": {"key": "fleet_a/robot_a", "name": "robot_a",
+                                                      "fleet": "fleet_a", "x": 0, "y": 0}}
         self.bridge._robot_fleet = {"robot_a": "fleet_a"}
         self.results = []
-        self.paths = []
         self.bridge.dispatchResult.connect(lambda *r: self.results.append(r))
-        self.bridge.pathChanged.connect(lambda: self.paths.append(1))
 
     def tearDown(self):
         self.bridge._cache_writer.close()
@@ -73,7 +72,6 @@ class CommandFlowTest(unittest.TestCase):
                          [(request_id, "dispatch_task_request")])
         self.assertEqual(self.settle(), [(request_id, "dispatch", True, "Sent to the dispatcher")])
         self.assertEqual(self.bridge._tasks[0]["state"], "queued")
-        self.assertEqual(self.paths, [1])
 
     def test_a_direct_request_names_the_robot_and_its_fleet(self):
         self.bridge.dispatchToRobot("patrol", "wp", 1, "robot_a")
@@ -90,7 +88,7 @@ class CommandFlowTest(unittest.TestCase):
         self.assertEqual(self.sent(), [])
         self.assertEqual(self.bridge._tasks, [])
 
-    def test_delivery_answers_and_refreshes_the_planned_path(self):
+    def test_delivery_names_both_handlers_and_answers(self):
         request_id = self.bridge.dispatchDelivery("p", "dispenser_x", "d", "ingestor_y", "goods", 3)
         envelope = json.loads(self.sent()[0][1])
         description = envelope["request"]["description"]
@@ -98,8 +96,6 @@ class CommandFlowTest(unittest.TestCase):
         self.assertEqual((description["pickup"]["handler"], description["dropoff"]["handler"]),
                          ("dispenser_x", "ingestor_y"))
         self.assertEqual(self.settle(), [(request_id, "dispatch", True, "Sent to the dispatcher")])
-        self.assertEqual(self.paths, [1])
-        self.assertEqual(self.bridge.plannedDest, "d")
         self.assertEqual(self.bridge._tasks[0]["pickup_handler"], "dispenser_x")
 
     def test_a_delivery_sent_to_a_robot_names_it_and_its_fleet(self):
@@ -268,7 +264,62 @@ class CommandFlowTest(unittest.TestCase):
         self.assertEqual(self.bridge._tasks[0]["state"], "completed")
         self.assertEqual(self.bridge._tasks[0]["error"], "")
 
+    # Task state from several sources.
+
+    def fleet_state(self, task_id):
+        robot = SimpleNamespace(name="robot_a", model="", task_id=task_id, mode=SimpleNamespace(mode=2),
+                                battery_percent=50.0, location=SimpleNamespace(x=0.0, y=0.0, yaw=0.0, level_name="L1"),
+                                path=[SimpleNamespace(x=1.0, y=0.0, t=SimpleNamespace(sec=1_900_000_000, nanosec=0))])
+        self.bridge._on_fleet_state(SimpleNamespace(name="fleet_a", robots=[robot]))
+
+    def test_a_robot_dropping_its_task_is_taken_as_done_until_rmf_says_otherwise(self):
+        self.start_task(state="queued")
+        self.fleet_state("task.1")
+        task = self.bridge._tasks[0]
+        self.assertEqual((task["state"], task["robot"]), ("underway", "robot_a"))
+        self.assertEqual((task["end_ms"], task["end_estimated"]), (1_900_000_000_000, True))
+        self.fleet_state("")
+        self.assertEqual(task["state"], "completed")
+        self.assertFalse(task["end_estimated"])
+        failed = SimpleNamespace(task_id="task.1", status=4, errors=[],
+                                 assignment=SimpleNamespace(is_assigned=True, expected_robot_name="robot_a"))
+        self.bridge._on_dispatch_states(SimpleNamespace(active=[], finished=[failed]))
+        self.assertEqual(task["state"], "failed", "the dispatcher knows better than the guess")
+
+    def test_a_fleet_that_goes_silent_is_listed_while_another_still_reports(self):
+        self.bridge.set_fleet_names(["fleet_a", "fleet_b"])
+        self.assertEqual(self.bridge.stale_fleets(), [], "nothing heard yet: RMF itself is offline")
+        self.fleet_state("")
+        now = time.monotonic()
+        self.assertEqual([f["fleet"] for f in self.bridge.stale_fleets(now)], ["fleet_b"])
+        self.assertEqual(self.bridge.stale_fleets(now)[0]["last_rx"], 0.0)
+        later = now + ros_bridge.OFFLINE_AFTER_SEC + 1
+        self.assertEqual(self.bridge.stale_fleets(later), [], "all silent is RMF offline, not one stale fleet")
+
+    def test_a_late_dispatch_snapshot_does_not_move_a_running_task_back(self):
+        self.start_task()
+        self.bridge.apply_task_state_update({"booking": {"id": "task.1"}, "status": "underway"})
+        queued = SimpleNamespace(task_id="task.1", status=1, errors=[],
+                                 assignment=SimpleNamespace(is_assigned=False, expected_robot_name=""))
+        self.bridge._on_dispatch_states(SimpleNamespace(active=[queued], finished=[]))
+        self.assertEqual(self.bridge._tasks[0]["state"], "underway")
+
     # Task cache.
+
+    def test_an_older_cache_gets_epoch_times_and_its_unanswered_requests_a_new_timeout(self):
+        path = self.bridge._cache_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps([
+            {"id": "a", "rmf_id": "", "state": "queued", "date": "23 Sep 2026", "start": "10:30:35 PM", "end": "—",
+             "_dispatched_at": 1.0},
+            {"id": "b", "rmf_id": "t", "state": "completed", "date": "23 Sep 2026", "start": "10:00:00 PM",
+             "end": "10:05:00 PM"}]))
+        loaded = {t["id"]: t for t in RosBridge._load_tasks(path)}
+        self.assertEqual(loaded["b"]["end_ms"] - loaded["b"]["created_ms"], 5 * 60 * 1000)
+        self.assertGreater(loaded["a"]["_dispatched_at"], time.monotonic() - 5)
+        self.assertNotIn("_dispatched_at", loaded["b"])
+        self.assertNotIn("start", loaded["a"])
+
 
     def test_a_damaged_task_cache_gives_an_empty_table(self):
         path = self.bridge._cache_path

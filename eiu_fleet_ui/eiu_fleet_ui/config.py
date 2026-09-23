@@ -1,7 +1,6 @@
 """Load fleet identity, MQTT settings, and task categories from the adapter configuration."""
 
 import json
-import math
 import os
 import sys
 import uuid
@@ -297,21 +296,6 @@ def load_fleet_config() -> FleetConfig:
     return _merge_fleets(fleets)
 
 
-def env_float(name: str, default: float) -> float:
-    """A positive number from the environment, else `default`."""
-    raw = os.environ.get(name, "").strip()
-    if not raw:
-        return default
-    try:
-        value = float(raw)
-    except ValueError:
-        value = float("nan")
-    if not math.isfinite(value) or value <= 0:
-        print(f"[CFG] {name}={raw!r} is not a positive number -- using {default}", file=sys.stderr)
-        return default
-    return value
-
-
 def client_id(prefix: str = "eiu_fleet_ui") -> str:
     """Generate a unique MQTT client ID for a caller."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
@@ -343,6 +327,10 @@ class FleetSettings(QObject):
             self._robots = kept
             self.robotsChanged.emit()
 
+    def known_robots(self) -> list[tuple[str, str]]:
+        """(name, fleet) of every followed robot, in the order they were added."""
+        return [(r.name, r.fleet_name) for r in self._robots]
+
     @Property(str, constant=True)
     def fleetName(self):
         return self._c.fleet_name
@@ -351,10 +339,13 @@ class FleetSettings(QObject):
     def brokerLabel(self):
         return f"{self._c.broker_host}:{self._c.broker_port}"
 
+    def broker_conflicts(self) -> list[dict]:
+        """{fleet, host, port} per fleet when the fleets name different MQTT brokers, else an empty list."""
+        return [{"fleet": fleet, "host": host, "port": port} for fleet, host, port in self._c.broker_conflicts]
+
     @Property(str, constant=True)
     def brokerConflictsJson(self):
-        """JSON list of {fleet, host, port} when the fleets name different MQTT brokers, else an empty list."""
-        return json.dumps([{"fleet": fleet, "host": host, "port": port} for fleet, host, port in self._c.broker_conflicts])
+        return json.dumps(self.broker_conflicts())
 
     @Property(list, constant=True)
     def taskCategories(self):

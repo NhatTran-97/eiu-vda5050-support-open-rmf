@@ -47,6 +47,7 @@ setup(
             for dirpath, _, filenames in os.walk('logo')
             if filenames
         ],
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

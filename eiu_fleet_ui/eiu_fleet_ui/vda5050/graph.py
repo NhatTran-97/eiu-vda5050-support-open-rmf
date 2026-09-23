@@ -2,6 +2,9 @@
 
 from math import hypot
 
+DEFAULT_OFF_GRAPH_LIMIT_M = 1.2
+DEFAULT_OFF_GRAPH_HOLD_S = 5.0
+
 
 class NavGraph:
     """Lane segments of the navigation graph, in the same frame as the robot pose."""
@@ -26,7 +29,7 @@ class NavGraph:
 class OffGraphTracker:
     """Flags robots that stay farther than `limit` metres from the graph for `hold` seconds."""
 
-    def __init__(self, graph: NavGraph, limit: float = 1.2, hold: float = 5.0):
+    def __init__(self, graph: NavGraph, limit: float = DEFAULT_OFF_GRAPH_LIMIT_M, hold: float = DEFAULT_OFF_GRAPH_HOLD_S):
         self._graph = graph
         self._limit = limit
         self._hold = hold

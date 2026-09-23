@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import "Format.js" as Format
 
 // Shows how fresh a value is in one of three states, with the exact timestamp on hover.
 Item {
@@ -13,25 +14,10 @@ Item {
     property bool bold: false
 
     readonly property string stateText: !hasData ? "NO DATA" : (online ? "LIVE" : "OFFLINE")
-    readonly property color stateColor: !hasData ? C.textDim : (online ? C.success : C.err)
+    readonly property color stateColor: !hasData ? Theme.textDim : (online ? Theme.success : Theme.err)
     readonly property string detailText: {
-        var _ = nowTick
         if (!hasData) return "Never received"
-        return (online ? "Updated " : "Last seen ") + formatAgo(lastRx)
-    }
-
-    function formatAgo(epochSec) {
-        if (!epochSec) return ""
-        var diff = Math.max(0, nowTick / 1000 - epochSec)
-        if (diff < 60) return Math.floor(diff) + "s ago"
-        if (diff < 3600) return Math.floor(diff / 60) + "m " + Math.floor(diff % 60) + "s ago"
-        if (diff < 86400) return Math.floor(diff / 3600) + "h " + Math.floor((diff % 3600) / 60) + "m ago"
-        return Math.floor(diff / 86400) + "d ago"
-    }
-
-    function formatAbsolute(epochSec) {
-        if (!epochSec) return ""
-        return Qt.formatDateTime(new Date(epochSec * 1000), "d MMM yyyy, HH:mm:ss")
+        return (online ? "Updated " : "Last seen ") + Format.formatAgo(nowTick, lastRx)
     }
 
     implicitWidth: row.implicitWidth
@@ -63,6 +49,6 @@ Item {
         cursorShape: Qt.WhatsThisCursor
         ToolTip.visible: containsMouse
         ToolTip.delay: 400
-        ToolTip.text: root.formatAbsolute(root.lastRx)
+        ToolTip.text: Format.formatAbsolute(root.lastRx)
     }
 }

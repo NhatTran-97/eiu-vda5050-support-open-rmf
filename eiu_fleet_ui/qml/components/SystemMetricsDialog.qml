@@ -3,9 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtCore
 
-// Health of the fleet adapters: message path state (robots online, oldest state, messages per second, drops, MQTT link,
-// update loop) and its recent change, all from each adapter's own metrics report.
-// Covers the window except `railWidth` on the left; Ctrl + / - / 0 or the header buttons zoom it, and the zoom is remembered.
+
 Dialog {
     id: dlg
 
@@ -39,7 +37,7 @@ Dialog {
         return { ok: "✓ HEALTHY", warning: "▲ WARNING", critical: "● CRITICAL", silent: "◌ NO REPORTS", waiting: "◌ LOOKING…", found: "✓ CONNECTED", absent: "✕ NOT FOUND" }[status] || status
     }
     function statusColor(status) {
-        return status === "ok" || status === "found" ? C.success : (status === "critical" ? C.err : (status === "waiting" ? C.textDim : C.warn))
+        return status === "ok" || status === "found" ? Theme.success : (status === "critical" ? Theme.err : (status === "waiting" ? Theme.textDim : Theme.warn))
     }
     function agoText(s) {
         if (s === null || s === undefined) return "never reported"
@@ -61,27 +59,27 @@ Dialog {
     height: parent ? parent.height : 860
     closePolicy: Popup.CloseOnEscape
 
-    background: Rectangle { color: C.bg }
+    background: Rectangle { color: Theme.bg }
 
     component Stat: Rectangle {
         property string label: ""
         property string value: ""
         property string detail: ""
-        property color valueColor: C.text
+        property color valueColor: Theme.text
         property real ui: 1.0
         Layout.fillWidth: true
         implicitHeight: 92 * ui
         radius: 10 * ui
-        color: C.surfaceAlt
-        border.color: C.border
+        color: Theme.surfaceAlt
+        border.color: Theme.border
         Column {
             anchors.verticalCenter: parent.verticalCenter
             anchors.left: parent.left; anchors.right: parent.right
             anchors.leftMargin: 14 * ui; anchors.rightMargin: 14 * ui
             spacing: 4 * ui
-            Text { width: parent.width; text: label.toUpperCase(); color: C.textDim; font.pixelSize: 12 * ui; font.bold: true; font.letterSpacing: 1.0; elide: Text.ElideRight }
+            Text { width: parent.width; text: label.toUpperCase(); color: Theme.textDim; font.pixelSize: 12 * ui; font.bold: true; font.letterSpacing: 1.0; elide: Text.ElideRight }
             Text { width: parent.width; text: value; color: valueColor; font.family: "IBM Plex Mono"; font.pixelSize: 26 * ui; font.bold: true; elide: Text.ElideRight }
-            Text { width: parent.width; text: detail; color: C.textDim; font.pixelSize: 13 * ui; elide: Text.ElideRight }
+            Text { width: parent.width; text: detail; color: Theme.textDim; font.pixelSize: 13 * ui; elide: Text.ElideRight }
         }
     }
 
@@ -98,8 +96,8 @@ Dialog {
             Layout.bottomMargin: 12 * dlg.ui
             ColumnLayout {
                 spacing: 3 * dlg.ui
-                Text { text: "SYSTEM · FLEET ADAPTERS"; color: C.text; font.pixelSize: 22 * dlg.ui; font.bold: true; font.letterSpacing: 1.0 }
-                Text { text: "Health of each adapter's VDA5050 message path, from its own metrics report"; color: C.textDim; font.pixelSize: 14 * dlg.ui }
+                Text { text: "SYSTEM · FLEET ADAPTERS"; color: Theme.text; font.pixelSize: 22 * dlg.ui; font.bold: true; font.letterSpacing: 1.0 }
+                Text { text: "Health of each adapter's VDA5050 message path, from its own metrics report"; color: Theme.textDim; font.pixelSize: 14 * dlg.ui }
             }
             Item { Layout.fillWidth: true }
             // Zoom out, the current zoom (a click resets it), zoom in.
@@ -110,28 +108,28 @@ Dialog {
                     text: "−"
                     enabled: dlg.zoom > 0.61
                     onClicked: dlg.zoomBy(-0.1)
-                    contentItem: Text { text: parent.text; color: parent.enabled ? C.text : C.textDim; font.pixelSize: 20 * dlg.ui; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { implicitWidth: 42 * dlg.ui; implicitHeight: 40 * dlg.ui; radius: 10; color: parent.hovered ? C.surfaceRaised : C.surfaceAlt; border.color: C.border }
+                    contentItem: Text { text: parent.text; color: parent.enabled ? Theme.text : Theme.textDim; font.pixelSize: 20 * dlg.ui; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { implicitWidth: 42 * dlg.ui; implicitHeight: 40 * dlg.ui; radius: 10; color: parent.hovered ? Theme.surfaceRaised : Theme.surfaceAlt; border.color: Theme.border }
                 }
                 Button {
                     text: Math.round(dlg.zoom * 100) + "%"
                     onClicked: dlg.zoom = 1.0
-                    contentItem: Text { text: parent.text; color: C.text; font.family: "IBM Plex Mono"; font.pixelSize: 14 * dlg.ui; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { implicitWidth: 64 * dlg.ui; implicitHeight: 40 * dlg.ui; radius: 10; color: parent.hovered ? C.surfaceRaised : C.surfaceAlt; border.color: C.border }
+                    contentItem: Text { text: parent.text; color: Theme.text; font.family: "IBM Plex Mono"; font.pixelSize: 14 * dlg.ui; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { implicitWidth: 64 * dlg.ui; implicitHeight: 40 * dlg.ui; radius: 10; color: parent.hovered ? Theme.surfaceRaised : Theme.surfaceAlt; border.color: Theme.border }
                 }
                 Button {
                     text: "+"
                     enabled: dlg.zoom < 1.79
                     onClicked: dlg.zoomBy(0.1)
-                    contentItem: Text { text: parent.text; color: parent.enabled ? C.text : C.textDim; font.pixelSize: 20 * dlg.ui; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { implicitWidth: 42 * dlg.ui; implicitHeight: 40 * dlg.ui; radius: 10; color: parent.hovered ? C.surfaceRaised : C.surfaceAlt; border.color: C.border }
+                    contentItem: Text { text: parent.text; color: parent.enabled ? Theme.text : Theme.textDim; font.pixelSize: 20 * dlg.ui; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                    background: Rectangle { implicitWidth: 42 * dlg.ui; implicitHeight: 40 * dlg.ui; radius: 10; color: parent.hovered ? Theme.surfaceRaised : Theme.surfaceAlt; border.color: Theme.border }
                 }
             }
             Button {
                 text: "Close"
                 onClicked: dlg.close()
-                contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 15 * dlg.ui; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { implicitWidth: 92 * dlg.ui; implicitHeight: 40 * dlg.ui; radius: 10; color: parent.hovered ? C.surfaceRaised : C.surfaceAlt; border.color: C.border }
+                contentItem: Text { text: parent.text; color: Theme.text; font.pixelSize: 15 * dlg.ui; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
+                background: Rectangle { implicitWidth: 92 * dlg.ui; implicitHeight: 40 * dlg.ui; radius: 10; color: parent.hovered ? Theme.surfaceRaised : Theme.surfaceAlt; border.color: Theme.border }
             }
         }
 
@@ -161,7 +159,7 @@ Dialog {
                     Layout.fillWidth: true
                     Layout.topMargin: 30 * dlg.ui
                     text: "No fleet adapter is known yet."
-                    color: C.textDim
+                    color: Theme.textDim
                     horizontalAlignment: Text.AlignHCenter
                     font.pixelSize: 16 * dlg.ui
                 }
@@ -178,7 +176,7 @@ Dialog {
                         Layout.fillWidth: true
                         implicitHeight: cardColumn.implicitHeight + 36 * dlg.ui
                         radius: 16
-                        color: C.surface
+                        color: Theme.surface
                         border.color: dlg.statusColor(a.status)
                         border.width: a.status === "ok" || a.status === "waiting" || a.status === "found" ? 1 : 2
 
@@ -191,13 +189,13 @@ Dialog {
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 14 * dlg.ui
-                                Text { text: card.a.fleet; color: C.text; font.pixelSize: 22 * dlg.ui; font.bold: true }
-                                Text { text: card.a.node; color: C.textDim; font.family: "IBM Plex Mono"; font.pixelSize: 15 * dlg.ui }
+                                Text { text: card.a.fleet; color: Theme.text; font.pixelSize: 22 * dlg.ui; font.bold: true }
+                                Text { text: card.a.node; color: Theme.textDim; font.family: "IBM Plex Mono"; font.pixelSize: 15 * dlg.ui }
                                 Rectangle {
                                     implicitWidth: pillText.implicitWidth + 24 * dlg.ui; implicitHeight: 28 * dlg.ui; radius: height / 2
                                     color: Qt.rgba(1, 1, 1, 0.06)
                                     border.color: dlg.statusColor(card.a.status)
-                                    Text { id: pillText; anchors.centerIn: parent; text: dlg.statusText(card.a.status); color: C.text; font.pixelSize: 13 * dlg.ui; font.bold: true; font.letterSpacing: 0.6 }
+                                    Text { id: pillText; anchors.centerIn: parent; text: dlg.statusText(card.a.status); color: Theme.text; font.pixelSize: 13 * dlg.ui; font.bold: true; font.letterSpacing: 0.6 }
                                 }
                                 Item { Layout.fillWidth: true }
                                 Text {
@@ -205,7 +203,7 @@ Dialog {
                                           ? "Last report " + dlg.agoText(card.a.reported_ago_s) + " · every " + Math.round(card.a.interval_s) + " s"
                                           : (card.a.status === "found" ? "Adapter found · first report within its metrics_period_s"
                                              : "Nothing publishes /" + card.a.node + "/metrics")
-                                    color: C.textDim; font.pixelSize: 14 * dlg.ui
+                                    color: Theme.textDim; font.pixelSize: 14 * dlg.ui
                                 }
                             }
 
@@ -218,7 +216,7 @@ Dialog {
                                     label: "Robots online"
                                     value: card.reporting ? card.a.robots.online + " / " + card.a.robots.registered : "—"
                                     detail: card.reporting && card.a.robots.online < card.a.robots.registered ? "some robots are silent" : "all reporting"
-                                    valueColor: card.reporting && card.a.robots.online < card.a.robots.registered ? C.warn : C.text
+                                    valueColor: card.reporting && card.a.robots.online < card.a.robots.registered ? Theme.warn : Theme.text
                                 }
                                 Stat {
                                     ui: dlg.ui
@@ -238,21 +236,21 @@ Dialog {
                                     label: "Dropped"
                                     value: card.reporting ? String(card.a.totals.dropped) : "—"
                                     detail: card.reporting ? "+" + card.a.delta.dropped + " in the last report" : ""
-                                    valueColor: card.reporting && card.a.delta.dropped > 0 ? C.warn : C.text
+                                    valueColor: card.reporting && card.a.delta.dropped > 0 ? Theme.warn : Theme.text
                                 }
                                 Stat {
                                     ui: dlg.ui
                                     label: "Update loop"
                                     value: card.reporting ? Number(card.a.latency_us.loop_pass.p99 / 1000).toFixed(1) + " ms" : "—"
                                     detail: card.reporting ? "p99 · " + card.a.delta.overruns + " overrun(s) lately" : ""
-                                    valueColor: card.reporting && card.a.delta.overruns > 0 ? C.warn : C.text
+                                    valueColor: card.reporting && card.a.delta.overruns > 0 ? Theme.warn : Theme.text
                                 }
                                 Stat {
                                     ui: dlg.ui
                                     label: "MQTT link"
                                     value: !card.reporting ? "—" : (card.a.mqtt.connected ? "Connected" : "Lost")
                                     detail: card.reporting ? card.a.mqtt.connections_lost + " connection(s) lost since start" : ""
-                                    valueColor: card.reporting && !card.a.mqtt.connected ? C.err : C.text
+                                    valueColor: card.reporting && !card.a.mqtt.connected ? Theme.err : Theme.text
                                 }
                             }
 

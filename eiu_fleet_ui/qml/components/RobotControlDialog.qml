@@ -7,6 +7,8 @@ Popup {
     id: dlg
 
     property string robotName: ""
+    // The map page that picks a pose or a waypoint for this drawer.
+    property var mapPage: null
     // Keep the status bound to live robot telemetry.
     readonly property var tele: root.telemetryFor(robotName)
     readonly property bool robotPaused: !!(tele && tele.paused)
@@ -19,6 +21,16 @@ Popup {
     property bool lastOk: true
     property string lastMessage: ""
 
+    // Commands of this robot still waiting for the fleet adapter's answer.
+    function waiting(action) { return !!control.pending[dlg.robotName + "/" + action] }
+    readonly property var waitingActions: {
+        var out = []
+        var names = ["pause", "resume", "speed_limit", "init_position"]
+        for (var i = 0; i < names.length; i++)
+            if (control.pending[dlg.robotName + "/" + names[i]]) out.push(names[i].replace("_", " "))
+        return out
+    }
+
     property string pickTarget: ""
 
     // Only robots that were added while the adapter ran can be removed here; the others are in its config.
@@ -30,10 +42,10 @@ Popup {
     readonly property string fleetOfRobot: JSON.parse(cfg.robotFleetsJson)[robotName] || ""
 
     function beginPick(target) {
-        if (!mapLoader.item)
+        if (!dlg.mapPage)
             return
         dlg.pickTarget = target
-        mapLoader.item.pickMode = target
+        dlg.mapPage.pickMode = target
         dlg.close()
     }
 
@@ -50,15 +62,15 @@ Popup {
     }
 
     function closeDrawer() {
-        if (mapLoader.item) {
-            mapLoader.item.clearPickedPose()
-            mapLoader.item.clearPickedWaypoint()
+        if (dlg.mapPage) {
+            dlg.mapPage.clearPickedPose()
+            dlg.mapPage.clearPickedWaypoint()
         }
         dlg.close()
     }
 
     Connections {
-        target: mapLoader.item
+        target: dlg.mapPage
         function onPosePicked(x, y, yaw) {
             dlg.applyPickedPose(x, y, yaw)
             dlg.pickTarget = ""
@@ -87,8 +99,8 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     background: Rectangle {
-        color: C.surface
-        Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: C.border }
+        color: Theme.surface
+        Rectangle { anchors.left: parent.left; width: 1; height: parent.height; color: Theme.border }
     }
 
     Connections {
@@ -135,18 +147,18 @@ Popup {
         property string detailText: ""
         property string confirmText: "CONFIRM"
 
-        background: Rectangle { color: C.surfaceRaised; radius: 14; border.color: C.border; border.width: 1 }
+        background: Rectangle { color: Theme.surfaceRaised; radius: 14; border.color: Theme.border; border.width: 1 }
 
         contentItem: ColumnLayout {
             spacing: 14
             Text {
                 text: confirmPopup.titleText
-                color: C.text; font.pixelSize: 14; font.bold: true
+                color: Theme.text; font.pixelSize: 14; font.bold: true
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             Text {
                 text: confirmPopup.detailText
-                color: C.textDim; font.pixelSize: 12
+                color: Theme.textDim; font.pixelSize: 12
                 wrapMode: Text.WordWrap; Layout.fillWidth: true
             }
             RowLayout {
@@ -156,9 +168,9 @@ Popup {
                     Layout.fillWidth: true
                     text: "CANCEL"
                     implicitHeight: 38
-                    contentItem: Text { text: parent.text; color: C.textDim; font.pixelSize: 13; font.bold: true
+                    contentItem: Text { text: parent.text; color: Theme.textDim; font.pixelSize: 13; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    background: Rectangle { radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                     onClicked: confirmPopup.close()
                 }
                 Button {
@@ -166,9 +178,9 @@ Popup {
                     Layout.fillWidth: true
                     text: confirmPopup.confirmText
                     implicitHeight: 38
-                    contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 13; font.bold: true
+                    contentItem: Text { text: parent.text; color: Theme.textOnAccent; font.pixelSize: 13; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: 10; color: parent.down ? C.accentDark : C.err }
+                    background: Rectangle { radius: 10; color: parent.down ? Theme.accentDark : Theme.err }
                     onClicked: { if (confirmPopup.onConfirm) confirmPopup.onConfirm(); confirmPopup.close() }
                 }
             }
@@ -194,14 +206,14 @@ Popup {
             Text {
                 Layout.fillWidth: true
                 text: "ROBOT CONTROL"
-                font.pixelSize: 13; font.bold: true; font.letterSpacing: 0.8; color: C.textDim
+                font.pixelSize: 13; font.bold: true; font.letterSpacing: 0.8; color: Theme.textDim
             }
             Button {
                 Layout.preferredWidth: 30; Layout.preferredHeight: 30
                 text: "×"
-                contentItem: Text { text: parent.text; color: C.textDim; font.pixelSize: 20
+                contentItem: Text { text: parent.text; color: Theme.textDim; font.pixelSize: 20
                                      horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                background: Rectangle { radius: 8; color: parent.down ? C.border : (parent.hovered ? C.surfaceAlt : "transparent") }
+                background: Rectangle { radius: 8; color: parent.down ? Theme.border : (parent.hovered ? Theme.surfaceAlt : "transparent") }
                 onClicked: dlg.closeDrawer()
             }
         }
@@ -218,7 +230,7 @@ Popup {
                 Text {
                     Layout.fillWidth: true
                     text: dlg.robotName
-                    font.pixelSize: 23; font.bold: true; color: C.text
+                    font.pixelSize: 23; font.bold: true; color: Theme.text
                     elide: Text.ElideRight
                 }
                 Rectangle {
@@ -226,13 +238,13 @@ Popup {
                     Layout.preferredHeight: 24
                     radius: 12
                     color: "transparent"
-                    border.color: dlg.online ? C.success : C.err
+                    border.color: dlg.online ? Theme.success : Theme.err
                     border.width: 1
                     Text {
                         id: statusPill
                         anchors.centerIn: parent
                         text: dlg.online ? "ONLINE" : "OFFLINE"
-                        color: dlg.online ? C.success : C.err
+                        color: dlg.online ? Theme.success : Theme.err
                         font.pixelSize: 12; font.bold: true
                     }
                 }
@@ -256,21 +268,21 @@ Popup {
                         + (dlg.tele.battery_soc != null ? "  ·  " + (dlg.tele.battery_soc * 100).toFixed(0) + "%" : "")
                       : ""
                 font.pixelSize: 12
-                color: (dlg.tele && dlg.tele.safety.triggered) ? C.err : C.textDim
+                color: (dlg.tele && dlg.tele.safety.triggered) ? Theme.err : Theme.textDim
             }
 
             Text {
                 Layout.fillWidth: true
                 visible: !dlg.controlsEnabled
                 text: "⚠ Controls unavailable while robot is offline"
-                color: C.warn
+                color: Theme.warn
                 font.pixelSize: 12
                 wrapMode: Text.WordWrap
             }
         }
 
         Rectangle { Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
-                    Layout.preferredHeight: 1; color: C.border; opacity: 0.6 }
+                    Layout.preferredHeight: 1; color: Theme.border; opacity: 0.6 }
 
         // Pause or resume the robot.
         ColumnLayout {
@@ -281,7 +293,7 @@ Popup {
             opacity: dlg.controlsEnabled ? 1.0 : 0.65
 
             Text { text: "MOTION CONTROL"; font.pixelSize: 12; font.bold: true
-                   font.letterSpacing: 0.8; color: C.textDim
+                   font.letterSpacing: 0.8; color: Theme.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
 
             RowLayout {
@@ -293,32 +305,32 @@ Popup {
                     id: pauseBtn
                     Layout.fillWidth: true
                     implicitHeight: 40
-                    text: dlg.robotPaused ? "PAUSED" : "PAUSE"
-                    enabled: !dlg.robotPaused
-                    contentItem: Text { text: pauseBtn.text; color: dlg.robotPaused ? C.bg : C.warn
+                    text: dlg.waiting("pause") ? "PAUSING…" : (dlg.robotPaused ? "PAUSED" : "PAUSE")
+                    enabled: !dlg.robotPaused && !dlg.waiting("pause")
+                    contentItem: Text { text: pauseBtn.text; color: dlg.robotPaused ? Theme.bg : Theme.warn
                                          font.pixelSize: 14; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                          elide: Text.ElideRight }
                     background: Rectangle { radius: 10
-                                             color: dlg.robotPaused ? C.warn
-                                                    : Qt.alpha(C.warn, pauseBtn.down ? 0.30 : 0.10)
-                                             border.color: C.warn; border.width: 1 }
+                                             color: dlg.robotPaused ? Theme.warn
+                                                    : Qt.alpha(Theme.warn, pauseBtn.down ? 0.30 : 0.10)
+                                             border.color: Theme.warn; border.width: 1 }
                     onClicked: control.pauseRobot(dlg.robotName)
                 }
                 Button {
                     id: resumeBtn
                     Layout.fillWidth: true
                     implicitHeight: 40
-                    text: dlg.robotPaused ? "RESUME" : "RESUMED"
-                    enabled: dlg.robotPaused
-                    contentItem: Text { text: resumeBtn.text; color: dlg.robotPaused ? C.success : C.bg
+                    text: dlg.waiting("resume") ? "RESUMING…" : (dlg.robotPaused ? "RESUME" : "RESUMED")
+                    enabled: dlg.robotPaused && !dlg.waiting("resume")
+                    contentItem: Text { text: resumeBtn.text; color: dlg.robotPaused ? Theme.success : Theme.bg
                                          font.pixelSize: 14; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                          elide: Text.ElideRight }
                     background: Rectangle { radius: 10
-                                             color: dlg.robotPaused ? Qt.alpha(C.success, resumeBtn.down ? 0.30 : 0.10)
-                                                    : C.success
-                                             border.color: C.success; border.width: 1 }
+                                             color: dlg.robotPaused ? Qt.alpha(Theme.success, resumeBtn.down ? 0.30 : 0.10)
+                                                    : Theme.success
+                                             border.color: Theme.success; border.width: 1 }
                     onClicked: control.resumeRobot(dlg.robotName)
                 }
             }
@@ -333,9 +345,9 @@ Popup {
             opacity: dlg.controlsEnabled ? 1.0 : 0.65
 
             Text { text: "SPEED LIMIT"; font.pixelSize: 12; font.bold: true
-                   font.letterSpacing: 0.8; color: C.textDim
+                   font.letterSpacing: 0.8; color: Theme.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
-            Text { text: "Maximum speed (m/s, blank = no cap)"; font.pixelSize: 11; color: C.textDim
+            Text { text: "Maximum speed (m/s, blank = no cap)"; font.pixelSize: 11; color: Theme.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true
@@ -345,21 +357,22 @@ Popup {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 40
                     placeholderText: "e.g. 0.30"
-                    placeholderTextColor: C.placeholderText
+                    placeholderTextColor: Theme.placeholderText
                     validator: DoubleValidator { bottom: 0; decimals: 2; notation: DoubleValidator.StandardNotation }
-                    color: C.text
+                    color: Theme.text
                     font.pixelSize: 14
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    background: Rectangle { radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                 }
                 Button {
-                    text: "APPLY"
+                    text: dlg.waiting("speed_limit") ? "APPLYING…" : "APPLY"
+                    enabled: !dlg.waiting("speed_limit")
                     implicitHeight: 40
                     leftPadding: 18; rightPadding: 18
-                    contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 14; font.bold: true
+                    contentItem: Text { text: parent.text; color: Theme.textOnAccent; font.pixelSize: 14; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    background: Rectangle { radius: 10; color: parent.down ? C.accentDark : C.accent }
+                    background: Rectangle { radius: 10; color: !parent.enabled ? Theme.border : (parent.down ? Theme.accentDark : Theme.accent) }
                     onClicked: control.setSpeedLimit(dlg.robotName, speedField.text === "" ? 0.0 : parseFloat(speedField.text))
                 }
             }
@@ -374,46 +387,46 @@ Popup {
             opacity: dlg.controlsEnabled ? 1.0 : 0.65
 
             Text { text: "LOCALIZATION"; font.pixelSize: 12; font.bold: true
-                   font.letterSpacing: 0.8; color: C.textDim
+                   font.letterSpacing: 0.8; color: Theme.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
-            Text { text: "Set the robot's believed pose (RMF frame)"; font.pixelSize: 11; color: C.textDim
+            Text { text: "Set the robot's believed pose (RMF frame)"; font.pixelSize: 11; color: Theme.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 6
-                Text { Layout.fillWidth: true; text: "X"; font.pixelSize: 10; color: C.textDim; horizontalAlignment: Text.AlignHCenter }
-                Text { Layout.fillWidth: true; text: "Y"; font.pixelSize: 10; color: C.textDim; horizontalAlignment: Text.AlignHCenter }
-                Text { Layout.fillWidth: true; text: "YAW"; font.pixelSize: 10; color: C.textDim; horizontalAlignment: Text.AlignHCenter }
+                Text { Layout.fillWidth: true; text: "X"; font.pixelSize: 10; color: Theme.textDim; horizontalAlignment: Text.AlignHCenter }
+                Text { Layout.fillWidth: true; text: "Y"; font.pixelSize: 10; color: Theme.textDim; horizontalAlignment: Text.AlignHCenter }
+                Text { Layout.fillWidth: true; text: "YAW"; font.pixelSize: 10; color: Theme.textDim; horizontalAlignment: Text.AlignHCenter }
             }
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 6
                 TextField {
                     id: xField; Layout.fillWidth: true; Layout.preferredHeight: 40; placeholderText: "x"
-                    placeholderTextColor: C.placeholderText
+                    placeholderTextColor: Theme.placeholderText
                     validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                    color: C.text; font.pixelSize: 14
+                    color: Theme.text; font.pixelSize: 14
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    background: Rectangle { radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                 }
                 TextField {
                     id: yField; Layout.fillWidth: true; Layout.preferredHeight: 40; placeholderText: "y"
-                    placeholderTextColor: C.placeholderText
+                    placeholderTextColor: Theme.placeholderText
                     validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                    color: C.text; font.pixelSize: 14
+                    color: Theme.text; font.pixelSize: 14
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    background: Rectangle { radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                 }
                 TextField {
                     id: yawField; Layout.fillWidth: true; Layout.preferredHeight: 40; placeholderText: "yaw"
-                    placeholderTextColor: C.placeholderText
+                    placeholderTextColor: Theme.placeholderText
                     validator: DoubleValidator { notation: DoubleValidator.StandardNotation }
-                    color: C.text; font.pixelSize: 14
+                    color: Theme.text; font.pixelSize: 14
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                    background: Rectangle { radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                 }
             }
             RowLayout {
@@ -423,26 +436,27 @@ Popup {
                     Layout.fillWidth: true
                     text: dlg.pickTarget === "pose" ? "CLICK MAP…" : "PICK ON MAP"
                     implicitHeight: 38
-                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 13; font.bold: true
+                    contentItem: Text { text: parent.text; color: Theme.text; font.pixelSize: 13; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                          elide: Text.ElideRight }
                     background: Rectangle { radius: 10
-                                             color: dlg.pickTarget === "pose" ? C.accentDark
-                                                    : (parent.down ? C.border : C.surfaceAlt)
-                                             border.color: dlg.pickTarget === "pose" ? C.accent : C.border
+                                             color: dlg.pickTarget === "pose" ? Theme.accentDark
+                                                    : (parent.down ? Theme.border : Theme.surfaceAlt)
+                                             border.color: dlg.pickTarget === "pose" ? Theme.accent : Theme.border
                                              border.width: 1 }
                     onClicked: dlg.beginPick("pose")
                 }
                 Button {
                     Layout.fillWidth: true
-                    text: "SET POSITION"
+                    text: dlg.waiting("init_position") ? "SETTING POSITION…" : "SET POSITION"
                     implicitHeight: 38
                     enabled: xField.text !== "" && yField.text !== "" && yawField.text !== ""
-                    contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 13; font.bold: true
+                             && !dlg.waiting("init_position")
+                    contentItem: Text { text: parent.text; color: Theme.text; font.pixelSize: 13; font.bold: true
                                          horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                          elide: Text.ElideRight }
-                    background: Rectangle { radius: 10; color: parent.down ? C.border : C.surfaceAlt
-                                             border.color: C.border; border.width: 1
+                    background: Rectangle { radius: 10; color: parent.down ? Theme.border : Theme.surfaceAlt
+                                             border.color: Theme.border; border.width: 1
                                              opacity: parent.enabled ? 1.0 : 0.65 }
                     onClicked: {
                         confirmPopup.titleText = "Re-localize " + dlg.robotName + " to (" + xField.text + ", " + yField.text + ", " + yawField.text + ")?"
@@ -451,7 +465,7 @@ Popup {
                         confirmPopup.onConfirm = function() {
                             control.initPosition(dlg.robotName, parseFloat(xField.text),
                                                   parseFloat(yField.text), parseFloat(yawField.text))
-                            if (mapLoader.item) mapLoader.item.clearPickedPose()
+                            if (dlg.mapPage) dlg.mapPage.clearPickedPose()
                         }
                         confirmPopup.open()
                     }
@@ -468,9 +482,9 @@ Popup {
             opacity: dlg.controlsEnabled ? 1.0 : 0.65
 
             Text { text: "NAVIGATION"; font.pixelSize: 12; font.bold: true
-                   font.letterSpacing: 0.8; color: C.textDim
+                   font.letterSpacing: 0.8; color: Theme.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
-            Text { text: "Destination"; font.pixelSize: 11; color: C.textDim
+            Text { text: "Destination"; font.pixelSize: 11; color: Theme.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
             ComboBox {
                 id: goToCombo
@@ -478,24 +492,24 @@ Popup {
                 model: root.wpNames
                 font.pixelSize: 14
                 contentItem: Text {
-                    text: goToCombo.displayText; color: C.text; font: goToCombo.font
+                    text: goToCombo.displayText; color: Theme.text; font: goToCombo.font
                     leftPadding: 10; elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
                 }
                 background: Rectangle { implicitHeight: 40; radius: 10
-                                         color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                                         color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
             }
             Button {
                 Layout.fillWidth: true
                 text: dlg.pickTarget === "waypoint" ? "CLICK MAP…" : "PICK ON MAP"
                 implicitHeight: 38
-                contentItem: Text { text: parent.text; color: C.text; font.pixelSize: 13; font.bold: true
+                contentItem: Text { text: parent.text; color: Theme.text; font.pixelSize: 13; font.bold: true
                                      horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                      elide: Text.ElideRight }
                 background: Rectangle { radius: 10
-                                         color: dlg.pickTarget === "waypoint" ? C.accentDark
-                                                : (parent.down ? C.border : C.surfaceAlt)
-                                         border.color: dlg.pickTarget === "waypoint" ? C.accent : C.border
+                                         color: dlg.pickTarget === "waypoint" ? Theme.accentDark
+                                                : (parent.down ? Theme.border : Theme.surfaceAlt)
+                                         border.color: dlg.pickTarget === "waypoint" ? Theme.accent : Theme.border
                                          border.width: 1 }
                 onClicked: dlg.beginPick("waypoint")
             }
@@ -505,14 +519,14 @@ Popup {
                 text: goToCombo.currentText !== "" ? "GO → " + goToCombo.currentText : "GO"
                 implicitHeight: 42
                 enabled: goToCombo.currentText !== "" && cfg.goToCategory !== ""
-                contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 14; font.bold: true
+                contentItem: Text { text: parent.text; color: Theme.textOnAccent; font.pixelSize: 14; font.bold: true
                                      horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                                      elide: Text.ElideRight }
                 background: Rectangle { radius: 10
-                                         color: !parent.enabled ? C.border : (parent.down ? C.accentDark : C.accent) }
+                                         color: !parent.enabled ? Theme.border : (parent.down ? Theme.accentDark : Theme.accent) }
                 onClicked: {
                     dlg.goRequestId = ros.dispatchToRobot(cfg.goToCategory, goToCombo.currentText, 1, dlg.robotName)
-                    if (mapLoader.item) mapLoader.item.clearPickedWaypoint()
+                    if (dlg.mapPage) dlg.mapPage.clearPickedWaypoint()
                 }
             }
         }
@@ -524,14 +538,14 @@ Popup {
             spacing: 6
 
             Text { text: "FLEET MEMBERSHIP"; font.pixelSize: 12; font.bold: true
-                   font.letterSpacing: 0.8; color: C.textDim
+                   font.letterSpacing: 0.8; color: Theme.textDim
                    elide: Text.ElideRight; Layout.fillWidth: true }
             Text {
                 Layout.fillWidth: true
                 text: dlg.removable
                       ? "RMF cannot delete a robot. Removing it decommissions it and stops tracking it; register it again with the same settings to restore it, or restart the fleet adapter to free its name and charger."
                       : "This robot is defined in the fleet's config file. Remove it there and restart the fleet adapter."
-                font.pixelSize: 11; color: C.textDim; wrapMode: Text.WordWrap
+                font.pixelSize: 11; color: Theme.textDim; wrapMode: Text.WordWrap
             }
             Button {
                 id: removeBtn
@@ -540,12 +554,12 @@ Popup {
                 text: "REMOVE FROM FLEET"
                 implicitHeight: 38
                 enabled: dlg.removable
-                contentItem: Text { text: removeBtn.text; color: removeBtn.enabled ? C.err : C.textDim
+                contentItem: Text { text: removeBtn.text; color: removeBtn.enabled ? Theme.err : Theme.textDim
                                      font.pixelSize: 13; font.bold: true
                                      horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
                 background: Rectangle { radius: 10
-                                         color: Qt.alpha(C.err, removeBtn.enabled ? (removeBtn.down ? 0.30 : 0.10) : 0.0)
-                                         border.color: removeBtn.enabled ? C.err : C.border; border.width: 1 }
+                                         color: Qt.alpha(Theme.err, removeBtn.enabled ? (removeBtn.down ? 0.30 : 0.10) : 0.0)
+                                         border.color: removeBtn.enabled ? Theme.err : Theme.border; border.width: 1 }
                 onClicked: {
                     confirmPopup.titleText = "Remove " + dlg.robotName + " from " + dlg.fleetOfRobot + "?"
                     confirmPopup.detailText = "It is decommissioned and no longer tracked. Take it off the floor first: RMF keeps planning around its last position, and its name, identity and charger stay reserved until the fleet adapter restarts."
@@ -559,6 +573,17 @@ Popup {
             }
         }
 
+        // Commands sent and not answered yet.
+        Text {
+            Layout.fillWidth: true
+            Layout.leftMargin: 18; Layout.rightMargin: 18
+            visible: dlg.waitingActions.length > 0
+            text: "Waiting for the fleet adapter: " + dlg.waitingActions.join(", ")
+            color: Theme.textDim
+            font.pixelSize: 12
+            wrapMode: Text.WordWrap
+        }
+
         // Show the most recent command result.
         Text {
             Layout.fillWidth: true
@@ -566,7 +591,7 @@ Popup {
             Layout.bottomMargin: 18
             visible: dlg.lastAction !== ""
             text: dlg.lastAction + ": " + dlg.lastMessage
-            color: dlg.lastOk ? C.success : C.err
+            color: dlg.lastOk ? Theme.success : Theme.err
             font.pixelSize: 12
             wrapMode: Text.WordWrap
         }

@@ -1,0 +1,42 @@
+# Tunables of the EIU fleet dashboard. Every key is optional; the values below are the defaults.
+# Where an environment variable is named, it overrides this file.
+# EIU_UI_CONFIG=/path/to/file.yaml makes the dashboard read another file.
+
+dashboard:
+  refresh_period_s: 0.2          # EIU_UI_REFRESH_PERIOD: how often the panels show new data; robot markers glide in between
+
+rmf:
+  offline_after_s: 5.0           # EIU_RMF_OFFLINE_AFTER: no /fleet_states for this long and RMF (or that one fleet) reads offline
+  dispatch_timeout_s: 15.0       # EIU_DISPATCH_TIMEOUT: a dispatch or cancel the dispatcher has not answered fails after this
+  default_level: "L1"            # level shown for a robot whose fleet reports none
+
+tasks:
+  history: 50                    # EIU_TASK_HISTORY: tasks kept in the table and in the task cache
+  cache_write_delay_s: 1.0       # EIU_TASK_CACHE_DELAY: task table changes are written to disk at most this often
+
+commands:
+  timeout_s: 10.0                # EIU_COMMAND_TIMEOUT: pause, resume, speed limit or re-localize with no answer fails after this
+
+registration:
+  reply_timeout_s: 10.0          # EIU_REGISTRATION_TIMEOUT: a registration request with no answer fails after this
+
+vda5050:
+  state_stale_after_s: 5.0       # EIU_STATE_STALE_AFTER: no VDA5050 state for this long and the robot reads offline
+  traffic_log_size: 200          # messages kept in the VDA5050 traffic log
+  off_graph_limit_m: 1.2         # a robot farther than this from every lane is off the graph...
+  off_graph_hold_s: 5.0          # ...once it has been there this long
+
+adapter_metrics:
+  history_samples: 120           # EIU_METRICS_HISTORY: reports kept per fleet adapter for the charts
+  silent_factor: 3.0             # EIU_METRICS_SILENT_FACTOR: missed reporting periods before an adapter counts as silent
+  grace_s: 10.0                  # EIU_ADAPTER_GRACE_S: time after start before an adapter never seen counts as missing
+
+operator:
+  low_battery_percent: 20        # battery below this is a warning and shows red
+  medium_battery_percent: 50     # battery below this shows amber
+
+map:
+  pick_radius_m: 0.6             # a click this close to a waypoint picks it
+  lane_pick_radius_m: 0.35       # a click this close to a lane picks it in the graph editor
+  min_zoom: 0.4
+  max_zoom: 8.0

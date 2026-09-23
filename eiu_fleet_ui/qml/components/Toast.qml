@@ -13,8 +13,8 @@ Rectangle {
     property int lifetimeMs: 9000
     signal actionTriggered()
 
-    readonly property color toneColor: tone === "ok" ? C.success
-                                       : (tone === "warn" ? C.warn : (tone === "error" ? C.err : C.cyan))
+    readonly property color toneColor: tone === "ok" ? Theme.success
+                                       : (tone === "warn" ? Theme.warn : (tone === "error" ? Theme.err : Theme.cyan))
 
     function show(text, kind, action, lifetime) {
         toast.message = text
@@ -35,7 +35,7 @@ Rectangle {
     implicitWidth: Math.min(560, row.implicitWidth + 32)
     implicitHeight: row.implicitHeight + 20
     radius: 12
-    color: C.surfaceRaised
+    color: Theme.surfaceRaised
     border.color: toast.toneColor
     border.width: 1
 
@@ -56,7 +56,7 @@ Rectangle {
         Text {
             Layout.fillWidth: true
             text: toast.message
-            color: C.text
+            color: Theme.text
             font.pixelSize: 13
             wrapMode: Text.WordWrap
         }
@@ -64,17 +64,17 @@ Rectangle {
             visible: toast.actionText !== ""
             text: toast.actionText
             implicitHeight: 30; leftPadding: 14; rightPadding: 14
-            contentItem: Text { text: parent.text; color: "#ffffff"; font.pixelSize: 12; font.bold: true
+            contentItem: Text { text: parent.text; color: Theme.textOnAccent; font.pixelSize: 12; font.bold: true
                                  horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-            background: Rectangle { radius: 8; color: parent.down ? C.accentDark : C.accent }
+            background: Rectangle { radius: 8; color: parent.down ? Theme.accentDark : Theme.accent }
             onClicked: { toast.actionTriggered(); toast.hide() }
         }
         Button {
             Layout.preferredWidth: 26; Layout.preferredHeight: 26
             text: "×"
-            contentItem: Text { text: parent.text; color: C.textDim; font.pixelSize: 18
+            contentItem: Text { text: parent.text; color: Theme.textDim; font.pixelSize: 18
                                  horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-            background: Rectangle { radius: 6; color: parent.hovered ? C.surfaceAlt : "transparent" }
+            background: Rectangle { radius: 6; color: parent.hovered ? Theme.surfaceAlt : "transparent" }
             onClicked: toast.hide()
         }
     }

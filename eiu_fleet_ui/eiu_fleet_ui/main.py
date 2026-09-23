@@ -18,7 +18,7 @@ os.environ.setdefault("QT_SCALE_FACTOR", "1")
 
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 from PySide6.QtCore import QUrl, QTimer, qInstallMessageHandler, QtMsgType
 
 
@@ -141,9 +141,12 @@ def _suppress_rcutils_spam():
     threading.Thread(target=_run, daemon=True, name="stderr-filter").start()
 
 from .adapter_metrics import AdapterMetrics
-from .colors import Colors
+from . import ui_settings
 from .config import FleetSettings, load_fleet_config
+from .dashboard import Dashboard, UiConfig
+from .dashboard_model import Limits
 from .graph_editor import GraphEditor
+from .list_model import KeyedListModel
 from .map_provider import MapProvider
 from .mqtt_client import MqttClient
 from .robot_registry import RobotRegistry
@@ -180,7 +183,6 @@ def build_engine(app: QApplication):
     def robot_icon(robot) -> QUrl:
         return QUrl.fromLocalFile(str(manufacturer_icon.get(robot.manufacturer, logo_dir / "robot.png")))
 
-    colors     = Colors()
     settings   = FleetSettings(fleet_cfg, icon_for=robot_icon)
     map_prov   = MapProvider(fleet_cfg)
     mqtt       = MqttClient(fleet_cfg)
@@ -194,6 +196,10 @@ def build_engine(app: QApplication):
     ws_tasks   = TaskEventServer(fleet_cfg.websocket_uri)
     ws_tasks.taskStateUpdate.connect(ros.apply_task_state_update)
     graph_ed   = GraphEditor()
+    dashboard  = Dashboard(settings, map_prov, ros, mqtt, control, registry, adapter_metrics,
+                           period_s=ui_settings.get("dashboard.refresh_period_s"),
+                           limits=Limits(low_battery_percent=ui_settings.get("operator.low_battery_percent")))
+    ui_config  = UiConfig()
 
     # Robots that fleets register or drop while the dashboard runs.
     registry.robotAdded.connect(settings.add_robot)
@@ -213,9 +219,9 @@ def build_engine(app: QApplication):
         adapter_metrics.attach(node)
 
     # Expose backend objects to QML.
+    qmlRegisterType(KeyedListModel, "EiuFleet", 1, 0, "KeyedListModel")
     engine = QQmlApplicationEngine()
     ctx    = engine.rootContext()
-    ctx.setContextProperty("C",       colors)
     ctx.setContextProperty("cfg",     settings)   # Fleet and task settings
     ctx.setContextProperty("mapProv", map_prov)  # Map and waypoints
     ctx.setContextProperty("mqtt",    mqtt)      # Robot telemetry
@@ -225,6 +231,8 @@ def build_engine(app: QApplication):
     ctx.setContextProperty("graphEd", graph_ed)  # nav_graph.yaml editor
     ctx.setContextProperty("registry", registry)  # Robot registration
     ctx.setContextProperty("adapterMetrics", adapter_metrics)  # Fleet adapter health
+    ctx.setContextProperty("dashboard", dashboard)  # What the panels show, refreshed on a timer
+    ctx.setContextProperty("uiConfig", ui_config)   # Thresholds and map limits from ui_settings.yaml
     ctx.setContextProperty("fontSans", font_sans)
     ctx.setContextProperty("fontMono", font_mono)
     ctx.setContextProperty(
@@ -247,12 +255,13 @@ def build_engine(app: QApplication):
 
     qml_file = _resource_dir("qml") / "main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_file)))
+    dashboard.start()
 
     # Keep the backend objects referenced for the life of the QML engine; an unreferenced context property is garbage collected.
-    backends = SimpleNamespace(colors=colors, settings=settings, map_prov=map_prov,
+    backends = SimpleNamespace(settings=settings, map_prov=map_prov,
                                mqtt=mqtt, ros=ros, control=control, ws_tasks=ws_tasks,
                                graph_ed=graph_ed, registry=registry, adapter_metrics=adapter_metrics,
-                               attach_ros=attach_ros)
+                               dashboard=dashboard, ui_config=ui_config, attach_ros=attach_ros)
     return engine, backends
 
 

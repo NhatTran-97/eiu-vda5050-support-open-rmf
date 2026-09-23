@@ -7,29 +7,26 @@ import QtQuick.Layouts
 Item {
     id: root
 
-    property var traffic: []            // newest first, no raw payloads
+    property var messages: null         // keyed model of log entries matching typeFilter, newest first
     property real uiScale: 1.0
     property string typeFilter: "all"   // all | order | instantAction | state
     property var openEntry: null        // entry whose raw JSON is shown
     property string rawText: ""
 
-    readonly property var shown: {
-        if (typeFilter === "all") return traffic
-        return traffic.filter(function(e) { return e.type === typeFilter })
-    }
+    signal filterPicked(string kind)
 
     function typeColor(e) {
-        if (e.type === "order") return C.cyan
-        if (e.type === "instantAction") return C.warn
-        if (e.type === "connection") return e.summary === "ONLINE" ? C.success : C.err
-        return C.textDim
+        if (e.type === "order") return Theme.cyan
+        if (e.type === "instantAction") return Theme.warn
+        if (e.type === "connection") return e.summary === "ONLINE" ? Theme.success : Theme.err
+        return Theme.textDim
     }
 
     function statusColor(status) {
-        if (status === "FINISHED") return C.success
-        if (status === "FAILED") return C.err
-        if (status === "SENT") return C.textDim
-        return C.warn
+        if (status === "FINISHED") return Theme.success
+        if (status === "FAILED") return Theme.err
+        if (status === "SENT") return Theme.textDim
+        return Theme.warn
     }
 
     function typeLabel(e) {
@@ -62,14 +59,14 @@ Item {
                     Layout.preferredWidth: chipText.implicitWidth + 18
                     Layout.preferredHeight: 22 * root.uiScale
                     radius: 8
-                    color: active ? "#143452" : "transparent"
-                    border.color: active ? "#235278" : C.border
+                    color: active ? Theme.badgeFill : "transparent"
+                    border.color: active ? Theme.badgeBorder : Theme.border
                     border.width: 1
                     Text {
                         id: chipText
                         anchors.centerIn: parent
                         text: modelData.label
-                        color: active ? C.cyan : C.textDim
+                        color: active ? Theme.cyan : Theme.textDim
                         font.pixelSize: 10 * root.uiScale
                         font.bold: true
                         font.letterSpacing: 0.6
@@ -77,7 +74,7 @@ Item {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.typeFilter = modelData.key
+                        onClicked: root.filterPicked(modelData.key)
                     }
                 }
             }
@@ -91,14 +88,16 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            model: root.shown
+            model: root.messages
             boundsBehavior: Flickable.StopAtBounds
             ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
             delegate: Rectangle {
+                id: entryRow
+                required property var row
                 width: ListView.view.width
                 height: 30 * root.uiScale
-                color: rowArea.containsMouse ? C.surfaceAlt : "transparent"
+                color: rowArea.containsMouse ? Theme.surfaceAlt : "transparent"
 
                 RowLayout {
                     anchors.fill: parent
@@ -107,16 +106,16 @@ Item {
                     spacing: 8
 
                     Text {
-                        text: Qt.formatTime(new Date(modelData.ts * 1000), "HH:mm:ss")
-                        color: C.textDim
+                        text: Qt.formatTime(new Date(entryRow.row.ts * 1000), "HH:mm:ss")
+                        color: Theme.textDim
                         font.family: fontMono
                         font.pixelSize: 11 * root.uiScale
                         Layout.preferredWidth: 58 * root.uiScale
                     }
                     // "out" = adapter -> robot, "in" = robot -> adapter.
                     Text {
-                        text: modelData.dir === "out" ? "→" : "←"
-                        color: root.typeColor(modelData)
+                        text: entryRow.row.dir === "out" ? "→" : "←"
+                        color: root.typeColor(entryRow.row)
                         font.pixelSize: 14 * root.uiScale
                         font.bold: true
                     }
@@ -125,20 +124,20 @@ Item {
                         Layout.preferredHeight: 20 * root.uiScale
                         radius: 6
                         color: "transparent"
-                        border.color: root.typeColor(modelData)
+                        border.color: root.typeColor(entryRow.row)
                         border.width: 1
                         Text {
                             anchors.centerIn: parent
-                            text: root.typeLabel(modelData)
-                            color: root.typeColor(modelData)
+                            text: root.typeLabel(entryRow.row)
+                            color: root.typeColor(entryRow.row)
                             font.family: fontMono
                             font.pixelSize: 10 * root.uiScale
                             font.bold: true
                         }
                     }
                     Text {
-                        text: modelData.robot
-                        color: C.text
+                        text: entryRow.row.robot
+                        color: Theme.text
                         font.family: fontMono
                         font.pixelSize: 11 * root.uiScale
                         font.bold: true
@@ -146,16 +145,16 @@ Item {
                         Layout.preferredWidth: 56 * root.uiScale
                     }
                     Text {
-                        text: modelData.summary
-                        color: C.textDim
+                        text: entryRow.row.summary
+                        color: Theme.textDim
                         font.family: fontMono
                         font.pixelSize: 11 * root.uiScale
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
                     Text {
-                        visible: modelData.type === "instantAction"
-                        text: modelData.status
+                        visible: entryRow.row.type === "instantAction"
+                        text: entryRow.row.status
                         color: root.statusColor(text)
                         font.family: fontMono
                         font.pixelSize: 10 * root.uiScale
@@ -168,15 +167,15 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.showRaw(modelData)
+                    onClicked: root.showRaw(entryRow.row)
                 }
             }
 
             Text {
                 anchors.centerIn: parent
-                visible: root.shown.length === 0
-                text: root.traffic.length === 0 ? "NO VDA5050 TRAFFIC YET" : "NO MATCHING MESSAGES"
-                color: C.textDim
+                visible: !root.messages || root.messages.count === 0
+                text: root.typeFilter === "all" ? "NO VDA5050 TRAFFIC YET" : "NO MATCHING MESSAGES"
+                color: Theme.textDim
                 font.pixelSize: 12
                 font.bold: true
             }
@@ -199,7 +198,7 @@ Item {
                 rightPadding: 10
                 contentItem: Text {
                     text: parent.text
-                    color: C.text
+                    color: Theme.text
                     font.pixelSize: 11 * root.uiScale
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -207,8 +206,8 @@ Item {
                 }
                 background: Rectangle {
                     radius: 8
-                    color: parent.hovered ? C.surfaceAlt : "transparent"
-                    border.color: C.border
+                    color: parent.hovered ? Theme.surfaceAlt : "transparent"
+                    border.color: Theme.border
                     border.width: 1
                 }
                 onClicked: root.openEntry = null
@@ -219,7 +218,7 @@ Item {
                       ? (root.typeLabel(root.openEntry) + "  ·  " + root.openEntry.robot + "  ·  "
                          + Qt.formatTime(new Date(root.openEntry.ts * 1000), "HH:mm:ss"))
                       : ""
-                color: root.openEntry ? root.typeColor(root.openEntry) : C.textDim
+                color: root.openEntry ? root.typeColor(root.openEntry) : Theme.textDim
                 font.family: fontMono
                 font.pixelSize: 11 * root.uiScale
                 font.bold: true
@@ -234,7 +233,7 @@ Item {
                 rightPadding: 12
                 contentItem: Text {
                     text: parent.text
-                    color: "white"
+                    color: Theme.textOnAccent
                     font.pixelSize: 11 * root.uiScale
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -242,7 +241,7 @@ Item {
                 }
                 background: Rectangle {
                     radius: 8
-                    color: parent.down ? C.accentDark : C.accent
+                    color: parent.down ? Theme.accentDark : Theme.accent
                 }
                 onClicked: {
                     rawView.selectAll()
@@ -269,11 +268,11 @@ Item {
                 readOnly: true
                 selectByMouse: true
                 text: root.rawText
-                color: C.text
+                color: Theme.text
                 font.family: fontMono
                 font.pixelSize: 11 * root.uiScale
                 wrapMode: TextEdit.NoWrap
-                background: Rectangle { radius: 8; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                background: Rectangle { radius: 8; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
             }
         }
     }

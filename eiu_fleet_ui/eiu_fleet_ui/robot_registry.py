@@ -10,7 +10,7 @@ import uuid
 
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
-from .config import env_float
+from . import ui_settings
 from .registry_model import RegistryModel
 
 # JSON strings on std_msgs/String, shared with the fleet adapter and scripts/register_robot.py.
@@ -19,8 +19,8 @@ RESULT_TOPIC = "/robot_registration_results"
 REGISTRY_TOPIC = "/robot_registry"
 DISCOVERY_TOPIC = "/robot_discovery"
 
-# Seconds to wait for an adapter's verdict before reporting no answer; EIU_REGISTRATION_TIMEOUT overrides it.
-REPLY_TIMEOUT_SEC = env_float("EIU_REGISTRATION_TIMEOUT", 10.0)
+# Seconds to wait for an adapter's verdict before reporting no answer.
+REPLY_TIMEOUT_SEC = ui_settings.get("registration.reply_timeout_s")
 _EXPIRY_CHECK_MS = 1000
 
 
@@ -41,9 +41,12 @@ class RobotRegistry(QObject):
         self._fleets_json = "[]"
         self._pending_json = "[]"
         self._conflicts_json = "[]"
+        self._pending: list = []
+        self._conflicts: list = []
 
         self._publisher = None
         self._string_type = None
+        self._wake = None
         self._outgoing = queue.SimpleQueue()
         # request_id -> (kind, action, deadline) of requests that have no answer yet.
         self._waiting: dict = {}
@@ -73,7 +76,9 @@ class RobotRegistry(QObject):
         node.create_subscription(String, REGISTRY_TOPIC, lambda m: self._incoming.emit("registry", m.data), latched)
         node.create_subscription(String, DISCOVERY_TOPIC, lambda m: self._incoming.emit("discovery", m.data), latched)
         node.create_subscription(String, RESULT_TOPIC, lambda m: self._incoming.emit("result", m.data), volatile)
-        node.create_timer(0.05, self._drain)
+        self._wake = node.create_guard_condition(self._drain)
+        # Requests queued before the node existed are sent once the executor spins.
+        self._wake.trigger()
 
     def _drain(self):
         """Publish queued requests from the ROS thread."""
@@ -119,15 +124,20 @@ class RobotRegistry(QObject):
             (self.checkResult if waiting[0] == "check" else self.requestResult).emit(text)
 
     def _publish(self):
-        self._fleets_json = json.dumps(self._model.fleets())
-        self._pending_json = json.dumps(self._model.pending())
-        conflicts = json.dumps(self._model.conflicts())
-        if conflicts != self._conflicts_json:
-            self._conflicts_json = conflicts
-            for c in self._model.conflicts():
+        fleets_json = json.dumps(self._model.fleets())
+        self._pending = self._model.pending()
+        pending_json = json.dumps(self._pending)
+        self._conflicts = self._model.conflicts()
+        conflicts_json = json.dumps(self._conflicts)
+        changed = (fleets_json, pending_json, conflicts_json) != (self._fleets_json, self._pending_json,
+                                                                  self._conflicts_json)
+        if conflicts_json != self._conflicts_json:
+            for c in self._conflicts:
                 print(f"[REG] robot name '{c['name']}' is used in fleets '{c['followed_fleet']}' and "
                       f"'{c['fleet']}' -- following the one in '{c['followed_fleet']}' only")
-        self.changed.emit()
+        self._fleets_json, self._pending_json, self._conflicts_json = fleets_json, pending_json, conflicts_json
+        if changed:
+            self.changed.emit()
         fresh = self._model.new_pending_keys()
         if fresh:
             self.newRobotsDetected.emit(json.dumps(fresh))
@@ -139,6 +149,8 @@ class RobotRegistry(QObject):
         request.update({"action": action, "request_id": request_id})
         self._waiting[request_id] = (kind, action, time.monotonic() + REPLY_TIMEOUT_SEC)
         self._outgoing.put((request_id, json.dumps(request)))
+        if self._wake is not None:
+            self._wake.trigger()
         return request_id
 
     @staticmethod
@@ -203,6 +215,16 @@ class RobotRegistry(QObject):
                 request_id, "no_reply",
                 f"The fleet adapter did not answer within {REPLY_TIMEOUT_SEC:.0f} s. Is it running?", action))
             (self.checkResult if kind == "check" else self.requestResult).emit(text)
+
+    # Read by the dashboard.
+
+    def pending_list(self) -> list:
+        """Robots waiting to be registered, as pendingJson lists them."""
+        return self._pending
+
+    def conflict_list(self) -> list:
+        """Robot names two fleets both use, as conflictsJson lists them."""
+        return self._conflicts
 
     # Lists exposed to QML.
 

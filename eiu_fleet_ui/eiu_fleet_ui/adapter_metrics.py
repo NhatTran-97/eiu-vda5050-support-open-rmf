@@ -9,16 +9,16 @@ import time
 
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
-from .config import env_float
-from .metrics_model import DEFAULT_CAPACITY, DEFAULT_GRACE_S, DEFAULT_SILENT_FACTOR, MetricsModel
+from . import ui_settings
+from .metrics_model import MetricsModel
 
 METRICS_TOPIC = "/{node}/metrics"
 
 # Chart samples kept per adapter, missed reporting intervals before an adapter counts as silent, and the start-up grace
-# (s) before an unseen adapter counts as missing; EIU_METRICS_HISTORY, EIU_METRICS_SILENT_FACTOR and EIU_ADAPTER_GRACE_S override them.
-HISTORY_SAMPLES = int(env_float("EIU_METRICS_HISTORY", DEFAULT_CAPACITY))
-SILENT_FACTOR = env_float("EIU_METRICS_SILENT_FACTOR", DEFAULT_SILENT_FACTOR)
-GRACE_S = env_float("EIU_ADAPTER_GRACE_S", DEFAULT_GRACE_S)
+# (s) before an unseen adapter counts as missing.
+HISTORY_SAMPLES = ui_settings.get("adapter_metrics.history_samples")
+SILENT_FACTOR = ui_settings.get("adapter_metrics.silent_factor")
+GRACE_S = ui_settings.get("adapter_metrics.grace_s")
 _REFRESH_MS = 1000
 _SUBSCRIBE_PERIOD_S = 0.5
 
@@ -40,8 +40,8 @@ class AdapterMetrics(QObject):
         self._present = {}
         self._summary = {"total": 0, "found": 0, "level": "wait"}
         self._to_subscribe = queue.SimpleQueue()
-        self._metrics_json = json.dumps({"adapters": []})
         self._attention_json = "[]"
+        self._attention: list = []
         for robot in robots:
             self._expect(robot.adapter_node, robot.fleet_name)
 
@@ -111,22 +111,27 @@ class AdapterMetrics(QObject):
         now = time.monotonic()
         for node_name, present in dict(self._present).items():
             self._model.set_present(node_name, present)
-        self._metrics_json = json.dumps(self._model.snapshot(now))
         self.changed.emit()
         summary = self._model.summary(now)
         if summary != self._summary:
             self._summary = summary
             self.summaryChanged.emit()
-        attention = json.dumps(self._model.attention(now))
+        self._attention = self._model.attention(now)
+        attention = json.dumps(self._attention)
         if attention != self._attention_json:
             self._attention_json = attention
             self.attentionChanged.emit()
+
+    def attention_list(self) -> list:
+        """The problems the adapters report, as attentionJson lists them."""
+        return self._attention
 
     # Read by QML.
 
     @Property(str, notify=changed)
     def metricsJson(self):
-        return self._metrics_json
+        """Serialised when read, so nothing is built while the System view is closed."""
+        return json.dumps(self._model.snapshot(time.monotonic()))
 
     @Property(int, notify=summaryChanged)
     def adaptersTotal(self):

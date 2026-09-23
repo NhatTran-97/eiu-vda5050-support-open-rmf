@@ -83,19 +83,20 @@ class FollowedRobotsTest(unittest.TestCase):
 
         send("connection", {"connectionState": "ONLINE"})
         send("state", {})
-        mqtt._flush()
-        self.assertEqual(json.loads(mqtt.robotsOnlineJson), {"tb3_1": True})
+        self.assertEqual(mqtt.snapshot().online, {"tb3_1": True})
 
         # The process died without ever publishing OFFLINE -- telemetry just goes quiet.
         mqtt._last_state_rx["tb3_1"] -= mqtt_client_module.STATE_STALE_AFTER_SEC + 1
-        mqtt._flush()
-        self.assertEqual(json.loads(mqtt.robotsOnlineJson), {"tb3_1": False})
+        snapshot = mqtt.snapshot()
+        self.assertEqual(snapshot.online, {"tb3_1": False})
+        self.assertTrue(snapshot.telemetry["tb3_1"]["stale"])
         self.assertTrue(mqtt._online["tb3_1"], "the raw connection state is untouched, only what QML sees changes")
 
         # Fresh telemetry brings it back.
         send("state", {})
-        mqtt._flush()
-        self.assertEqual(json.loads(mqtt.robotsOnlineJson), {"tb3_1": True})
+        snapshot = mqtt.snapshot()
+        self.assertEqual(snapshot.online, {"tb3_1": True})
+        self.assertFalse(snapshot.telemetry["tb3_1"]["stale"])
 
     def test_control_queues_endpoint_changes_for_the_ros_thread(self):
         control = RosControl(config(identity("tb3_1", "0001")))

@@ -34,8 +34,8 @@ Dialog {
     }
 
     background: Rectangle {
-        color: C.surface; radius: 16
-        border.color: C.border; border.width: 1
+        color: Theme.surface; radius: 16
+        border.color: Theme.border; border.width: 1
     }
 
     contentItem: ColumnLayout {
@@ -47,7 +47,7 @@ Dialog {
             text: dlg.mode === "vertex" ? "NEW WAYPOINT"
                   : dlg.mode === "lane" ? "NEW LANE"
                   : "SAVE NAV GRAPH AS"
-            font.pixelSize: 15; font.bold: true; color: C.text
+            font.pixelSize: 15; font.bold: true; color: Theme.text
             font.letterSpacing: 1.0
             horizontalAlignment: Text.AlignHCenter
         }
@@ -58,15 +58,15 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
-            Text { text: "NAME (optional)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+            Text { text: "NAME (optional)"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
             TextField {
                 id: nameField
                 Layout.fillWidth: true
                 placeholderText: "e.g. wp1, charger_1"
-                font.pixelSize: 13; color: C.text
+                font.pixelSize: 13; color: Theme.text
                 background: Rectangle {
                     implicitHeight: 40; radius: 10
-                    color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                 }
                 Keys.onReturnPressed: vertexBtn.clicked()
             }
@@ -75,7 +75,7 @@ Dialog {
                 text: "Charger waypoint"
                 Layout.topMargin: 4
                 contentItem: Text {
-                    text: chargerBox.text; color: C.text; font.pixelSize: 12
+                    text: chargerBox.text; color: Theme.text; font.pixelSize: 12
                     leftPadding: chargerBox.indicator.width + 6
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -91,14 +91,14 @@ Dialog {
             Text {
                 Layout.fillWidth: true
                 text: dlg.fromName + "  →  " + dlg.toName
-                font.pixelSize: 13; color: C.text
+                font.pixelSize: 13; color: Theme.text
                 horizontalAlignment: Text.AlignHCenter
             }
             CheckBox {
                 id: bidirBox
                 text: "Bidirectional (both directions)"
                 contentItem: Text {
-                    text: bidirBox.text; color: C.text; font.pixelSize: 12
+                    text: bidirBox.text; color: Theme.text; font.pixelSize: 12
                     leftPadding: bidirBox.indicator.width + 6
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -111,21 +111,21 @@ Dialog {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
             spacing: 4
-            Text { text: "FILE PATH"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: C.textDim }
+            Text { text: "FILE PATH"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.0; color: Theme.textDim }
             TextField {
                 id: pathField
                 Layout.fillWidth: true
-                font.pixelSize: 12; color: C.text
+                font.pixelSize: 12; color: Theme.text
                 background: Rectangle {
                     implicitHeight: 40; radius: 10
-                    color: C.surfaceAlt; border.color: C.border; border.width: 1
+                    color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1
                 }
                 Keys.onReturnPressed: saveBtn.clicked()
             }
             Text {
                 Layout.fillWidth: true
                 text: "Won't overwrite the loaded graph unless you keep the same path."
-                font.pixelSize: 10; color: C.textDim
+                font.pixelSize: 10; color: Theme.textDim
                 wrapMode: Text.WordWrap
             }
         }
@@ -141,10 +141,10 @@ Dialog {
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 Layout.fillWidth: true
                 contentItem: Text {
-                    text: parent.text; color: C.textDim; font.pixelSize: 12; font.bold: true
+                    text: parent.text; color: Theme.textDim; font.pixelSize: 12; font.bold: true
                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 }
-                background: Rectangle { radius: 10; color: C.surfaceAlt; border.color: C.border; border.width: 1 }
+                background: Rectangle { radius: 10; color: Theme.surfaceAlt; border.color: Theme.border; border.width: 1 }
                 onClicked: dlg.close()
             }
 
@@ -155,10 +155,10 @@ Dialog {
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 Layout.fillWidth: true
                 contentItem: Text {
-                    text: parent.text; color: "#ffffff"; font.pixelSize: 12; font.bold: true
+                    text: parent.text; color: Theme.textOnAccent; font.pixelSize: 12; font.bold: true
                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 }
-                background: Rectangle { radius: 10; color: vertexBtn.down ? C.accentDark : C.accent }
+                background: Rectangle { radius: 10; color: vertexBtn.down ? Theme.accentDark : Theme.accent }
                 onClicked: {
                     dlg.vertexConfirmed(nameField.text, chargerBox.checked)
                     dlg.close()
@@ -172,10 +172,10 @@ Dialog {
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 Layout.fillWidth: true
                 contentItem: Text {
-                    text: parent.text; color: "#ffffff"; font.pixelSize: 12; font.bold: true
+                    text: parent.text; color: Theme.textOnAccent; font.pixelSize: 12; font.bold: true
                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 }
-                background: Rectangle { radius: 10; color: laneBtn.down ? C.accentDark : C.accent }
+                background: Rectangle { radius: 10; color: laneBtn.down ? Theme.accentDark : Theme.accent }
                 onClicked: {
                     dlg.laneConfirmed(bidirBox.checked)
                     dlg.close()
@@ -190,10 +190,10 @@ Dialog {
                 implicitHeight: 36; leftPadding: 16; rightPadding: 16
                 Layout.fillWidth: true
                 contentItem: Text {
-                    text: parent.text; color: "#ffffff"; font.pixelSize: 12; font.bold: true
+                    text: parent.text; color: Theme.textOnAccent; font.pixelSize: 12; font.bold: true
                     horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter
                 }
-                background: Rectangle { radius: 10; color: !saveBtn.enabled ? C.border : (saveBtn.down ? C.accentDark : C.accent) }
+                background: Rectangle { radius: 10; color: !saveBtn.enabled ? Theme.border : (saveBtn.down ? Theme.accentDark : Theme.accent) }
                 onClicked: {
                     dlg.saveConfirmed(pathField.text.trim())
                     dlg.close()

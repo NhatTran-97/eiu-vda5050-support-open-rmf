@@ -9,15 +9,15 @@ Rectangle {
     property string iconText: ""
     property url iconSource: ""
     property string valueFontFamily: "IBM Plex Mono"
-    property color accentColor: C.accent
+    property color accentColor: Theme.accent
     // Highlight a metric that needs operator attention.
     property bool alert: false
     readonly property real contentScale: Math.max(1.0, Math.min(1.45, width / 300))
 
     implicitHeight: 116
     radius: 16
-    color: C.surface
-    border.color: alert ? accentColor : C.border
+    color: Theme.surface
+    border.color: alert ? accentColor : Theme.border
     border.width: alert ? pulseWidth : 1
 
     property real pulseWidth: 1
@@ -84,7 +84,7 @@ Rectangle {
             Text {
                 width: parent.width
                 text: card.title.toUpperCase()
-                color: C.textDim
+                color: Theme.textDim
                 font.pixelSize: 11 * card.contentScale
                 font.bold: true
                 font.letterSpacing: 1.15
@@ -93,7 +93,7 @@ Rectangle {
             Text {
                 width: parent.width
                 text: card.value
-                color: C.text
+                color: Theme.text
                 font.family: card.valueFontFamily
                 font.pixelSize: 28 * card.contentScale
                 font.bold: true

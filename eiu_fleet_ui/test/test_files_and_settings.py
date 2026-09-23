@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtNetwork import QHostAddress
 
-from eiu_fleet_ui.config import FleetConfig, FleetSettings, RobotIdentity, _load_one_fleet, _merge_fleets, env_float
+from eiu_fleet_ui.config import FleetConfig, FleetSettings, RobotIdentity, _load_one_fleet, _merge_fleets
 from eiu_fleet_ui.file_io import DebouncedWriter, user_config_dir, write_atomic
 from eiu_fleet_ui.registry_model import RegistryModel
 from eiu_fleet_ui.task_websocket import bind_address
@@ -67,13 +67,6 @@ class FileHelpers(unittest.TestCase):
 
 
 class Settings(unittest.TestCase):
-    def test_numbers_come_from_the_environment_when_they_are_valid(self):
-        with mock.patch.dict(os.environ, {"EIU_X": "2.5"}):
-            self.assertEqual(env_float("EIU_X", 9.0), 2.5)
-        for bad in ("", "abc", "0", "-1", "nan", "inf"):
-            with mock.patch.dict(os.environ, {"EIU_X": bad}):
-                self.assertEqual(env_float("EIU_X", 9.0), 9.0, bad)
-
     def test_the_websocket_listens_where_the_uri_points(self):
         loopback = QHostAddress(QHostAddress.SpecialAddress.LocalHost)
         self.assertEqual(bind_address("ws://localhost:9000", ""), loopback)
