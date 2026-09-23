@@ -1,24 +1,27 @@
-# Fleet and VDA5050 settings for the TB3 fleet adapter instance.
-# See config_amr.yaml for the AMR fleet (different footprint/kinematics —
-# each robot type needs its own fleet adapter instance, see README).
+# Simulation-only variant of config_tb3.yaml, for testing against tb3_simulation
+# (Gazebo) instead of real hardware. Points at a local, isolated MQTT broker
+# instead of the production broker, and starts with just tb3_1 while the
+# sim bridging is validated one robot at a time.
+#
+# Not for the real robots -- keep config_tb3.yaml untouched for that.
 
 rmf_fleet:
   name: "tb3_fleet"
   limits:
-  
+
     linear: [0.22, 1.0]      # [v_max, a_max] m/s, m/s^2
     angular: [1.0, 3.2]      # [w_max, alpha_max] rad/s, rad/s^2
 
   profile:
-    footprint: 0.15  
-    vicinity: 0.30    
+    footprint: 0.15
+    vicinity: 0.30
   reversible: true
 
 
   battery_system:
     voltage: 11.1        # V -- stock 3S Li-Po
     capacity: 1.8         # Ah -- stock 1800mAh Li-Po
-    charging_current: 1.0 # A -- rough estimate, 
+    charging_current: 1.0 # A -- rough estimate,
 
   mechanical_system:
     mass: 1.0              # kg -- stock TB3 Burger weight
@@ -93,38 +96,23 @@ vda5050:
   metrics_period_s: 60
   # Robots added while the adapter runs (see the README, "Add a robot at runtime").
   registration:
-    # Seconds after startup before robots unknown to every fleet are reported.
     discovery_grace_s: 8.0
-    # Seconds between checks of the broker for such robots.
     discovery_period_s: 2.0
-    # Seconds RMF may take to complete a robot's registration before it is tried again.
     timeout_s: 30
-    # Relative margin a new robot's speed and acceleration may differ from the fleet's.
     limit_tolerance: 0.05
-    # Where runtime-added robots are kept for the next start; relative to this file.
-    # Default: <this file's name>.runtime_robots.yaml next to it.
-    # runtime_robots_file: robots.runtime.yaml
+    # Default runtime_robots_file: <this file's name>.runtime_robots.yaml next to it
+    # -> config_tb3_sim.runtime_robots.yaml, separate from config_tb3.runtime_robots.yaml
   mqtt:
-    host: "192.168.10.97"
+    host: "localhost"
     port: 1883
-    # username and password may be written as ${VARIABLE} to read them from the environment.
     username: null
     password: null
-    # TLS to the broker; relative paths are relative to this file.
     tls:
       enabled: false
-      # ca_file: certs/ca.crt
-      # client_cert: certs/client.crt
-      # client_key: certs/client.key
-      # verify_hostname: true
-    # Seconds between keep-alive packets that let the broker and the adapter notice a dead connection.
     keep_alive_s: 60
-    # Seconds one connect attempt may take.
     connect_timeout_s: 10
-    # Wait before the first reconnect attempt; it doubles up to reconnect_max_s.
     reconnect_min_s: 1
     reconnect_max_s: 30
-    # Largest message payload handled, in bytes; a larger message is dropped unread.
     max_payload_bytes: 1048576
 
   robots:
