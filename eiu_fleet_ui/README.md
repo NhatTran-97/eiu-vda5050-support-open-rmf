@@ -6,7 +6,7 @@ A real-time fleet management dashboard for [Open-RMF](https://github.com/open-rm
   <img src="icons/eiu.png" alt="EIU Fleet UI logo" />
 </p>
 
-![Dashboard overview](../assets/img/dashboard.png)
+![Dashboard overview](../assets/img/dashboard.png?v=2)
 
 > See [docs/architecture.md](docs/architecture.md) for system design, component diagrams, and data-flow sequence diagrams.
 
