@@ -142,7 +142,7 @@ checklist) — plus the dashboard now surfaces live VDA5050 order/traffic
 **3 robots — `amr_fleet` + `tb3_fleet`** (simulation)
 Same multi-fleet demo in Gazebo
 
-*Video coming soon*
+[<img src="https://img.youtube.com/vi/vPeb_fctu0k/hqdefault.jpg" width="100%" alt="Watch: multi-fleet simulation demo in Gazebo" />](https://www.youtube.com/watch?v=vPeb_fctu0k)
 
 </td>
 <td align="center" width="50%">
