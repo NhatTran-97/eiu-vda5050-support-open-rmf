@@ -1,6 +1,7 @@
 import json
 import os
 
+import yaml
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
@@ -21,28 +22,31 @@ from launch_ros.actions import Node
 from nav2_common.launch import ReplaceString
 
 
-# Default spawn positions from charger_1, charger_2 and charger_3 in vda5050_fleet_adapter_full_control/maps/nav_graph.yaml.
-ROBOT_POSES = (
-    (5.368279400762283, -6.6542575498156475),
-    (10.409564589926122, -9.541312836298289),
-    (8.950955701737394, -8.174082936277745),
-)
-ROBOT_NAMES = ('tb3_1', 'tb3_2', 'tb3_3')
-
 # Head start before the first spawn so the Gazebo GUI client has time to
 # connect to the scene; entities spawned before that miss the GUI's render.
 SPAWN_DELAY_OFFSET = 5.0
 
 
-def spawn_robots(context, sdf_path, robot_description, nav2_launch, count):
+def load_robots(poses_file):
+    """Return [(name, x, y)] in spawn order from the robot poses file."""
+    with open(poses_file, 'r') as f:
+        entries = yaml.safe_load(f)['robots']
+    return [(e['name'], float(e['x']), float(e['y'])) for e in entries]
+
+
+def spawn_robots(context, sdf_path, robot_description, nav2_launch, count, robots, poses_file):
     """Spawn each Burger with an isolated ROS namespace and Nav2 stack."""
     with open(sdf_path, 'r') as f:
         base_sdf = f.read()
 
-    actions = []
     robot_count = int(count.perform(context))
-    robots = zip(ROBOT_NAMES[:robot_count], ROBOT_POSES[:robot_count])
-    for index, (name, (x, y)) in enumerate(robots, start=1):
+    if not 1 <= robot_count <= len(robots):
+        raise RuntimeError(
+            f'robot_count must be between 1 and {len(robots)} (the robots listed in '
+            f'{poses_file}), got {robot_count}; add entries to that file for more')
+
+    actions = []
+    for index, (name, x, y) in enumerate(robots[:robot_count], start=1):
         sdf = base_sdf.replace('model name="turtlebot3_burger"', f'model name="{name}"')
         for old, new in (
             ('<topic>imu</topic>', f'<topic>/{name}/imu</topic>'),
@@ -143,6 +147,9 @@ def generate_launch_description():
     # Set TURTLEBOT3_MODEL
     os.environ['TURTLEBOT3_MODEL'] = 'burger'
 
+    poses_file = os.path.join(tb3_simulation_dir, 'config', 'robot_poses.yaml')
+    robots = load_robots(poses_file)
+
     use_sim_time = LaunchConfiguration('use_sim_time')
     use_rviz = LaunchConfiguration('use_rviz')
     rviz_config_file = LaunchConfiguration('rviz_config_file')
@@ -189,8 +196,9 @@ def generate_launch_description():
         description='Whether to start the Gazebo GUI client (tắt mặc định vì hay crash trong Docker)')
 
     declare_robot_count_cmd = DeclareLaunchArgument(
-        'robot_count', default_value='3', choices=['1', '2', '3'],
-        description='Number of TurtleBot3 robots and independent Nav2 stacks')
+        'robot_count', default_value='3',
+        description='Number of TurtleBot3 robots and independent Nav2 stacks '
+                    '(at most the robots listed in config/robot_poses.yaml)')
 
     # Append GZ_SIM_RESOURCE_PATH - dùng AppendEnvironmentVariable như mẫu
     set_gz_resource_path = AppendEnvironmentVariable(
@@ -241,7 +249,7 @@ def generate_launch_description():
             os.path.join(launch_dir, 'rviz_launch.py')),
         condition=IfCondition(use_rviz),
         launch_arguments={
-            'namespace':     ROBOT_NAMES[0],
+            'namespace':     robots[0][0],
             'use_namespace': 'True',
             'rviz_config':   rviz_config_file,
             'use_sim_time':  use_sim_time,  
@@ -290,7 +298,8 @@ def generate_launch_description():
     ld.add_action(OpaqueFunction(
         function=spawn_robots,
         args=[os.path.join(tb3_gazebo_dir, 'models', 'turtlebot3_burger', 'model.sdf'),
-              robot_desc, os.path.join(launch_dir, 'bringup_launch.py'), robot_count],
+              robot_desc, os.path.join(launch_dir, 'bringup_launch.py'), robot_count,
+              robots, poses_file],
     ))
     ld.add_action(TimerAction(period=SPAWN_DELAY_OFFSET + 14.0, actions=[rviz_cmd]))
 

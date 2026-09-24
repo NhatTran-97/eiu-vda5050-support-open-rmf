@@ -1,0 +1,19 @@
+# Robots that tb3_simulation can spawn, in spawn order: robot_count:=N takes the
+# first N entries. Add entries to allow a larger robot_count.
+#
+# tb3_1..tb3_3 sit on charger_1..charger_3 of
+# vda5050_fleet_adapter_full_control/maps/nav_graph.yaml. The others stand in
+# free floor away from the nav graph lanes and are not on any charger.
+robots:
+  - {name: tb3_1,  x: 5.368279400762283,  y: -6.6542575498156475}
+  - {name: tb3_2,  x: 10.409564589926122, y: -9.541312836298289}
+  - {name: tb3_3,  x: 8.950955701737394,  y: -8.174082936277745}
+  - {name: tb3_4,  x: 9.25,  y: -10.5}
+  - {name: tb3_5,  x: 10.75, y: -11.25}
+  - {name: tb3_6,  x: 3.75,  y: -6.75}
+  - {name: tb3_7,  x: 3.0,   y: -8.25}
+  - {name: tb3_8,  x: 3.0,   y: -9.75}
+  - {name: tb3_9,  x: 2.75,  y: -5.5}
+  - {name: tb3_10, x: 3.0,   y: -11.25}
+  - {name: tb3_11, x: 2.0,   y: -7.0}
+  - {name: tb3_12, x: 18.75, y: -9.25}
