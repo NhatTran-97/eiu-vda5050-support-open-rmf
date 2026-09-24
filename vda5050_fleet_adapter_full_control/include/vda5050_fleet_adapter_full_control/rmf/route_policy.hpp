@@ -17,6 +17,13 @@ struct RoutePolicy
     double early_arrival_warn_s = 2.0;
     // Time a traffic hold may last before it becomes a cancellation.
     double traffic_pause_timeout_s = 10.0;
+    // Time after a command could not be sent before RMF is asked to replan.
+    double replan_after_s = 15.0;
+    // Delay RMF tolerates before interrupting a robot while waypoint timing is honored; zero means no limit.
+    double timed_release_max_delay_s = 0.0;
+    // Distances within which a robot counts as on a waypoint or on a lane when its position goes to RMF.
+    double merge_waypoint_m = 1e-3;
+    double merge_lane_m = 0.3;
 };
 
 }  // namespace vda5050_fleet_adapter_full_control::rmf

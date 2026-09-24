@@ -183,12 +183,18 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         connector->set_stale_state_streak(config.stale_state_streak());
         connector->set_cancel_policy(config.cancel_policy());
         connector->set_link_policy(config.link_policy());
+        connector->set_node_deviation(config.node_deviation());
         connector->start();
 
         const double nominal_speed = traits->linear().get_nominal_velocity();
 
+        // Position reports to RMF merge onto waypoints and lanes as the fleet's RMF settings say.
+        rmf::RoutePolicy route_policy = config.route_policy();
+        route_policy.merge_waypoint_m = fleet_config->default_max_merge_waypoint_distance();
+        route_policy.merge_lane_m = fleet_config->default_max_merge_lane_distance();
+
         RobotManager manager(logger, *connector, graph, adapter->node()->get_clock(),
-                             {nominal_speed, config.honor_waypoint_timing(), config.stitch_on_replan(), config.route_policy()});
+                             {nominal_speed, config.honor_waypoint_timing(), config.stitch_on_replan(), route_policy});
 
         // Robots declared in the fleet config file.
         std::set<std::pair<std::string, std::string>> seen_identities;
@@ -306,7 +312,8 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             const auto command = entry->command;
             hooks[entry->spec.name] = RobotHooks{[command]() { return command->pause(); }, [command]() { return command->resume(); }};
         }
-        OperatorInterface operator_interface(*adapter->node(), *connector, std::move(hooks));
+        OperatorInterface operator_interface(*adapter->node(), *connector, std::move(hooks),
+                                             std::chrono::duration<double>(config.init_position_timeout_s()));
 
         RegistrationInterface registration(*adapter->node(), *connector, manager, operator_interface,
                                            {fleet_name, config.interface_name(), runtime_path, limits, graph_facts,
@@ -373,8 +380,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             else
                             {
                                 RCLCPP_WARN_THROTTLE(logger, *adapter->node()->get_clock(), 10000,
-                                    "Robot '%s' is online but its state has no usable pose (agvPosition missing or " "positionInitialized false) -- not added to RMF yet",
-                                    name.c_str());
+                                    "Robot '%s' is online but its state has no usable pose (agvPosition missing or " "positionInitialized false) -- not added to RMF yet",name.c_str());
                             }
                             continue;
                         }
@@ -395,8 +401,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                             auto starts = rmf_traffic::agv::compute_plan_starts(*graph, data->map_name, position, rmf_traffic_ros2::convert(adapter->node()->now()));
                             if (starts.empty())
                             {
-                                RCLCPP_WARN_THROTTLE(logger, *adapter->node()->get_clock(), 10000,
-                                    "Robot '%s' at (%.2f, %.2f) on '%s' does not merge " "onto the nav graph -- cannot add it to RMF yet",
+                                RCLCPP_WARN_THROTTLE(logger, *adapter->node()->get_clock(), 10000, "Robot '%s' at (%.2f, %.2f) on '%s' does not merge " "onto the nav graph -- cannot add it to RMF yet",
                                     name.c_str(), position.x(), position.y(), data->map_name.c_str());
                                 continue;
                             }

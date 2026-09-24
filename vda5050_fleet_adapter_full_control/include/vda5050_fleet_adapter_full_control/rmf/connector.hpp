@@ -166,8 +166,11 @@ public:
                               const std::string &map_id,
                               std::optional<std::size_t> released_count = std::nullopt);
 
-    // Extend an active order with a larger released horizon and a new orderUpdateId.
-    CommandStatus release_more(const std::string &name, std::size_t released_count);
+    // Extend order `expected_order_id` with a larger released horizon; rejected when it is no longer the tracked order or cannot grow.
+    CommandStatus release_more(const std::string &name, const std::string &expected_order_id, std::size_t released_count);
+
+    // Whether the tracked order may still run on the AGV: sent and not yet reported finished.
+    bool order_in_progress(const std::string &name) const;
 
     // Set or clear the operator speed cap applied to subsequent route edges.
     bool set_speed_limit(const std::string &name, std::optional<double> limit);
@@ -206,6 +209,9 @@ public:
     // Time limits applied to each AGV: offline, stuck order and factsheet requests.
     void set_link_policy(const LinkPolicy &policy);
 
+    // How far an AGV may stop from each node of the orders it gets.
+    void set_node_deviation(const vda5050::NodeDeviation &deviation);
+
     // Send initPosition in the robot frame and return its action ID, or an empty string on failure.
     std::string init_position(const std::string &name, double x, double y, double theta, const std::string &map_id);
 
@@ -243,6 +249,8 @@ private:
         // Operator speed cap for subsequent orders.
         std::optional<double> operator_speed_limit;
         std::string current_order_id;
+        // The AGV reported current_order_id finished at its final node.
+        bool order_done = false;
         std::string target_node_id;
         // Actions associated with the tracked order.
         std::vector<std::string> order_action_ids;
@@ -291,6 +299,9 @@ private:
 
     // Subscribes to a robot's uplink topics.
     void subscribe_robot(const RobotContext &ctx);
+
+    // Offline limit for one AGV, longer than the configured one when its factsheet declares a slower state interval; the caller holds _mutex.
+    double state_timeout_for(const RobotContext &ctx) const;
 
     // The levels of an uplink topic "<interface>/v2/<manufacturer>/<serial>/<leaf>".
     struct TopicLevels
@@ -402,6 +413,7 @@ private:
     int _stale_state_streak = vda5050::StateSequence::kDefaultStreakLimit;
     vda5050::CancelPolicy _cancel_policy;
     LinkPolicy _link_policy;
+    vda5050::NodeDeviation _node_deviation;
     // Limits how often a problem that repeats with every message is logged.
     util::LogThrottle _repeat_log;
 

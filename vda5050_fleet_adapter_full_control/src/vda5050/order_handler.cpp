@@ -15,7 +15,8 @@ nlohmann::json build_route_order(
     const std::string &map_id,
     int order_update_id,
     std::optional<std::size_t> released_count,
-    std::size_t stitch_index)
+    std::size_t stitch_index,
+    const NodeDeviation &deviation)
 {
     if (order_id.empty())
     {
@@ -32,7 +33,7 @@ nlohmann::json build_route_order(
 
     if (first == 0)
     {
-        nodes.push_back(make_node(base_node_id, 0, base.x, base.y, base.theta, map_id));
+        nodes.push_back(make_node(base_node_id, 0, base.x, base.y, base.theta, map_id, true, deviation.xy_m, deviation.theta_rad));
     }
 
     std::string previous_node_id = base_node_id;
@@ -51,7 +52,8 @@ nlohmann::json build_route_order(
 
         if (i + 1 >= first)
         {
-            nodes.push_back(make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, map_id, released));
+            nodes.push_back(make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, map_id, released,
+                                      deviation.xy_m, deviation.theta_rad));
         }
 
         previous_node_id = wp.node_id;

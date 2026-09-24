@@ -11,6 +11,7 @@
 
 #include "vda5050_fleet_adapter_full_control/vda5050/message_builder.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/instant_action_handler.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/json_read.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/order_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/order_validation.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/route_stitch.hpp"
@@ -201,6 +202,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
     std::string manufacturer, serial, interface_name;
     std::vector<vda5050::RouteWaypoint> waypoints;
     vda5050::RobotPose base{};
+    vda5050::NodeDeviation deviation;
     int header_id = 0;
 
     {
@@ -211,6 +213,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
             RCLCPP_ERROR(_logger, "[VDA5050] navigate_route: unknown robot '%s'", name.c_str());
             return {};
         }
+        deviation = _node_deviation;
         RobotContext &ctx = *it->second;
 
         waypoints = to_waypoints(ctx, route, map_id);
@@ -238,7 +241,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
     }
 
     const auto order = vda5050::build_route_order(
-        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id, 0, released_count);
+        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id, 0, released_count, 0, deviation);
 
     const std::string order_topic = vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER);
     const CommandStatus status = publish_raw(order_topic, order.dump());
@@ -258,6 +261,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         {
             RobotContext &ctx = *it->second;
             ctx.current_order_id = order_id;
+            ctx.order_done = false;
             ctx.cancel.clear();
             // Track completion against the final route node.
             ctx.target_node_id = route.back().node_id;
@@ -369,6 +373,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
 
     std::string manufacturer, serial, interface_name, order_id, base_id, order_map;
     vda5050::RobotPose base{};
+    vda5050::NodeDeviation deviation;
     std::vector<vda5050::RouteWaypoint> combined;
     int header_id = 0;
     int update_id = 0;
@@ -442,6 +447,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         manufacturer = ctx.manufacturer;
         serial = ctx.serial;
         interface_name = ctx.interface_name;
+        deviation = _node_deviation;
 
         if (!unchanged)
         {
@@ -459,7 +465,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
     if (!unchanged)
     {
         const auto order = vda5050::build_route_order(header_id, order_id, manufacturer, serial, base_id, base,
-                                                      combined, order_map, update_id, new_released, stitch_index);
+                                                      combined, order_map, update_id, new_released, stitch_index, deviation);
         if (publish_raw(vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER),
                         order.dump()) == CommandStatus::transport_failed)
         {
@@ -476,6 +482,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         {
             RobotContext &ctx = *it->second;
             ctx.current_route = combined;
+            ctx.order_done = false;
             ctx.current_released_count = new_released;
             ctx.target_node_id = combined.back().node_id;
             ctx.route_offset = consumed;
@@ -492,13 +499,15 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
     return result;
 }
 
-CommandStatus Connector::release_more(const std::string &name, std::size_t released_count)
+CommandStatus Connector::release_more(const std::string &name, const std::string &expected_order_id,
+                                      std::size_t released_count)
 {
     const auto order_lock = lock_orders(name);
 
     std::string order_id, base_id, manufacturer, serial, interface_name, map_id;
     std::vector<vda5050::RouteWaypoint> waypoints;
     vda5050::RobotPose base{};
+    vda5050::NodeDeviation deviation;
     int header_id = 0;
     int order_update_id = 0;
     std::size_t clamped = 0;
@@ -510,16 +519,16 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
         if (it == _robots.end())
         {
             RCLCPP_ERROR(_logger, "[VDA5050] release_more: unknown robot '%s'", name.c_str());
-            return CommandStatus::transport_failed;
+            return CommandStatus::rejected;
         }
         RobotContext &ctx = *it->second;
 
         // RMF counts released points from the start of its current path.
         clamped = std::min(released_count + ctx.route_offset, ctx.current_route.size());
-        if (ctx.current_order_id.empty() || ctx.current_route.empty() ||   clamped <= ctx.current_released_count)
+        if (ctx.current_order_id.empty() || ctx.current_order_id != expected_order_id || ctx.current_route.empty() ||
+            clamped <= ctx.current_released_count)
         {
-            // Stop when the released horizon cannot grow.
-            return CommandStatus::transport_failed;
+            return CommandStatus::rejected;
         }
 
         order_id = ctx.current_order_id;
@@ -530,6 +539,7 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
         base_id = ctx.current_base_id;
         base = ctx.current_base;
         map_id = ctx.current_map_id;
+        deviation = _node_deviation;
         header_id = ctx.next_order_header();
         manufacturer = ctx.manufacturer;
         serial = ctx.serial;
@@ -537,7 +547,7 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
     }
 
     const auto order = vda5050::build_route_order(
-        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id,    order_update_id, clamped, stitch_index);
+        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id,    order_update_id, clamped, stitch_index, deviation);
 
     const std::string order_topic =    vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER);
     const CommandStatus status = publish_raw(order_topic, order.dump());
@@ -561,6 +571,13 @@ CommandStatus Connector::release_more(const std::string &name, std::size_t relea
     RCLCPP_INFO(_logger,    "[VDA5050] %s -> order '%s' update %d: released %zu/%zu route point(s), stitch at sequence %zu",
                 name.c_str(), order_id.c_str(), order_update_id, clamped, waypoints.size(), 2 * stitch_index);
     return status;
+}
+
+bool Connector::order_in_progress(const std::string &name) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _robots.find(name);
+    return it != _robots.end() && !it->second->current_order_id.empty() && !it->second->order_done;
 }
 
 bool Connector::set_speed_limit(const std::string &name, std::optional<double> limit)
@@ -824,6 +841,22 @@ void Connector::set_link_policy(const LinkPolicy &policy)
 {
     std::lock_guard<std::mutex> lock(_mutex);
     _link_policy = policy;
+}
+
+void Connector::set_node_deviation(const vda5050::NodeDeviation &deviation)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _node_deviation = deviation;
+}
+
+double Connector::state_timeout_for(const RobotContext &ctx) const
+{
+    double timeout = _link_policy.state_timeout_s;
+    if (ctx.factsheet.has_value() && ctx.factsheet->default_state_interval.has_value())
+    {
+        timeout = std::max(timeout, *ctx.factsheet->default_state_interval * _link_policy.offline_state_intervals);
+    }
+    return timeout;
 }
 
 void Connector::resolve_pending_cancel(const std::string &name)
@@ -1191,7 +1224,7 @@ nlohmann::json Connector::metrics()
                 age_max = age;
                 oldest = name;
             }
-            if (ctx->connected != false && age <= _link_policy.state_timeout_s)
+            if (ctx->connected != false && age <= state_timeout_for(*ctx))
             {
                 ++online;
             }
@@ -1318,6 +1351,12 @@ void Connector::update_state(RobotContext &ctx, const nlohmann::json &raw)
             if (!ctx.last_state->last_node_id.empty())
             {
                 ctx.last_node_id = ctx.last_state->last_node_id;
+            }
+            const auto &sequence = ctx.last_state->last_node_sequence_id;
+            if (!ctx.current_order_id.empty() && ctx.last_state->order_finished(ctx.current_order_id, ctx.target_node_id) &&
+                (!sequence.has_value() || *sequence == 2 * ctx.current_route.size()))
+            {
+                ctx.order_done = true;
             }
             report_state_changes(ctx, keys, log);
         }
@@ -1510,7 +1549,7 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
     else if (leaf == vda5050::TOPIC_CONNECTION)
     {
         _metrics.rx_connection.add();
-        const std::string conn = raw.value("connectionState", std::string{});
+        const std::string conn = vda5050::read_string(raw, "connectionState").value_or("");
         const bool online = (conn == "ONLINE");
         if (online)
         {
@@ -1562,6 +1601,12 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
 
         ctx->factsheet = std::move(fs);
         ctx->factsheet_requests = 0;
+        const double offline_after = state_timeout_for(*ctx);
+        if (offline_after > _link_policy.state_timeout_s)
+        {
+            RCLCPP_INFO(_logger, "[VDA5050] %s sends a state every %.1f s -- counts as offline after %.1f s without one",
+                        ctx->name.c_str(), *ctx->factsheet->default_state_interval, offline_after);
+        }
     }
 }
 
@@ -1784,7 +1829,7 @@ bool Connector::is_online(const std::string &name)
         return false;
     }
     const auto age = std::chrono::duration<double>( std::chrono::steady_clock::now() - ctx.last_state_time).count();
-    return age <= _link_policy.state_timeout_s;
+    return age <= state_timeout_for(ctx);
 }
 
 namespace {
@@ -1830,7 +1875,7 @@ void Connector::record_unregistered(const TopicLevels &levels, const nlohmann::j
     if (leaf == vda5050::TOPIC_CONNECTION)
     {
         robot.connection_seen = true;
-        robot.online = raw.value("connectionState", std::string{}) == "ONLINE";
+        robot.online = vda5050::read_string(raw, "connectionState").value_or("") == "ONLINE";
     }
     else if (leaf == vda5050::TOPIC_FACTSHEET)
     {
@@ -1843,15 +1888,14 @@ void Connector::record_unregistered(const TopicLevels &levels, const nlohmann::j
     else if (raw.contains("agvPosition") && raw["agvPosition"].is_object())
     {
         const auto &pos = raw["agvPosition"];
-        const auto number = [&pos](const char *key) {
-            return pos.contains(key) && pos[key].is_number() ? pos[key].get<double>() : 0.0;
-        };
-        robot.has_state = pos.contains("x") && pos["x"].is_number() && pos.contains("y") && pos["y"].is_number();
-        robot.pose_initialized = pos.value("positionInitialized", false);
-        robot.x = number("x");
-        robot.y = number("y");
-        robot.theta = number("theta");
-        robot.map_id = pos.value("mapId", std::string{});
+        const auto x = vda5050::read_number(pos, "x");
+        const auto y = vda5050::read_number(pos, "y");
+        robot.has_state = x.has_value() && y.has_value();
+        robot.pose_initialized = vda5050::read_bool(pos, "positionInitialized").value_or(false);
+        robot.x = x.value_or(0.0);
+        robot.y = y.value_or(0.0);
+        robot.theta = vda5050::read_number(pos, "theta").value_or(0.0);
+        robot.map_id = vda5050::read_string(pos, "mapId").value_or("");
     }
 }
 

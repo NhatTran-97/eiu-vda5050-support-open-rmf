@@ -8,6 +8,8 @@ struct LinkPolicy
 {
     // Time without a state message after which an AGV counts as offline.
     double state_timeout_s = 10.0;
+    // State intervals an AGV declares in its factsheet that may pass without a state, when longer than state_timeout_s.
+    double offline_state_intervals = 2.0;
     // Time an order may stay unacknowledged by the AGV before it counts as stuck.
     double order_stuck_timeout_s = 15.0;
     // Wait for the retained factsheet before the first request, and between further requests.

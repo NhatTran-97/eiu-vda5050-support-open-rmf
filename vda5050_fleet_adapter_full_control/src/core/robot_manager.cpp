@@ -31,18 +31,12 @@ std::shared_ptr<RobotManager::Entry> RobotManager::add(const RobotSpec &spec)
         }
         else
         {
-            RCLCPP_ERROR(_logger,
-                         "Robot '%s': charger waypoint '%s' not found in the nav graph -- it will use whatever "
-                         "charger RMF finds nearest",
-                         spec.name.c_str(), spec.charger.c_str());
+            RCLCPP_ERROR(_logger,"Robot '%s': charger waypoint '%s' not found in the nav graph -- it will use whatever " "charger RMF finds nearest", spec.name.c_str(), spec.charger.c_str());
         }
     }
 
-    _connector.add_robot(spec.name, spec.manufacturer, spec.serial,
-                         rmf::Transform(spec.rotation, spec.scale, spec.tx, spec.ty));
-    entry->command = std::make_shared<rmf::VdaRobotCommandHandle>(
-        _logger, spec.name, _connector, _graph, _options.nominal_speed, _clock, _options.honor_waypoint_timing,
-        _options.stitch_on_replan, _options.route_policy);
+    _connector.add_robot(spec.name, spec.manufacturer, spec.serial, rmf::Transform(spec.rotation, spec.scale, spec.tx, spec.ty));
+    entry->command = std::make_shared<rmf::VdaRobotCommandHandle>( _logger, spec.name, _connector, _graph, _options.nominal_speed, _clock, _options.honor_waypoint_timing, _options.stitch_on_replan, _options.route_policy);
 
     std::lock_guard<std::mutex> lock(_mutex);
     _entries.push_back(entry);
@@ -78,12 +72,7 @@ bool RobotManager::retire(const std::string &name, std::string *error)
     }
 
     // RMF has no call to drop a robot, so it stays decommissioned until the adapter restarts.
-    entry->command->set_ready_for_orders(false, "removed by the operator");
-    // Nothing manages the robot from here on, so it must not carry on with an order.
-    if (_connector.stop(name) == rmf::CommandStatus::transport_failed)
-    {
-        RCLCPP_WARN(_logger, "Robot '%s': cancelOrder did not reach the AGV; it may finish its last order", name.c_str());
-    }
+    entry->command->retire();
     RCLCPP_WARN(_logger, "Robot '%s' removed: decommissioned and no longer tracked", name.c_str());
     return true;
 }
@@ -97,6 +86,7 @@ std::shared_ptr<RobotManager::Entry> RobotManager::find_removed(const RobotSpec 
 void RobotManager::reinstate(const std::shared_ptr<Entry> &entry)
 {
     entry->retired = false;
+    entry->command->restore();
     RCLCPP_INFO(_logger, "Robot '%s' restored to the fleet", entry->spec.name.c_str());
 }
 
@@ -109,8 +99,7 @@ std::vector<std::shared_ptr<RobotManager::Entry>> RobotManager::snapshot() const
 std::shared_ptr<RobotManager::Entry> RobotManager::find(const std::string &name) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
-    const auto it = std::find_if(_entries.begin(), _entries.end(),
-                                 [&](const std::shared_ptr<Entry> &e) { return e->spec.name == name; });
+    const auto it = std::find_if(_entries.begin(), _entries.end(),[&](const std::shared_ptr<Entry> &e) { return e->spec.name == name; });
     return it == _entries.end() ? nullptr : *it;
 }
 

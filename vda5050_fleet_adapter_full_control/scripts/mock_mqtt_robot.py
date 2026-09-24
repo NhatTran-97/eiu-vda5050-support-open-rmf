@@ -31,6 +31,7 @@ class MockRobot:
         self.node_states = []
         self.edge_states = []
         self.action_states = []
+        self.errors = []
         self.header = 0
 
         # Full route arrays, including points still in the horizon.
@@ -150,7 +151,7 @@ class MockRobot:
                     "x": self.x, "y": self.y, "theta": self.theta,
                     "mapId": self.map_id, "positionInitialized": not self.args.pose_uninitialized,
                 },
-                "errors": [], "information": [],
+                "errors": list(self.errors), "information": [],
                 "safetyState": {"eStop": "NONE", "fieldViolation": False},
             }
         self.client.publish(f"{self.base}/state", json.dumps(msg), qos=1)
@@ -167,6 +168,18 @@ class MockRobot:
 
         with self.cond:
             is_update = bool(order_id) and order_id == self.order_id
+            busy = bool(self.node_states or self.edge_states)
+            if self.args.strict and not is_update and busy:
+                self.errors.append(self._error("orderError", "a new order arrived while order "
+                                               f"{self.order_id} is still active", order_id))
+            elif not is_update:
+                self.errors = []
+        if self.args.strict and not is_update and busy:
+            self.publish_state()
+            print(f"[mock] order {order_id[:8]} rejected -- order {self.order_id[:8]} still active", flush=True)
+            return
+
+        with self.cond:
             if is_update:
                 if update_id <= self.order_update_id:
                     return  # Ignore stale order updates
@@ -201,6 +214,11 @@ class MockRobot:
 
         self._drive_thread = threading.Thread(target=self._drive_route, daemon=True)
         self._drive_thread.start()
+
+    @staticmethod
+    def _error(error_type: str, description: str, order_id: str) -> dict:
+        return {"errorType": error_type, "errorLevel": "WARNING", "errorDescription": description,
+                "errorReferences": [{"referenceKey": "orderId", "referenceValue": order_id}]}
 
     @staticmethod
     def _merge(current: list, update: list, key: str) -> list:
@@ -373,13 +391,25 @@ class MockRobot:
                 self.publish_state()
                 print("[mock] stopPause -- carrying on", flush=True)
             elif kind == "cancelOrder":
+                with self.lock:
+                    active = bool(self.node_states or self.edge_states)
+                if self.args.strict and not active:
+                    with self.lock:
+                        self.errors.append(self._error("noOrderToCancel", "cancelOrder without an active order",
+                                                       self.order_id))
+                        self.action_states.append({"actionId": aid, "actionType": kind, "actionStatus": "FAILED"})
+                    self.publish_state()
+                    print("[mock] cancelOrder refused -- no active order", flush=True)
+                    continue
                 self._cancel.set()
                 with self.lock:
                     self.driving = False
                     self.new_base_request = False
                     self.node_states = []
                     self.edge_states = []
-                    self.order_id = ""
+                    # VDA5050 keeps the orderId of a cancelled order.
+                    if not self.args.strict:
+                        self.order_id = ""
                     self.action_states.append(
                         {"actionId": aid, "actionType": kind,
                          "actionStatus": "FINISHED"})
@@ -425,6 +455,9 @@ def main():
                    help="report positionInitialized=false")
     p.add_argument("--no-factsheet", action="store_true",
                    help="publish no factsheet and ignore factsheetRequest")
+    p.add_argument("--strict", action="store_true",
+                   help="follow VDA5050 strictly: refuse a new orderId while an order is active, "
+                        "keep the orderId after cancelOrder, refuse cancelOrder without an order")
     p.add_argument("--series", default="TurtleBot3 Burger", help="factsheet typeSpecification.seriesName")
     p.add_argument("--kinematic", default="DIFF", help="factsheet typeSpecification.agvKinematic")
     p.add_argument("--agv-class", default="CARRIER", help="factsheet typeSpecification.agvClass")

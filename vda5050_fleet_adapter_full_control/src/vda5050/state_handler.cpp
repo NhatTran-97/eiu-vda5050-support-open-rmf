@@ -2,47 +2,36 @@
 
 #include <cmath>
 #include <cstdint>
-#include <limits>
+
+#include "vda5050_fleet_adapter_full_control/vda5050/json_read.hpp"
 
 namespace vda5050_fleet_adapter_full_control::vda5050 {
 
 namespace {
 
-template <typename T>
-std::optional<T> get_opt(const nlohmann::json &j, const char *key)
+// The object at `key`, or null when it is absent or not an object.
+const nlohmann::json *object_at(const nlohmann::json &raw, const char *key)
 {
-    if (j.contains(key) && !j.at(key).is_null())
+    if (!raw.is_object())
     {
-        return j.at(key).get<T>();
+        return nullptr;
     }
-    return std::nullopt;
-}
-
-std::vector<nlohmann::json> get_array(const nlohmann::json &j, const char *key)
-{
-    std::vector<nlohmann::json> out;
-    if (j.contains(key) && j.at(key).is_array())
-    {
-        for (const auto &e : j.at(key))
-        {
-            out.push_back(e);
-        }
-    }
-    return out;
+    const auto it = raw.find(key);
+    return it != raw.end() && it->is_object() ? &*it : nullptr;
 }
 
 // Parse the velocity vector shared by state and visualization messages.
 std::optional<Velocity> parse_velocity(const nlohmann::json &raw)
 {
-    if (!raw.contains("velocity") || !raw["velocity"].is_object())
+    const auto *v = object_at(raw, "velocity");
+    if (!v)
     {
         return std::nullopt;
     }
-    const auto &v = raw["velocity"];
     Velocity parsed;
-    parsed.vx = v.value("vx", 0.0);
-    parsed.vy = v.value("vy", 0.0);
-    parsed.omega = v.value("omega", 0.0);
+    parsed.vx = read_number(*v, "vx").value_or(0.0);
+    parsed.vy = read_number(*v, "vy").value_or(0.0);
+    parsed.omega = read_number(*v, "omega").value_or(0.0);
     return parsed;
 }
 
@@ -142,69 +131,58 @@ bool SafetyState::triggered() const
     return field_violation || (!e_stop.empty() && e_stop != "NONE");
 }
 
-ParsedState::ParsedState(const nlohmann::json &raw)
+ParsedState::ParsedState(const nlohmann::json &raw) : header_id(read_uint32(raw, "headerId"))
 {
-    if (raw.contains("headerId") && raw["headerId"].is_number_integer())
+    if (const auto stamp = read_string(raw, "timestamp"))
     {
-        const auto id = raw["headerId"].get<std::int64_t>();
-        if (id >= 0 && id <= static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max()))
-        {
-            header_id = static_cast<std::uint32_t>(id);
-        }
-    }
-    if (raw.contains("timestamp") && raw["timestamp"].is_string())
-    {
-        timestamp_ms = parse_timestamp_ms(raw["timestamp"].get<std::string>());
+        timestamp_ms = parse_timestamp_ms(*stamp);
     }
 
-    if (raw.contains("agvPosition") && raw["agvPosition"].is_object())
+    if (const auto *pos = object_at(raw, "agvPosition"))
     {
-        const auto &pos = raw["agvPosition"];
-        x = get_opt<double>(pos, "x");
-        y = get_opt<double>(pos, "y");
-        theta = get_opt<double>(pos, "theta");
-        map_id = pos.value("mapId", std::string{});
-        position_initialized = pos.value("positionInitialized", false);
-        localization_score = get_opt<double>(pos, "localizationScore");
+        x = read_number(*pos, "x");
+        y = read_number(*pos, "y");
+        theta = read_number(*pos, "theta");
+        map_id = read_string(*pos, "mapId").value_or("");
+        position_initialized = read_bool(*pos, "positionInitialized").value_or(false);
+        localization_score = read_number(*pos, "localizationScore");
     }
 
-    if (raw.contains("batteryState") && raw["batteryState"].is_object())
+    if (const auto *battery = object_at(raw, "batteryState"))
     {
-        const auto &battery = raw["batteryState"];
-        if (const auto charge = get_opt<double>(battery, "batteryCharge"))
+        if (const auto charge = read_number(*battery, "batteryCharge"))
         {
             battery_soc = *charge / 100.0;
         }
-        charging = battery.value("charging", false);
+        charging = read_bool(*battery, "charging").value_or(false);
     }
 
     velocity = parse_velocity(raw);
 
-    if (raw.contains("safetyState") && raw["safetyState"].is_object())
+    if (const auto *s = object_at(raw, "safetyState"))
     {
-        const auto &s = raw["safetyState"];
-        safety_state.e_stop = s.value("eStop", std::string{"NONE"});
-        safety_state.field_violation = s.value("fieldViolation", false);
+        safety_state.e_stop = read_string(*s, "eStop").value_or("NONE");
+        safety_state.field_violation = read_bool(*s, "fieldViolation").value_or(false);
     }
 
-    order_id = raw.value("orderId", std::string{});
-    order_update_id = get_opt<std::uint32_t>(raw, "orderUpdateId");
-    zone_set_id = raw.value("zoneSetId", std::string{});
-    last_node_id = raw.value("lastNodeId", std::string{});
-    last_node_sequence_id = get_opt<std::uint32_t>(raw, "lastNodeSequenceId");
-    driving = raw.value("driving", false);
-    paused = raw.value("paused", false);
-    new_base_request = raw.value("newBaseRequest", false);
-    distance_since_last_node = get_opt<double>(raw, "distanceSinceLastNode");
-    operating_mode = raw.value("operatingMode", std::string{"AUTOMATIC"});
+    order_id = read_string(raw, "orderId").value_or("");
+    order_update_id = read_uint32(raw, "orderUpdateId");
+    zone_set_id = read_string(raw, "zoneSetId").value_or("");
+    last_node_id = read_string(raw, "lastNodeId").value_or("");
+    last_node_sequence_id = read_uint32(raw, "lastNodeSequenceId");
+    driving = read_bool(raw, "driving").value_or(false);
+    paused = read_bool(raw, "paused").value_or(false);
+    new_base_request = read_bool(raw, "newBaseRequest").value_or(false);
+    distance_since_last_node = read_number(raw, "distanceSinceLastNode");
+    operating_mode = read_string(raw, "operatingMode").value_or("AUTOMATIC");
 
-    node_states = get_array(raw, "nodeStates");
-    edge_states = get_array(raw, "edgeStates");
-    action_states = get_array(raw, "actionStates");
-    errors = get_array(raw, "errors");
-    information = get_array(raw, "information");
-    loads = get_array(raw, "loads");
-    maps = get_array(raw, "maps");
+    node_states = read_objects(raw, "nodeStates", {"nodeId"});
+    edge_states = read_objects(raw, "edgeStates", {"edgeId"});
+    action_states = read_objects(raw, "actionStates", {"actionId", "actionType", "actionStatus", "resultDescription"});
+    errors = read_objects(raw, "errors", {"errorType", "errorLevel", "errorDescription"});
+    information = read_objects(raw, "information", {"infoType", "infoLevel", "infoDescription"});
+    loads = read_objects(raw, "loads", {"loadId", "loadType"});
+    maps = read_objects(raw, "maps", {"mapId", "mapVersion", "mapStatus"});
 }
 
 bool ParsedState::has_position() const
@@ -273,14 +251,13 @@ bool ParsedState::order_finished(const std::string &expected_order_id,
 
 ParsedVisualization::ParsedVisualization(const nlohmann::json &raw)
 {
-    if (raw.contains("agvPosition") && raw["agvPosition"].is_object())
+    if (const auto *pos = object_at(raw, "agvPosition"))
     {
-        const auto &pos = raw["agvPosition"];
-        x = get_opt<double>(pos, "x");
-        y = get_opt<double>(pos, "y");
-        theta = get_opt<double>(pos, "theta");
-        map_id = pos.value("mapId", std::string{});
-        position_initialized = pos.value("positionInitialized", false);
+        x = read_number(*pos, "x");
+        y = read_number(*pos, "y");
+        theta = read_number(*pos, "theta");
+        map_id = read_string(*pos, "mapId").value_or("");
+        position_initialized = read_bool(*pos, "positionInitialized").value_or(false);
     }
     velocity = parse_velocity(raw);
 }

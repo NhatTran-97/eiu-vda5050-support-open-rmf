@@ -194,7 +194,9 @@ Config::Config(const std::string &config_file)
         }
     };
     read_number("state_timeout_s", _link_policy.state_timeout_s, 1.0, 3600.0);
+    read_number("offline_state_intervals", _link_policy.offline_state_intervals, 1.0, 100.0);
     read_number("order_stuck_timeout_s", _link_policy.order_stuck_timeout_s, 1.0, 3600.0);
+    _route_policy.replan_after_s = _link_policy.order_stuck_timeout_s;
     read_number("factsheet_first_wait_s", _link_policy.factsheet_first_wait_s, 0.0, 3600.0);
     read_number("factsheet_retry_wait_s", _link_policy.factsheet_retry_wait_s, 1.0, 3600.0);
     if (const auto attempts = optional_whole(vda, "factsheet_request_attempts", "vda5050", 0, 10))
@@ -207,6 +209,10 @@ Config::Config(const std::string &config_file)
     read_number("usable_speed_mps", _route_policy.usable_speed_mps, 0.0, 1.0);
     read_number("early_arrival_warn_s", _route_policy.early_arrival_warn_s, 0.0, 3600.0);
     read_number("traffic_pause_timeout_s", _route_policy.traffic_pause_timeout_s, 0.0, 3600.0);
+    read_number("timed_release_max_delay_s", _route_policy.timed_release_max_delay_s, 0.0, 3600.0);
+    read_number("node_deviation_xy_m", _node_deviation.xy_m, 0.01, 100.0);
+    read_number("node_deviation_theta_rad", _node_deviation.theta_rad, 0.001, 3.1416);
+    read_number("init_position_timeout_s", _init_position_timeout_s, 1.0, 600.0);
     read_number("metrics_period_s", _metrics_period_s, 0.0, 3600.0);
 
     const YAML::Node registration_node = vda["registration"];

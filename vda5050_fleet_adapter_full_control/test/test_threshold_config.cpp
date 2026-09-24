@@ -56,6 +56,12 @@ TEST(ThresholdConfigTest, DefaultsApplyWhenTheKeysAreAbsent)
     EXPECT_DOUBLE_EQ(config.route_policy().early_arrival_warn_s, route.early_arrival_warn_s);
     EXPECT_DOUBLE_EQ(config.route_policy().traffic_pause_timeout_s, route.traffic_pause_timeout_s);
     EXPECT_DOUBLE_EQ(config.registration().timeout_s, RegistrationConfig{}.timeout_s);
+    EXPECT_DOUBLE_EQ(config.link_policy().offline_state_intervals, link.offline_state_intervals);
+    EXPECT_DOUBLE_EQ(config.route_policy().timed_release_max_delay_s, route.timed_release_max_delay_s);
+    EXPECT_DOUBLE_EQ(config.route_policy().replan_after_s, link.order_stuck_timeout_s);
+    EXPECT_DOUBLE_EQ(config.node_deviation().xy_m, 0.5);
+    EXPECT_DOUBLE_EQ(config.node_deviation().theta_rad, 3.14);
+    EXPECT_DOUBLE_EQ(config.init_position_timeout_s(), 10.0);
 }
 
 TEST(ThresholdConfigTest, ThePolicyDefaultsAreTheValuesTheAdapterAlwaysUsed)
@@ -73,6 +79,8 @@ TEST(ThresholdConfigTest, ThePolicyDefaultsAreTheValuesTheAdapterAlwaysUsed)
     EXPECT_DOUBLE_EQ(route.usable_speed_mps, 0.05);
     EXPECT_DOUBLE_EQ(route.early_arrival_warn_s, 2.0);
     EXPECT_DOUBLE_EQ(route.traffic_pause_timeout_s, 10.0);
+    EXPECT_DOUBLE_EQ(route.timed_release_max_delay_s, 0.0);
+    EXPECT_DOUBLE_EQ(link.offline_state_intervals, 2.0);
     EXPECT_DOUBLE_EQ(RegistrationConfig{}.timeout_s, 30.0);
 }
 
@@ -82,6 +90,8 @@ TEST(ThresholdConfigTest, EveryKeyIsRead)
         "  state_timeout_s: 20\n  order_stuck_timeout_s: 30.5\n  factsheet_first_wait_s: 1\n  factsheet_retry_wait_s: 2\n"
         "  factsheet_request_attempts: 7\n  waypoint_reached_m: 0.25\n  same_pose_m: 0.02\n  same_pose_rad: 0.1\n"
         "  usable_speed_mps: 0.08\n  early_arrival_warn_s: 4\n  traffic_pause_timeout_s: 12\n"
+        "  offline_state_intervals: 3\n  timed_release_max_delay_s: 25\n  node_deviation_xy_m: 0.3\n"
+        "  node_deviation_theta_rad: 0.5\n  init_position_timeout_s: 20\n"
         "  registration:\n    timeout_s: 45\n"));
     EXPECT_DOUBLE_EQ(config.link_policy().state_timeout_s, 20.0);
     EXPECT_DOUBLE_EQ(config.link_policy().order_stuck_timeout_s, 30.5);
@@ -95,6 +105,12 @@ TEST(ThresholdConfigTest, EveryKeyIsRead)
     EXPECT_DOUBLE_EQ(config.route_policy().early_arrival_warn_s, 4.0);
     EXPECT_DOUBLE_EQ(config.route_policy().traffic_pause_timeout_s, 12.0);
     EXPECT_DOUBLE_EQ(config.registration().timeout_s, 45.0);
+    EXPECT_DOUBLE_EQ(config.link_policy().offline_state_intervals, 3.0);
+    EXPECT_DOUBLE_EQ(config.route_policy().timed_release_max_delay_s, 25.0);
+    EXPECT_DOUBLE_EQ(config.route_policy().replan_after_s, 30.5);
+    EXPECT_DOUBLE_EQ(config.node_deviation().xy_m, 0.3);
+    EXPECT_DOUBLE_EQ(config.node_deviation().theta_rad, 0.5);
+    EXPECT_DOUBLE_EQ(config.init_position_timeout_s(), 20.0);
 }
 
 TEST(ThresholdConfigTest, ANullValueKeepsTheDefault)
@@ -117,6 +133,10 @@ TEST(ThresholdConfigTest, ValuesOutOfRangeAreRejectedAtStartup)
         "usable_speed_mps: -0.1",        "usable_speed_mps: 2",
         "early_arrival_warn_s: -1",      "traffic_pause_timeout_s: -1", "traffic_pause_timeout_s: 3601",
         "waypoint_reached_m: .nan",      "state_timeout_s: .inf",
+        "offline_state_intervals: 0.5",  "offline_state_intervals: 101",
+        "timed_release_max_delay_s: -1", "timed_release_max_delay_s: 3601",
+        "node_deviation_xy_m: 0",        "node_deviation_theta_rad: 0", "node_deviation_theta_rad: 4",
+        "init_position_timeout_s: 0",    "init_position_timeout_s: 601",
     };
     for (const auto &line : bad)
     {

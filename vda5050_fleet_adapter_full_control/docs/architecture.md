@@ -145,13 +145,25 @@ for the replan.
 ### Traffic hold
 
 An RMF `stop` does not cancel the order: `startPause` is sent and a
-10 s deadline starts. A new path before the deadline is stitched onto the
-order or replaces it, followed by `stopPause`. Without one, `cancelOrder`
-is sent and the AGV is unpaused, unless the operator paused it. A repeated
-`stop` keeps the first deadline. The deadline is also checked for a robot
-without a valid pose, and no order goes out to such a robot; RMF keeps
-replanning until it localizes. A pause from this hold does not decommission
-the robot.
+10 s deadline starts, as long as `Connector::order_in_progress` says an order
+may still run on the AGV (sent and not reported finished at its final node);
+otherwise the stop sends nothing. A new path before the deadline is stitched
+onto the order, or the order is cancelled and a new one sent, followed by
+`stopPause`. Without one, `cancelOrder` is sent and the AGV is unpaused. The
+hold moves `none -> held -> releasing -> none`: it stays `held` when the new
+order could not be sent, so the deadline still ends it, and `releasing`
+retries `stopPause` until it is sent. The operator's pause outlasts the hold;
+an operator resume during it leaves the AGV held until the new path. A
+repeated `stop` keeps the first deadline. The deadline is also checked for a
+robot without a valid pose, and no order goes out to such a robot; a new path
+for it cancels the order it replaces, and RMF is asked to replan after
+`order_stuck_timeout_s`. A pause from this hold does not decommission the robot.
+
+`follow_new_path`, `stop`, the hold expiry, `retire` and `restore` run one at a
+time per robot (`_command_mutex`); the update loop only tries that lock, so it
+never waits on an RMF command. Horizon releases are sent under the command
+handle's state lock and name the order they extend, so a release computed for
+a replaced order is refused.
 
 ### Factsheet and validation
 
@@ -297,7 +309,8 @@ The keys below apply to either file.
 | `vda5050.cancel_attempts` | 3 | Times a `cancelOrder` may be sent for one order, counting the first (1–10) |
 | `vda5050.stale_state_streak` | 3 | Consecutive stale state messages dropped before the sender counts as restarted (0–100); 0 keeps every message |
 | `vda5050.state_timeout_s` | 10 | Seconds without a state message after which an AGV counts as offline (1–3600) |
-| `vda5050.order_stuck_timeout_s` | 15 | Seconds an order may stay unacknowledged by the AGV before RMF is asked to replan (1–3600) |
+| `vda5050.offline_state_intervals` | 2 | State intervals an AGV declares in its factsheet (`defaultStateInterval`) that may pass without a state before it counts as offline, when that is longer than `state_timeout_s` (1–100) |
+| `vda5050.order_stuck_timeout_s` | 15 | Seconds an order may stay unacknowledged by the AGV, or a command unsent, before RMF is asked to replan (1–3600) |
 | `vda5050.traffic_pause_timeout_s` | 10 | Seconds a traffic hold (`startPause`) may last before the order is cancelled (0–3600) |
 | `vda5050.factsheet_first_wait_s` / `factsheet_retry_wait_s` | 5 / 20 | Seconds to wait for the retained factsheet before the first `factsheetRequest`, and between further requests (0–3600 / 1–3600) |
 | `vda5050.factsheet_request_attempts` | 3 | `factsheetRequest`s sent to one AGV before giving up (0–10); 0 turns the requests off |
@@ -306,6 +319,10 @@ The keys below apply to either file.
 | `vda5050.usable_speed_mps` | 0.05 | Measured speeds below this are replaced by the fleet's nominal speed in arrival estimates (0–1) |
 | `vda5050.metrics_period_s` | 60 | Seconds between metrics reports, a log line plus a JSON message on `~/metrics` (0–3600); 0 turns them off |
 | `vda5050.early_arrival_warn_s` | 2 | Seconds ahead of RMF's plan beyond which an early arrival is logged (0–3600) |
+| `vda5050.timed_release_max_delay_s` | 0 | Delay RMF tolerates before interrupting a robot while `honor_waypoint_timing` is on (0–3600); 0 means no limit |
+| `vda5050.node_deviation_xy_m` / `node_deviation_theta_rad` | 0.5 / 3.14 | `allowedDeviationXY` / `allowedDeviationTheta` of every order node (0.01–100 / 0.001–3.1416) |
+| `vda5050.init_position_timeout_s` | 10 | Seconds to wait for an AGV's verdict on an `initPosition` (1–600) |
+| `rmf_fleet.max_merge_waypoint_distance` / `max_merge_lane_distance` | 0.001 / 0.3 | RMF fleet settings; how close a robot on a path must be to a waypoint or lane for its position to go to RMF with it |
 | `vda5050.registration.discovery_grace_s` | 8 | Wait after startup before unknown robots are reported |
 | `vda5050.registration.discovery_period_s` | 2 | Seconds between checks of the broker and of the registry |
 | `vda5050.registration.timeout_s` | 30 | Seconds RMF may take to complete a robot's registration before it is tried again (1–600) |

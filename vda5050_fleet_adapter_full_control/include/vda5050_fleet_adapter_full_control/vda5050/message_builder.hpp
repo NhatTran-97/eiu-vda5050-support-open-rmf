@@ -31,9 +31,8 @@ std::string topic(const std::string &interface_name,
 // Serialize caller-validated VDA5050 fields into a message envelope.
 nlohmann::json make_node(const std::string &node_id, int sequence_id,
                         double x, double y, double theta,
-                        const std::string &map_id, bool released = true,
-                        double allowed_deviation_xy = 0.5,
-                        double allowed_deviation_theta = 3.14);
+                        const std::string &map_id, bool released,
+                        double allowed_deviation_xy, double allowed_deviation_theta);
 
 nlohmann::json make_edge(const std::string &edge_id, int sequence_id,
                         const std::string &start_node_id, const std::string &end_node_id,

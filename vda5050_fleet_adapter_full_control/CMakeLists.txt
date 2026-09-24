@@ -48,6 +48,7 @@ add_library(${PROJECT_NAME}_core SHARED
   src/vda5050/factsheet_handler.cpp
   src/vda5050/order_handler.cpp
   src/vda5050/order_validation.cpp
+  src/vda5050/json_read.cpp
   src/vda5050/route_stitch.cpp
   src/vda5050/state_sequence.cpp
   src/vda5050/cancel_tracker.cpp
@@ -57,6 +58,7 @@ add_library(${PROJECT_NAME}_core SHARED
   src/vda5050/instant_action_handler.cpp
   src/rmf/connector.cpp
   src/rmf/robot_command_handle.cpp
+  src/rmf/position_update.cpp
   src/core/config.cpp
   src/core/metrics_report.cpp
   src/core/operator_interface.cpp
@@ -155,6 +157,19 @@ if(BUILD_TESTING)
   target_link_libraries(test_mqtt_config ${PROJECT_NAME}_core)
   ament_add_gtest(test_threshold_config test/test_threshold_config.cpp)
   target_link_libraries(test_threshold_config ${PROJECT_NAME}_core)
+
+  ament_add_gtest(test_input_robustness test/test_input_robustness.cpp)
+  target_link_libraries(test_input_robustness ${PROJECT_NAME}_core)
+  ament_add_gtest(test_position_update test/test_position_update.cpp)
+  target_link_libraries(test_position_update ${PROJECT_NAME}_core)
+  ament_add_gtest(test_order_invariants test/test_order_invariants.cpp)
+  target_link_libraries(test_order_invariants ${PROJECT_NAME}_core)
+  # Needs VDA5050_TEST_BROKER (and VDA5050_TEST_MOSQUITTO for the reconnect test); skips without it.
+  ament_add_gtest(test_command_handle_broker test/test_command_handle_broker.cpp)
+  target_link_libraries(test_command_handle_broker ${PROJECT_NAME}_core)
+  # Benchmarks: built with the tests, run by hand.
+  ament_add_gtest_executable(test_performance test/test_performance.cpp)
+  target_link_libraries(test_performance ${PROJECT_NAME}_core)
 
   # Load-test probe: not a test; built with them and run by tools/load_test/load_run.py.
   add_executable(load_probe tools/load_test/load_probe.cpp)

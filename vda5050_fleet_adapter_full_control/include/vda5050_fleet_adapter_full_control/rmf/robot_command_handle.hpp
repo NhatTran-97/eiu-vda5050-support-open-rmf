@@ -17,6 +17,7 @@
 #include <rmf_traffic/agv/Planner.hpp>
 
 #include "vda5050_fleet_adapter_full_control/rmf/connector.hpp"
+#include "vda5050_fleet_adapter_full_control/rmf/position_update.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/route_policy.hpp"
 
 namespace vda5050_fleet_adapter_full_control::rmf {
@@ -58,8 +59,14 @@ public:
     // Update readiness when no usable pose is available to the regular update loop.
     void set_ready_for_orders(bool ready, const std::string &reason = "");
 
-    // Cancels the order and releases the pause when a traffic hold got no replacement path in time.
+    // Ends a traffic hold that got no new path in time: cancels the held order and releases the pause, retrying a stopPause that failed.
     void expire_traffic_hold();
+
+    // Stops managing the robot: drops its command, cancels its order and decommissions it.
+    void retire();
+
+    // Manages a retired robot again and asks RMF for a new plan.
+    void restore();
 
     // Pause the AGV without clearing its order; return an error string on failure.
     std::string pause();
@@ -87,6 +94,8 @@ private:
         std::size_t released_count = 0;
         // Route points passed before this path began.
         std::size_t seq_offset = 0;
+        // RMF's waypoint index and approach lanes for each route point.
+        std::vector<RouteTarget> targets;
         // Whether this path has already requested a replan for a stuck order.
         bool replan_requested = false;
         ArrivalEstimator arrival_estimator;
@@ -105,8 +114,20 @@ private:
     // Applies the current commission decision to RMF when it changes.
     void apply_commission();
 
-    // Unpauses the AGV after a traffic hold ends, unless the operator paused it.
+    // Sends stopPause after a traffic hold unless the operator paused the AGV, and moves the hold on accordingly.
     void release_traffic_hold();
+
+    // Moves a traffic hold to its release once the robot has a new order, and releases it.
+    void end_traffic_hold();
+
+    // Asks RMF for a new plan after replan_after_s, for a command that could not be sent.
+    void schedule_replan();
+
+    // Reports the position to RMF with the waypoint or lanes of the active path when the robot is on them.
+    void report_position(RobotUpdateHandle &handle, const RobotData &data);
+
+    // RMF's delay limit while waypoint timing is honored.
+    rmf_utils::optional<rmf_traffic::Duration> timed_release_delay_limit() const;
 
     rclcpp::Logger _logger;
     std::string _name;
@@ -118,7 +139,9 @@ private:
     bool _stitch_on_replan;
     RoutePolicy _route_policy;
 
-    // Protects command state shared by RMF and the update loop.
+    // Serializes the commands that change the robot's order: new paths, stops, hold expiry, retire and restore.
+    std::mutex _command_mutex;
+    // Protects command state shared by RMF and the update loop; taken after _command_mutex.
     mutable std::mutex _mutex;
     std::optional<ActivePath> _path;
     std::string _dock_action_id;
@@ -141,10 +164,28 @@ private:
     bool _paused = false;
     // Set only by the operator's pause() and cleared by resume().
     bool _operator_paused = false;
+    // Pause state the AGV last reported; nullopt before its first report.
+    std::optional<bool> _agv_paused;
     // RMF's delay ceiling as it was before a pause lifted it.
     rmf_utils::optional<rmf_traffic::Duration> _saved_maximum_delay;
-    // Time when a traffic hold should become a full cancellation if no new path arrives.
-    std::optional<std::chrono::steady_clock::time_point> _traffic_pause_deadline;
+    // Traffic hold: the AGV is paused for RMF (held); once it has a new order or the hold expired, stopPause is due
+    // (releasing), then sent and awaited until the AGV reports it is not paused (released).
+    enum class Hold
+    {
+        none,
+        held,
+        releasing,
+        released,
+    };
+    Hold _hold = Hold::none;
+    // When a held order is cancelled, or when a released AGV counts as unpaused anyway.
+    std::chrono::steady_clock::time_point _hold_deadline{};
+    // When to ask RMF for a new plan after a command could not be sent.
+    std::optional<std::chrono::steady_clock::time_point> _replan_at;
+    // Removed from the fleet: no commands are carried out.
+    bool _retired = false;
+    // Map and pose last reported to RMF while no path was active.
+    std::optional<std::pair<std::string, Eigen::Vector3d>> _idle_position;
 };
 
 }  // namespace vda5050_fleet_adapter_full_control::rmf

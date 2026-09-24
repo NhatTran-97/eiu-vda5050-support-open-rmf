@@ -11,6 +11,7 @@
 #include "vda5050_fleet_adapter_full_control/rmf/route_policy.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/transform.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/cancel_policy.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/order_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/state_sequence.hpp"
 
 namespace vda5050_fleet_adapter_full_control::core {
@@ -69,6 +70,8 @@ public:
     const vda5050::CancelPolicy &cancel_policy() const { return _cancel_policy; }
     const rmf::LinkPolicy &link_policy() const { return _link_policy; }
     const rmf::RoutePolicy &route_policy() const { return _route_policy; }
+    const vda5050::NodeDeviation &node_deviation() const { return _node_deviation; }
+    double init_position_timeout_s() const { return _init_position_timeout_s; }
     double metrics_period_s() const { return _metrics_period_s; }
     const RegistrationConfig &registration() const { return _registration; }
     const std::optional<std::string> &server_uri() const { return _server_uri; }
@@ -84,6 +87,8 @@ private:
     vda5050::CancelPolicy _cancel_policy;
     rmf::LinkPolicy _link_policy;
     rmf::RoutePolicy _route_policy;
+    vda5050::NodeDeviation _node_deviation;
+    double _init_position_timeout_s = 10.0;
     double _metrics_period_s = 60.0;
     RegistrationConfig _registration;
     std::optional<std::string> _server_uri;

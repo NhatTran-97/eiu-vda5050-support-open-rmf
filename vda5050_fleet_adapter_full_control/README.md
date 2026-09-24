@@ -17,7 +17,7 @@ flows, and the full config reference.
 | Task execution | `follow_new_path` (patrol/delivery/go_to_place), `dock` (parking/charging spots), `PerformAction` (arbitrary instant actions) |
 | Task capabilities | Advertised per fleet from config: patrol, delivery, clean, plus any named instant action (e.g. `dock`) |
 | Commission tracking | A robot is only offered new tasks while its VDA5050 state is fresh, has a usable pose, is in `AUTOMATIC` or `SEMIAUTOMATIC` mode, reports no eStop, field violation or FATAL error, and is not paused by someone else — any of these failing decommissions it. A pause from the adapter's own traffic hold is tolerated |
-| Traffic hold (pause instead of cancel) | An RMF stop sends `startPause` and keeps the order; a new path then updates or replaces it and `stopPause` follows. With no new path within 10 s of the first stop the order is cancelled and the AGV unpaused, unless the operator paused it; this also holds when the AGV has lost its pose, and no order is sent to an AGV without a pose |
+| Traffic hold (pause instead of cancel) | An RMF stop sends `startPause` and keeps the order, but only while an order may still run on the AGV; a stop for an idle AGV sends nothing. A new path then updates the order, or cancels it and sends a new one, and `stopPause` follows. With no new path within 10 s of the first stop the order is cancelled and the AGV unpaused; the hold also ends this way when the new order could not be sent. An operator pause outlasts the hold, and an operator resume during it leaves the AGV held until the new path. No order is sent to an AGV without a pose |
 | Horizon release | Optional `honor_waypoint_timing`: releases route waypoints to the AGV only as their scheduled time approaches, instead of the whole order at once. Nothing more is released while the AGV is held for a replan |
 | Stitching on replan | Optional `stitch_on_replan`: when RMF replans, the new tail is attached to the live order as an order update (same `orderId`) if the new route repeats the part already released; leading points on the AGV's lane, repeated turns and waypoints passed straight through are tolerated. Otherwise the order is replaced. Not attempted while the AGV has no valid pose |
 | Operator interface | ROS services/param/topic per robot: pause, resume, speed-limit override, re-localize (`init_position`) |
@@ -28,7 +28,10 @@ flows, and the full config reference.
 | Input limits | Drops an uplink message larger than `vda5050.mqtt.max_payload_bytes` (default 1 MiB) before its payload is copied or parsed, and logs a problem that repeats with every message (bad JSON, a state missing required fields, an MQTT error) at most once per 30 s per source, with the number of messages held back |
 | Cancel confirmation | After `cancelOrder` the adapter watches the state the AGV reports: the cancel's action state (`FINISHED`, `FAILED` or still running) or the order no longer being active answers it; if the AGV neither answers nor drops the order within `vda5050.cancel_confirm_timeout_s` (default 5 s), the cancel is sent again, up to `vda5050.cancel_attempts` times (default 3), then an error is logged. A new order sent by the adapter ends the watch, so a resend never cancels it; a timeout of 0 turns the watch off |
 | Fixed-rate update loop | The update loop runs at fixed times (`update_rate_hz`) whatever each pass takes, skips slots it missed and logs a warning when a pass overruns |
-| Stuck-order detection | Replans if an AGV never acknowledges a dispatched order's `orderId` within `vda5050.order_stuck_timeout_s` |
+| Stuck-order detection | Replans if an AGV never acknowledges a dispatched order's `orderId` within `vda5050.order_stuck_timeout_s`, and after the same time when an order, update or dock could not be sent (validation, transport, no pose) |
+| Replacing an order | A new `orderId` goes out only after a `cancelOrder` for the order it replaces, while that order may still run on the AGV (sent and not reported finished at its final node) |
+| Position reports to RMF | While a path runs, the position goes to RMF with the lane the robot is on, or the waypoint it stands on, within the fleet's `max_merge_lane_distance` / `max_merge_waypoint_distance`; otherwise, and for an idle robot that moved, by map and coordinates |
+| Input robustness | A field of an AGV message with the wrong JSON type reads as absent, array entries that are not objects are dropped, and sequence and header IDs outside 0–4294967295 are ignored |
 | Metrics | Every `vda5050.metrics_period_s` (default 60 s) the adapter logs one `[metrics]` line and publishes the full report as JSON on `~/metrics`: robots online and the oldest state age, messages received and dropped by kind, MQTT reconnects and errors, message handling latency (p50, p99, max), wait for the shared lock, state transit time, and the update loop's pass time and overruns; 0 turns it off (see [docs/architecture.md](docs/architecture.md#metrics)) |
 | Tunable thresholds | Offline, stuck-order, traffic-hold, factsheet-request and registration timeouts, and the distances and speeds used to follow a route (`vda5050.state_timeout_s`, `order_stuck_timeout_s`, `waypoint_reached_m`, …) are YAML keys with validated ranges; the defaults are the values the adapter always used |
 | Config validation | Fails fast at startup on a numeric setting that is out of range or not a number, bad MQTT settings (including out-of-range connect timeout and reconnect backoff), duplicate identities, out-of-range `vda5050.registration` values, or a nav-graph robot missing from `vda5050.robots` |
@@ -233,10 +236,13 @@ configs, runtime files, logs) go to `--dir`; set `SANDBOX_DIR` once so that ever
 
 `remove` works on robots added at runtime. **RMF has no call that deletes a
 robot**, so the adapter can only decommission it (RMF stops giving it tasks)
-and stop tracking it: it gets a `cancelOrder` so that it does not finish
-an order nobody manages any more, the update loop skips it, and its
+and stop tracking it: its command handle drops the path, dock or action it
+was carrying out and ignores further commands, it gets a `cancelOrder` so
+that it does not finish an order nobody manages any more (and a `stopPause`
+if a traffic hold had paused it), the update loop skips it, and its
 pause/resume/`init_position`/`speed_limit` controls answer that it was
-removed. RMF keeps the robot's last known position in the traffic
+removed. Tasks RMF had already queued for it stay queued; cancel and
+re-request them from the task API. RMF keeps the robot's last known position in the traffic
 schedule until the adapter restarts, and its name, broker identity and
 charger stay reserved until then; take the robot off the floor first. The
 runtime file is updated, so the next start does not load it. A robot defined
@@ -245,8 +251,8 @@ in the config file has to be removed there, and the adapter restarted.
 **Adding a removed robot back.** The robot is still an RMF participant, so
 registering it again with the same name, identity, charger, transform and
 waiting behaviour restores it as it was, with no restart: the adapter switches
-its controls back on, resumes updating it, saves it in the runtime file and
-answers with a `restored` warning. While it is online on the broker it is also
+its controls back on, resumes updating it, asks RMF for a new plan, saves it
+in the runtime file and answers with a `restored` warning. While it is online on the broker it is also
 offered again (`removed_as` in `/robot_discovery`), and the dashboard fills in
 its old name and charger. Any other setting, or another robot on that name or
 charger, is refused until the adapter restarts.
@@ -258,8 +264,25 @@ multi-robot load testing without extra physical robots). Its options set the
 identity, start pose and factsheet (`--series`, `--kinematic`, `--agv-class`,
 `--speed-max`, `--accel-max`, `--length`, `--width`, `--no-factsheet`,
 `--pose-uninitialized`), so each registration check can be provoked on purpose.
+`--strict` makes it follow VDA5050 to the letter: it refuses a new `orderId`
+while an order is active, keeps the `orderId` after `cancelOrder` and refuses a
+`cancelOrder` without an order, reporting each as an error in its state.
 `scripts/test_dispatch_e2e.py` and `test_pause_resume.py` drive the fleet
 adapter end-to-end against it.
+
+`test_command_handle_broker` drives `VdaRobotCommandHandle` and `Connector` against
+a real broker and records every message they publish; its `RmfCommandHandleTest`
+cases register the robot with RMF's `MockAdapter`. They skip unless a private
+broker is given, and run in their own ROS domain on this host:
+
+```bash
+mosquitto -p 18830 &
+VDA5050_TEST_BROKER=tcp://127.0.0.1:18830 ctest -R test_command_handle_broker
+```
+
+`test_performance` (built with the tests, not run by `ctest`) prints the cost of a
+state message, of an update pass under a message flood, of `follow_new_path` on a
+large graph and of RMF's `compute_plan_starts`.
 
 `tools/load_test/` measures the message path under load: `load_probe` (built with the tests) runs the real
 `Connector` with N registered robots and a 10 Hz update loop against a broker, `load_gen.py` publishes state and

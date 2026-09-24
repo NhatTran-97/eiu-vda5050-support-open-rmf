@@ -50,6 +50,9 @@ public:
     // protocolLimits.timing.minOrderInterval in seconds.
     std::optional<double> min_order_interval;
 
+    // protocolLimits.timing.defaultStateInterval in seconds, when positive.
+    std::optional<double> default_state_interval;
+
     // True when the AGV declared this actionType in protocolFeatures.agvActions.
     bool supports_action(const std::string &action_type) const;
 

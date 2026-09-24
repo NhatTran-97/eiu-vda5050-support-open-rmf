@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "vda5050_fleet_adapter_full_control/vda5050/json_read.hpp"
+
 namespace vda5050_fleet_adapter_full_control::vda5050 {
 
 namespace {
@@ -38,15 +40,6 @@ std::vector<std::string> get_string_array(const nlohmann::json &j, const char *k
         }
     }
     return out;
-}
-
-std::optional<std::uint32_t> get_uint(const nlohmann::json &j, const char *key)
-{
-    if (j.contains(key) && j.at(key).is_number_unsigned())
-    {
-        return j.at(key).get<std::uint32_t>();
-    }
-    return std::nullopt;
 }
 
 }  // namespace
@@ -109,12 +102,17 @@ ParsedFactsheet::ParsedFactsheet(const nlohmann::json &raw)
         {
             const auto &arr = limits["maxArrayLens"];
             // Read VDA5050's dotted protocol-limit keys for order nodes and edges.
-            max_order_nodes = get_uint(arr, "order.nodes");
-            max_order_edges = get_uint(arr, "order.edges");
+            max_order_nodes = read_uint32(arr, "order.nodes");
+            max_order_edges = read_uint32(arr, "order.edges");
         }
         if (limits.contains("timing") && limits["timing"].is_object())
         {
             min_order_interval = get_number(limits["timing"], "minOrderInterval");
+            const auto interval = read_number(limits["timing"], "defaultStateInterval");
+            if (interval.has_value() && *interval > 0.0)
+            {
+                default_state_interval = interval;
+            }
         }
     }
 }
@@ -160,7 +158,8 @@ bool ParsedFactsheet::has_content() const
            !localization_types.empty() || !navigation_types.empty() ||
            speed_min.has_value() || speed_max.has_value() || acceleration_max.has_value() ||
            length.has_value() || width.has_value() || !agv_actions.empty() ||
-           max_order_nodes.has_value() || max_order_edges.has_value() || min_order_interval.has_value();
+           max_order_nodes.has_value() || max_order_edges.has_value() || min_order_interval.has_value() ||
+           default_state_interval.has_value();
 }
 
 }  // namespace vda5050_fleet_adapter_full_control::vda5050

@@ -24,9 +24,6 @@ constexpr const char *kSpeedLimitPrefix = "speed_limit.";
 // A zero parameter value disables the speed cap.
 constexpr double kNoSpeedLimit = 0.0;
 
-// How long to wait for an AGV's verdict on an initPosition before giving up.
-constexpr std::chrono::seconds kInitActionTimeout{10};
-
 }  // namespace
 
 std::string OperatorInterface::speed_limit_parameter(const std::string &robot_name)
@@ -44,8 +41,11 @@ std::string OperatorInterface::robot_of_speed_limit_parameter(const std::string 
     return parameter.substr(prefix.size());
 }
 
-OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, const std::map<std::string, RobotHooks> &hooks) 
-                                                            : _node(node), _connector(connector)
+OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, const std::map<std::string, RobotHooks> &hooks,
+                                     std::chrono::duration<double> init_action_timeout)
+    : _node(node),
+      _connector(connector),
+      _init_action_timeout(std::chrono::duration_cast<std::chrono::steady_clock::duration>(init_action_timeout))
 {
     for (const auto &[name, robot_hooks] : hooks)
     {
@@ -259,7 +259,7 @@ void OperatorInterface::on_init_position(
 
     // Wait for the AGV's action state before reporting initPosition success.
     std::lock_guard<std::mutex> lock(_pending_mutex);
-    _pending_init_actions[robot_name] = PendingInitAction{action_id, std::chrono::steady_clock::now() + kInitActionTimeout};
+    _pending_init_actions[robot_name] = PendingInitAction{action_id, std::chrono::steady_clock::now() + _init_action_timeout};
 }
 
 void OperatorInterface::poll_pending_init_actions()
@@ -278,7 +278,8 @@ void OperatorInterface::poll_pending_init_actions()
             }
             if (std::chrono::steady_clock::now() >= it->second.deadline)
             {
-                finished[it->first] = "error: no reply from the robot within " + std::to_string(kInitActionTimeout.count()) + "s";
+                finished[it->first] = "error: no reply from the robot within " +
+                                      std::to_string(std::chrono::duration_cast<std::chrono::seconds>(_init_action_timeout).count()) + "s";
                 it = _pending_init_actions.erase(it);
                 continue;
             }

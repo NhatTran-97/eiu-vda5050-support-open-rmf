@@ -66,6 +66,25 @@ TEST_F(RoutingTest, OnlineStatusFollowsTheConfiguredStateTimeout)
     EXPECT_FALSE(online("tb3_1"));
 }
 
+TEST_F(RoutingTest, AnAgvThatDeclaresASlowerStateIntervalGetsMoreTimeBeforeItCountsAsOffline)
+{
+    vda5050_fleet_adapter_full_control::rmf::LinkPolicy policy;
+    policy.state_timeout_s = 0.05;
+    policy.offline_state_intervals = 2.0;
+    connector.set_link_policy(policy);
+    connector.add_robot("slow", "ROBOTIS", "0001", Transform());
+    connector.add_robot("fast", "ROBOTIS", "0002", Transform());
+    feed("AMR/v2/ROBOTIS/0001/factsheet", {{"typeSpecification", {{"seriesName", "S"}}},
+                                          {"protocolLimits", {{"timing", {{"defaultStateInterval", 0.2}}}}}});
+    feed("AMR/v2/ROBOTIS/0001/state", state());
+    feed("AMR/v2/ROBOTIS/0002/state", state());
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_TRUE(online("slow"));
+    EXPECT_FALSE(online("fast"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    EXPECT_FALSE(online("slow"));
+}
+
 TEST_F(RoutingTest, IdentitiesThatOverlapInATopicAreNotConfused)
 {
     connector.add_robot("odd", "v2", "ACME", Transform());
