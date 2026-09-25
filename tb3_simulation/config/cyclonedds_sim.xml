@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <!-- Each simulated robot runs a full Nav2 stack of ~24 processes, each a
+           participant in the one domain; a node started after the auto
+           participant-index pool is full fails with "Failed to find a free
+           participant index". 500 covers about 20 robots. -->
+      <MaxAutoParticipantIndex>500</MaxAutoParticipantIndex>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

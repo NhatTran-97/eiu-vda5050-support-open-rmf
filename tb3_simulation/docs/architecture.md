@@ -20,7 +20,7 @@ The simulation runs in the `tb3-simulation` container on `ROS_DOMAIN_ID=1`; the 
     │        ROS_DOMAIN_ID=1  (sim container)      │
     │                                              │
     │  vda5050_client_adapter_node  ── per robot   │
-    │     │ order            ▲ state, node_reached │
+    │     │ NavigateToNode   ▲ result, status      │
     │     ▼                  │                     │
     │  tb3_vda5050_bridge_node      ── per robot   │
     │     │ navigate_to_pose (action)              │
@@ -37,7 +37,7 @@ The simulation runs in the `tb3-simulation` container on `ROS_DOMAIN_ID=1`; the 
 
 ## Nodes
 
-`robot_count` selects how many of `tb3_1..3` come up. Per-robot nodes are pushed into the robot's namespace.
+`robot_count` selects how many robots from `config/robot_poses.yaml` come up. Per-robot nodes are pushed into the robot's namespace.
 
 From `tb3_simulation_nav2.launch.py`, once per simulation:
 
@@ -49,12 +49,12 @@ Per robot:
 - `ros_gz_sim create` — spawns the Burger SDF with sensor topics rewritten to `/tb3_N/...`
 - `parameter_bridge` — `joint_states`, `odom`, `tf`, `cmd_vel`, `imu`, `scan`
 - `robot_state_publisher`, mock `battery_state` at 1 Hz
-- Nav2 bringup — `map_server`, `amcl`, `planner_server`, `controller_server`, `smoother_server`, `behavior_server`, `bt_navigator`, `waypoint_follower`, `velocity_smoother`, `collision_monitor`, `docking_server`, `route_server`, two `lifecycle_manager`
+- Nav2 bringup — `map_server`, `amcl`, `planner_server`, `controller_server`, `smoother_server`, `behavior_server`, `bt_navigator`, `waypoint_follower`, `velocity_smoother`, `collision_monitor`, `docking_server`, `route_server`, two `lifecycle_manager`; one process each, or all in one `nav2_container` with `use_composition:=True`
 
 From `vda5050_bridge_fleet.launch.py`, per robot:
 
 - `vda5050_client_adapter_node` — VDA5050 over MQTT; identity `ROBOTIS` / serial `0001..0003`
-- `tb3_vda5050_bridge_node` — order nodes → `navigate_to_pose`; reports `node_reached`, `edge_entered`, `edge_completed`
+- `tb3_vda5050_bridge_node` — executes the client's `NavigateToNode` steps (one node each) with `navigate_to_pose`; reports `driver_status` and telemetry
 - `mock_load_publisher` — stands in for a load sensor, feeding VDA5050 `state.loads`
 
 ## Velocity path
@@ -68,7 +68,7 @@ All three ROS stages publish `TwistStamped`, matching the bridge's `TwistStamped
 
 ## Startup order
 
-Staggered so Gazebo, the GUI and three Nav2 stacks do not contend during bringup. `SPAWN_DELAY_OFFSET` (5 s) gives the Gazebo GUI time to attach — entities spawned before it connects are simulated but never rendered.
+Staggered so Gazebo, the GUI and the Nav2 stacks do not contend during bringup. The first spawn waits 5 s so the Gazebo GUI can attach; a robot spawned while the GUI is still connecting is simulated but can be missing from its view.
 
 | t (s) | Action |
 |---|---|
@@ -82,3 +82,5 @@ Staggered so Gazebo, the GUI and three Nav2 stacks do not contend during bringup
 
 - One `nav2_params.yaml` serves every robot; `ReplaceString` rewrites `topic: /scan` to `topic: /tb3_N/scan` for both costmaps at launch.
 - Velocity limits are declared three times — `nav2_params.yaml`, the fleet adapter's `rmf_fleet.limits`, and the VDA5050 factsheet. RMF schedules traffic from its own copy, so the three must agree.
+- Each robot's `vda5050_client_params_tb3_N.yaml` needs its own `mqtt.client_id` — the broker drops a connection when another one connects with the same id — and a serial matching the fleet adapter's `vda5050.robots`.
+- Topics and `adapter_ns` in `vda5050_bridge_sim*.yaml` are absolute (`/tb3_N/...`): the bridge uses them as given, so the namespace the launch pushes does not apply to them.

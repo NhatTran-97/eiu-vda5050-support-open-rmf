@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>tb3_simulation</name>
+  <version>1.0.0</version>
+  <description>TurtleBot3 Gazebo (Harmonic) + Nav2 simulation, tách riêng từ tb3_fleet. Chạy mô phỏng và điều hướng Nav2, giữ pipeline generate world từ traffic-editor (.building.yaml).</description>
+  <maintainer email="eiu@todo.todo">eiu</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Build-time: generate world từ .building.yaml -->
+  <build_depend>rmf_building_map_tools</build_depend>
+
+  <!-- Runtime: mô phỏng + điều hướng -->
+  <exec_depend>rmf_building_map_tools</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>turtlebot3_gazebo</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>nav2_common</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>navigation2</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

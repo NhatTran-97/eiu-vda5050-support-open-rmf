@@ -30,9 +30,6 @@ services:
       - __VK_LAYER_NV_optimus=NVIDIA_only
       - TURTLEBOT3_MODEL=burger
       - ROS_DOMAIN_ID=1
-      # 3 full Nav2 stacks create 60-80+ ROS 2 nodes in one domain, past
-      # CycloneDDS's default auto-participant-index pool ("Failed to find a
-      # free participant index for domain 1" -> node aborts on startup).
       - CYCLONEDDS_URI=file:///home/eiu/sim_ws/src/tb3_simulation/config/cyclonedds_sim.xml
 
     devices:
