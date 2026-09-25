@@ -8,13 +8,14 @@ from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from vda5050_msgs.msg import Load
 
-LOAD_TOPIC = "/vda5050_client_adapter/load"
+# Relative topic, resolved in the launch namespace.
+LOAD_TOPIC = "vda5050_client_adapter/load"
 
 
 class MockLoadPublisher(Node):
-    def __init__(self, load_id: str, load_type: str, weight: float):
+    def __init__(self, load_id: str, load_type: str, weight: float, topic: str):
         super().__init__("mock_load_publisher")
-        self.pub = self.create_publisher(Load, LOAD_TOPIC, 10)
+        self.pub = self.create_publisher(Load, topic, 10)
         self.msg = Load()
         self.msg.load_id = load_id
         self.msg.load_type = load_type
@@ -30,12 +31,13 @@ def main():
     parser.add_argument("--load-id", default="box-01")
     parser.add_argument("--load-type", default="box")
     parser.add_argument("--weight", type=float, default=20.0, help="kg")
+    parser.add_argument("--topic", default=LOAD_TOPIC, help="Load topic of the client adapter")
     args = parser.parse_args(remove_ros_args(args=sys.argv)[1:])
 
     rclpy.init()
-    node = MockLoadPublisher(args.load_id, args.load_type, args.weight)
+    node = MockLoadPublisher(args.load_id, args.load_type, args.weight, args.topic)
     print(f"[mock_load_publisher] load_id={args.load_id} load_type={args.load_type} "
-          f"weight={args.weight}kg -> {LOAD_TOPIC} every 1s")
+          f"weight={args.weight}kg -> {node.pub.topic_name} every 1s")
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

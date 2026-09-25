@@ -1,19 +1,30 @@
 tb3_vda5050_bridge:
   ros__parameters:
-    adapter_ns: "/vda5050_client_adapter"          # Adapter namespace
-    odom_topic: "/diff_drive_controller/odom"     # Odometry topic
-    amcl_pose_topic: "/amcl_pose"                 # AMCL pose topic
-    battery_topic: "/battery_state"               # Battery state topic
-    nav2_action_name: "navigate_to_pose"          # Nav2 action name
-    map_id: "tb3_world"                           # Map ID
-    nav2_frame_id: "map"                          # Nav2 global frame
-    position_covariance_threshold: 0.5            # Max AMCL pose covariance threshold
+    adapter_ns: "/vda5050_client_adapter"
+    odom_topic: "/diff_drive_controller/odom"
+    amcl_pose_topic: "/amcl_pose"
+    battery_topic: "/battery_state"
+    nav2_action_name: "navigate_to_pose"
+    map_id: "tb3_world"
+    nav2_frame_id: "map"
+    position_covariance_threshold: 0.5
     supported_action_types:
-      - "initPosition"                            # Supported action types
-    initial_pose_topic: "/initialpose"            # Initial pose topic (AMCL input)
+      - "initPosition"
+    initial_pose_topic: "/initialpose"
 
-    # Optional: order state persistence file
-    nav2_dispatch_timeout_sec: 120.0              # Max retry time for Nav2 dispatch (sec)
-    amcl_pose_timeout_sec: 10.0                   # Max age of trusted AMCL pose (sec)
-    pose_stale_move_tolerance_m: 0.15             # Odometry drift tolerance for stale-but-stationary check (m)
-    speed_limit_topic: "/speed_limit"             # Nav2 speed-override input topic
+    nav2_dispatch_timeout_sec: 120.0              # s
+    amcl_pose_timeout_sec: 10.0                   # s
+    pose_stale_move_tolerance_m: 0.15             # m
+    speed_limit_topic: "/speed_limit"
+    nav2_retry_period_sec: 2.0                    # s
+    odom_publish_min_interval_sec: 0.1            # s, 0 = every odom
+    driver_status_lease_sec: 1.0                  # s, <= adapter driver_status_max_lease
+    default_allowed_deviation_xy: 0.5             # m
+    unconstrained_theta_rad: 3.0                  # rad
+    battery_voltage_full: 12.6                    # V
+    battery_voltage_empty: 9.0
+    initial_pose_covariance_xy: 0.25              # m^2
+    initial_pose_covariance_yaw: 0.06853891945200942  # rad^2
+    diagnostics_topic: "/diagnostics"
+    twist_mux_status_name: "twist_mux: Twist mux status"
+    navigation_velocity_source: "navigation"
