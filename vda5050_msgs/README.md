@@ -1,10 +1,10 @@
 # vda5050_msgs
 
-Shared ROS 2 message definitions for the VDA5050 v2.1.0 protocol. Used by both `vda5050_client_adapter` (northbound) and `tb3_vda5050_bridge` (southbound) to pass VDA5050 data structures over ROS 2 topics without JSON serialization.
+Shared ROS 2 message and action definitions for the VDA5050 v2.1.0 protocol. Used by both `vda5050_client_adapter` (northbound) and `tb3_vda5050_bridge` (southbound) to pass VDA5050 data structures over ROS 2 without JSON serialization.
 
 ## Overview
 
-This package contains no nodes — it is a pure message library. All VDA5050 data structures that need to cross a ROS 2 topic boundary are defined here as `.msg` files. Both the adapter and the bridge depend on this package, so the message format is the contract between them.
+This package contains no nodes — it is a pure interface library. All VDA5050 data structures that need to cross a ROS 2 boundary are defined here as `.msg` files, plus the adapter ↔ driver interface (`NavigateToNode` action, `DriverStatus`, `ActionCommand`). Both the adapter and the bridge depend on this package, so it is the contract between them: deploy both from the same version.
 
 ## System Context
 
@@ -16,12 +16,12 @@ flowchart LR
 
     msgs -.-|"shared interfaces"| ca
     msgs -.-|"shared interfaces"| br
-    ca <-->|"ROS 2 topics\n(vda5050_msgs)"| br
+    ca <-->|"NavigateToNode action\n+ ROS 2 topics"| br
 ```
 
 ## Message Definitions
 
-29 messages total (see `CMakeLists.txt` for the authoritative list). Note:
+31 messages and 1 action (see `CMakeLists.txt` for the authoritative list). Note:
 `factsheet` is not one of the six VDA5050 messages that crosses a ROS 2 topic
 boundary in this stack — it's built directly from ROS params and serialized
 straight to MQTT JSON (`factsheet_handler.cpp`), so there's no `Factsheet.msg`.
@@ -35,6 +35,14 @@ straight to MQTT JSON (`factsheet_handler.cpp`), so there's no `Factsheet.msg`.
 | `State` | state | Full robot state: order/action progress, position, velocity, battery, safety, errors, operating mode, loads, maps |
 | `Visualization` | visualization | Lightweight, high-frequency position + velocity for live tracking |
 | `Connection` | connection | `connection_state`: ONLINE / OFFLINE / CONNECTIONBROKEN (LWT) |
+
+### Adapter ↔ driver interface
+
+| Interface | Description |
+|:---:|---|
+| `action/NavigateToNode` | One route step. Goal: `order_id`, `order_update_id`, `node`, `incoming_edge` (+ `incoming_edge_set`). Feedback: `edge_entered`. Result: `outcome` (`REACHED` / `FAILED` / `DROPPED` / `CANCELED` / `PREEMPTED`), `description`, `distance_driven`; `REACHED` only with result code `SUCCEEDED` |
+| `DriverStatus` | `session_id` (new per driver process) and `driving`; latched |
+| `ActionCommand` | `PAUSE` / `RESUME` / `CANCEL` of one running action (`action_id`) |
 
 ### Supporting / nested types
 

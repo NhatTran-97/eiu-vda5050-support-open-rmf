@@ -45,6 +45,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/State.msg"
   "msg/Connection.msg"
   "msg/Visualization.msg"
+
+  # Client adapter <-> robot driver
+  "msg/DriverStatus.msg"
+  "msg/ActionCommand.msg"
+  "action/NavigateToNode.action"
 )
 
 ament_export_dependencies(rosidl_default_runtime)

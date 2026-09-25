@@ -1,0 +1,17 @@
+# Drive to one node of an order. Sent by the client adapter, executed by the robot driver.
+string order_id
+uint32 order_update_id
+Node   node
+Edge   incoming_edge
+bool   incoming_edge_set
+---
+uint8 REACHED=0    # node reached; only with result code SUCCEEDED, the others come with ABORTED or CANCELED
+uint8 FAILED=1     # navigation failed for good; the order cannot continue
+uint8 DROPPED=2    # the driver gave the order up (local cancel, re-localization)
+uint8 CANCELED=3   # the goal was cancelled by its client
+uint8 PREEMPTED=4  # replaced by a newer goal
+uint8   outcome
+string  description
+float64 distance_driven   # meters driven since the previous node
+---
+bool    edge_entered      # the robot started along incoming_edge
