@@ -167,6 +167,8 @@ if(BUILD_TESTING)
   # Needs VDA5050_TEST_BROKER (and VDA5050_TEST_MOSQUITTO for the reconnect test); skips without it.
   ament_add_gtest(test_command_handle_broker test/test_command_handle_broker.cpp)
   target_link_libraries(test_command_handle_broker ${PROJECT_NAME}_core)
+  ament_add_gtest(test_order_recovery test/test_order_recovery.cpp)
+  target_link_libraries(test_order_recovery ${PROJECT_NAME}_core)
   # Benchmarks: built with the tests, run by hand.
   ament_add_gtest_executable(test_performance test/test_performance.cpp)
   target_link_libraries(test_performance ${PROJECT_NAME}_core)

@@ -29,6 +29,39 @@ std::string suppressed_note(std::size_t held)
     return held == 0 ? std::string{} : " (" + std::to_string(held) + " similar message(s) suppressed)";
 }
 
+// Error type of an order rejection the state reports for `order_id` (and `update_id` when referenced), or empty.
+std::string order_refusal(const vda5050::ParsedState &state, const std::string &order_id, std::uint32_t update_id)
+{
+    for (const auto &error : state.errors)
+    {
+        const std::string type = error.value("errorType", std::string{});
+        if (type != "orderError" && type != "orderUpdateError" && type != "validationError")
+        {
+            continue;
+        }
+        bool same_order = false;
+        bool other_update = false;
+        const auto references = error.find("errorReferences");
+        if (references == error.end() || !references->is_array())
+        {
+            continue;
+        }
+        for (const auto &reference : *references)
+        {
+            if (!reference.is_object()) continue;
+            const std::string key = reference.value("referenceKey", std::string{});
+            const std::string value = reference.value("referenceValue", std::string{});
+            if (key == "orderId") same_order = value == order_id;
+            if (key == "orderUpdateId") other_update = value != std::to_string(update_id);
+        }
+        if (same_order && !other_update)
+        {
+            return type;
+        }
+    }
+    return {};
+}
+
 // Validate state fields needed for readiness, progress, and battery reporting.
 bool has_required_state_fields(const nlohmann::json &raw)
 {
@@ -196,6 +229,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
     }
 
     const auto order_lock = lock_orders(name);
+    cancel_unknown_order(name);
 
     const std::string order_id = vda5050::make_uuid();
     std::string base_id;
@@ -260,8 +294,13 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         if (it != _robots.end())
         {
             RobotContext &ctx = *it->second;
+            if (!ctx.current_order_id.empty())
+            {
+                ctx.replaced_order_id = ctx.current_order_id;
+            }
             ctx.current_order_id = order_id;
             ctx.order_done = false;
+            track_sent_order(ctx, order_topic, order);
             ctx.cancel.clear();
             // Track completion against the final route node.
             ctx.target_node_id = route.back().node_id;
@@ -462,12 +501,13 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         }
     }
 
+    nlohmann::json update_message;
+    const std::string update_topic = vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER);
     if (!unchanged)
     {
-        const auto order = vda5050::build_route_order(header_id, order_id, manufacturer, serial, base_id, base,
-                                                      combined, order_map, update_id, new_released, stitch_index, deviation);
-        if (publish_raw(vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER),
-                        order.dump()) == CommandStatus::transport_failed)
+        update_message = vda5050::build_route_order(header_id, order_id, manufacturer, serial, base_id, base,
+                                                    combined, order_map, update_id, new_released, stitch_index, deviation);
+        if (publish_raw(update_topic, update_message.dump()) == CommandStatus::transport_failed)
         {
             RCLCPP_ERROR(_logger, "[VDA5050] %s -> order '%s' update %d NOT published (transport failure)", name.c_str(), order_id.c_str(), update_id);
             result.status = CommandStatus::transport_failed;
@@ -484,6 +524,10 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
             ctx.current_route = combined;
             ctx.order_done = false;
             ctx.current_released_count = new_released;
+            if (!unchanged)
+            {
+                track_sent_order(ctx, update_topic, update_message);
+            }
             ctx.target_node_id = combined.back().node_id;
             ctx.route_offset = consumed;
             result.released = new_released > consumed ? new_released - consumed : 0;
@@ -565,6 +609,7 @@ CommandStatus Connector::release_more(const std::string &name, const std::string
         if (it != _robots.end())
         {
             it->second->current_released_count = clamped;
+            track_sent_order(*it->second, order_topic, order);
         }
     }
 
@@ -659,9 +704,14 @@ CommandStatus Connector::stop(const std::string &name)
         if (it != _robots.end())
         {
             RobotContext &ctx = *it->second;
+            if (!ctx.current_order_id.empty())
+            {
+                ctx.replaced_order_id = ctx.current_order_id;
+            }
             ctx.current_order_id.clear();
             ctx.target_node_id.clear();
             ctx.order_action_ids.clear();
+            ctx.unacked_order.reset();
             if (_cancel_policy.confirm_timeout > std::chrono::seconds::zero() && !cancelled_order.empty())
             {
                 ctx.cancel.sent(action_id, cancelled_order, std::chrono::steady_clock::now());
@@ -938,9 +988,131 @@ void Connector::resolve_pending_cancel(const std::string &name)
     write_log(log);
 }
 
+void Connector::track_sent_order(RobotContext &ctx, const std::string &topic, const nlohmann::json &order) const
+{
+    SentOrder sent;
+    sent.topic = topic;
+    sent.message = order;
+    sent.order_id = order.value("orderId", std::string{});
+    sent.update_id = order.value("orderUpdateId", 0u);
+    sent.sent_at = std::chrono::steady_clock::now();
+    sent.sends = 1;
+    ctx.unacked_order = std::move(sent);
+}
+
+void Connector::resend_unacked_order(const std::string &name)
+{
+    std::string topic;
+    nlohmann::json message;
+    std::string note;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _robots.find(name);
+        if (it == _robots.end() || !it->second->unacked_order.has_value())
+        {
+            return;
+        }
+        RobotContext &ctx = *it->second;
+        auto &sent = *ctx.unacked_order;
+        if (sent.order_id != ctx.current_order_id)
+        {
+            ctx.unacked_order.reset();
+            return;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (sent.sends > _link_policy.order_resend_attempts ||
+            std::chrono::duration<double>(now - sent.sent_at).count() < _link_policy.order_ack_timeout_s)
+        {
+            return;
+        }
+        // New header, same orderId and orderUpdateId (VDA5050 6.6.4.3).
+        message = sent.message;
+        message["headerId"] = ctx.next_order_header();
+        message["timestamp"] = vda5050::now_iso();
+        topic = sent.topic;
+        ++sent.sends;
+        sent.sent_at = now;
+        note = "[VDA5050] " + name + ": order '" + sent.order_id + "' update " + std::to_string(sent.update_id) +
+               " not reported by the AGV within " + std::to_string(_link_policy.order_ack_timeout_s) +
+               " s -- sending it again (" + std::to_string(sent.sends) + "/" +
+               std::to_string(_link_policy.order_resend_attempts + 1) + ")";
+    }
+    if (publish_raw(topic, message.dump()) == CommandStatus::queued)
+    {
+        RCLCPP_WARN(_logger, "%s", note.c_str());
+    }
+}
+
+bool Connector::runs_unknown_order(const RobotContext &ctx) const
+{
+    if (!_link_policy.cancel_unknown_orders || !ctx.last_state.has_value())
+    {
+        return false;
+    }
+    const auto &state = *ctx.last_state;
+    const bool active = !state.node_states.empty() || !state.edge_states.empty() || state.driving;
+    if (state.order_id.empty() || !active)
+    {
+        return false;
+    }
+    const bool ours = state.order_id == ctx.current_order_id || state.order_id == ctx.replaced_order_id ||
+                      state.order_id == ctx.unknown_order_cancelled ||
+                      (ctx.cancel.pending() && ctx.cancel.order_id() == state.order_id);
+    return !ours;
+}
+
+void Connector::cancel_unknown_order(const std::string &name)
+{
+    std::string topic;
+    nlohmann::json message;
+    std::string order_id;
+    std::string action_id;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _robots.find(name);
+        if (it == _robots.end() || !runs_unknown_order(*it->second))
+        {
+            return;
+        }
+        RobotContext &ctx = *it->second;
+        order_id = ctx.last_state->order_id;
+        auto request = vda5050::build_instant_action(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial,
+                                                     "cancelOrder", {{"orderId", order_id}}, blocking_type_for(ctx, "cancelOrder", "HARD"));
+        message = std::move(request.message);
+        action_id = std::move(request.action_id);
+        topic = vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, vda5050::TOPIC_INSTANT_ACTIONS);
+    }
+
+    if (publish_raw(topic, message.dump()) == CommandStatus::transport_failed)
+    {
+        RCLCPP_ERROR(_logger, "[VDA5050] %s: cancelOrder for unknown order '%s' NOT published (transport failure)",
+                     name.c_str(), order_id.c_str());
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        const auto it = _robots.find(name);
+        if (it != _robots.end())
+        {
+            RobotContext &ctx = *it->second;
+            ctx.unknown_order_cancelled = order_id;
+            if (_cancel_policy.confirm_timeout > std::chrono::seconds::zero() && !ctx.cancel.pending())
+            {
+                ctx.cancel.sent(action_id, order_id, std::chrono::steady_clock::now());
+            }
+        }
+    }
+    RCLCPP_WARN(_logger, "[VDA5050] %s: AGV runs order '%s' this adapter did not send -- cancelOrder", name.c_str(), order_id.c_str());
+}
+
 void Connector::poll(const std::string &name)
 {
     resolve_pending_cancel(name);
+    {
+        const auto order_lock = lock_orders(name);
+        resend_unacked_order(name);
+        cancel_unknown_order(name);
+    }
 
     std::string topic;
     nlohmann::json message;
@@ -1094,8 +1266,7 @@ void Connector::warn_if_action_conflicts(const RobotContext &ctx,  const std::st
         if (it != ctx.factsheet->agv_actions.end() &&    it->second.blocking_types.size() == 1 && it->second.blocking_types.front() == "HARD")
         {
             RCLCPP_WARN(_logger, "[VDA5050] %s: sending '%s' while '%s' (action %s) is still %s " "and only ever runs HARD -- it holds exclusivity, this action "  "may be queued or rejected",
-                        ctx.name.c_str(), action_type.c_str(), running_type.c_str(),
-                        running.value("actionId", std::string{}).c_str(), status.c_str());
+                        ctx.name.c_str(), action_type.c_str(), running_type.c_str(), running.value("actionId", std::string{}).c_str(), status.c_str());
         }
     }
 }
@@ -1358,6 +1529,23 @@ void Connector::update_state(RobotContext &ctx, const nlohmann::json &raw)
             {
                 ctx.order_done = true;
             }
+            if (ctx.unacked_order.has_value())
+            {
+                const auto &sent = *ctx.unacked_order;
+                const auto &reported = *ctx.last_state;
+                const std::string refusal = order_refusal(reported, sent.order_id, sent.update_id);
+                if (reported.order_id == sent.order_id && reported.order_update_id.value_or(0) >= sent.update_id)
+                {
+                    ctx.unacked_order.reset();
+                }
+                else if (!refusal.empty())
+                {
+                    log.push_back({LogLine::Level::warn, "[VDA5050] " + ctx.name + ": order '" + sent.order_id + "' update " +
+                                                             std::to_string(sent.update_id) + " refused by the AGV (" + refusal +
+                                                             ") -- not sending it again"});
+                    ctx.unacked_order.reset();
+                }
+            }
             report_state_changes(ctx, keys, log);
         }
     }
@@ -1410,8 +1598,7 @@ void Connector::report_state_changes(RobotContext &ctx, const StateKeys &keys, s
         if (s.safety_state.triggered())
         {
             log.push_back({Level::error, prefix + " SAFETY: eStop '" + s.safety_state.e_stop + "'" +
-                                             (s.safety_state.field_violation ? ", protective field violated" : "") +
-                                             " -- the AGV will not drive"});
+                                             (s.safety_state.field_violation ? ", protective field violated" : "") + " -- the AGV will not drive"});
         }
         else if (!ctx.last_safety_key.empty())
         {
@@ -1429,8 +1616,7 @@ void Connector::report_state_changes(RobotContext &ctx, const StateKeys &keys, s
         }
         else
         {
-            log.push_back({Level::warn, prefix + " operating mode: " + s.operating_mode +
-                                            " -- under local control, it will not act on orders from this fleet adapter"});
+            log.push_back({Level::warn, prefix + " operating mode: " + s.operating_mode + " -- under local control, it will not act on orders from this fleet adapter"});
         }
         ctx.last_mode_key = s.operating_mode;
     }

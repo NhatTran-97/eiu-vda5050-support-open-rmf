@@ -75,8 +75,7 @@ Verdict validate_spec(const RobotSpec &spec, const FleetView &fleet, const Graph
 
     if (!valid_name(spec.name))
     {
-        add(verdict.errors, "name_invalid",
-            "Name '" + spec.name + "' is not valid: use 1-64 letters, digits, '_' or '-', starting with a letter or digit.");
+        add(verdict.errors, "name_invalid", "Name '" + spec.name + "' is not valid: use 1-64 letters, digits, '_' or '-', starting with a letter or digit.");
     }
     else
     {
@@ -84,8 +83,7 @@ Verdict validate_spec(const RobotSpec &spec, const FleetView &fleet, const Graph
         {
             if (known.name == spec.name)
             {
-                add(verdict.errors, "name_taken",
-                    "A robot named '" + spec.name + "' already exists in fleet '" + known.fleet + "'" +
+                add(verdict.errors, "name_taken",  "A robot named '" + spec.name + "' already exists in fleet '" + known.fleet + "'" +
                         (known.retired ? " (removed in this session; register it again with the same settings to restore it, or restart the adapter to change them)." : "."));
                 break;
             }
@@ -169,8 +167,7 @@ Verdict validate_new_robot(const RobotSpec &spec, const FleetView &fleet, const 
     }
     else if (!candidate.pose_initialized)
     {
-        unverified.push_back("the robot is not localized, so its place on the nav graph cannot be checked; localize it "
-                             "from the dashboard once it is added");
+        unverified.push_back("the robot is not localized, so its place on the nav graph cannot be checked; localize it " "from the dashboard once it is added");
     }
     else if (graph.has_map && !graph.has_map(candidate.map_id))
     {
@@ -216,11 +213,9 @@ Verdict validate_new_robot(const RobotSpec &spec, const FleetView &fleet, const 
             unverified.push_back("its maximum speed is not declared");
         }
 
-        if (fs.acceleration_max.has_value() &&
-            *fs.acceleration_max < limits.linear_acceleration * (1.0 - limits.tolerance))
+        if (fs.acceleration_max.has_value() && *fs.acceleration_max < limits.linear_acceleration * (1.0 - limits.tolerance))
         {
-            add(verdict.warnings, "accel_low", "The robot's maximum acceleration (" + number(*fs.acceleration_max) +
-                    " m/s^2) is below the fleet's planning value (" + number(limits.linear_acceleration) + " m/s^2).");
+            add(verdict.warnings, "accel_low", "The robot's maximum acceleration (" + number(*fs.acceleration_max) +  " m/s^2) is below the fleet's planning value (" + number(limits.linear_acceleration) + " m/s^2).");
         }
 
         if (fs.length.has_value() && fs.width.has_value())
@@ -259,14 +254,11 @@ Verdict validate_new_robot(const RobotSpec &spec, const FleetView &fleet, const 
             else
             {
                 const bool series_differs = fs.series_name != reference->series_name;
-                const bool kinematic_differs = !fs.agv_kinematic.empty() && !reference->agv_kinematic.empty() &&
-                                               fs.agv_kinematic != reference->agv_kinematic;
-                const bool class_differs = !fs.agv_class.empty() && !reference->agv_class.empty() &&
-                                           fs.agv_class != reference->agv_class;
+                const bool kinematic_differs = !fs.agv_kinematic.empty() && !reference->agv_kinematic.empty() && fs.agv_kinematic != reference->agv_kinematic;
+                const bool class_differs = !fs.agv_class.empty() && !reference->agv_class.empty() && fs.agv_class != reference->agv_class;
                 if (series_differs || kinematic_differs || class_differs)
                 {
-                    add(verdict.errors, "type_mismatch",
-                        "The robot is a '" + fs.series_name + "' (" + fs.agv_kinematic + "/" + fs.agv_class +") but this fleet's robots are '" + reference->series_name + "' (" +
+                    add(verdict.errors, "type_mismatch", "The robot is a '" + fs.series_name + "' (" + fs.agv_kinematic + "/" + fs.agv_class +") but this fleet's robots are '" + reference->series_name + "' (" +
                             reference->agv_kinematic + "/" + reference->agv_class +"); add it to a fleet of its own type.");
                 }
             }

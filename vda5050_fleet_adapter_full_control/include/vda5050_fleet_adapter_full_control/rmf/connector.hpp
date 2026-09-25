@@ -232,6 +232,18 @@ public:
     bool is_online(const std::string &name);
 
 private:
+    // An order or order update published and not yet reported in the AGV state.
+    struct SentOrder
+    {
+        std::string topic;
+        nlohmann::json message;
+        std::string order_id;
+        std::uint32_t update_id = 0;
+        std::chrono::steady_clock::time_point sent_at{};
+        // Times it was published, counting the first.
+        int sends = 0;
+    };
+
     struct RobotContext
     {
         std::string name;
@@ -270,6 +282,12 @@ private:
         vda5050::StateSequence state_sequence;
         // The last cancelOrder sent that the AGV has not answered yet.
         vda5050::CancelTracker cancel;
+        // Last order or update sent that the AGV state does not show yet.
+        std::optional<SentOrder> unacked_order;
+        // Order this adapter replaced last; the AGV may still report it for a moment.
+        std::string replaced_order_id;
+        // Order of unknown origin a cancelOrder was sent for.
+        std::string unknown_order_cancelled;
         // Visualization data is used only to refine pose and velocity.
         std::optional<vda5050::ParsedVisualization> last_visualization;
         std::chrono::steady_clock::time_point last_visualization_time{};
@@ -319,6 +337,18 @@ private:
 
     // Resends an unanswered cancelOrder while the AGV still reports the order.
     void resolve_pending_cancel(const std::string &name);
+
+    // Remember `order` (published on `topic`) until the AGV state reports it; the caller holds _mutex.
+    void track_sent_order(RobotContext &ctx, const std::string &topic, const nlohmann::json &order) const;
+
+    // Publish the unacknowledged order again, unchanged but for its header, once order_ack_timeout_s passed; the caller holds the order lock.
+    void resend_unacked_order(const std::string &name);
+
+    // Whether the AGV reports an active order this adapter did not send; the caller holds _mutex.
+    bool runs_unknown_order(const RobotContext &ctx) const;
+
+    // Send cancelOrder with the orderId of an active order this adapter did not send; the caller holds the order lock.
+    void cancel_unknown_order(const std::string &name);
 
     // Holds a robot's order lock; empty for an unknown robot. Take it before _mutex.
     struct OrderLock

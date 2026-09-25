@@ -1,153 +1,104 @@
-# Fleet and VDA5050 settings for the TB3 fleet adapter instance.
-# See config_amr.yaml for the AMR fleet (different footprint/kinematics —
-# each robot type needs its own fleet adapter instance, see README).
+# TB3 fleet (real robots). Key reference: docs/architecture.md, Configuration.
 
 rmf_fleet:
   name: "tb3_fleet"
   limits:
-  
-    linear: [0.22, 1.0]      # [v_max, a_max] m/s, m/s^2
-    angular: [1.0, 3.2]      # [w_max, alpha_max] rad/s, rad/s^2
-
+    linear: [0.22, 1.0]        # v_max m/s, a_max m/s^2
+    angular: [1.0, 3.2]        # w_max rad/s, alpha_max rad/s^2
   profile:
-    footprint: 0.15  
-    vicinity: 0.30    
+    footprint: 0.15            # m
+    vicinity: 0.30             # m
   reversible: true
 
-
   battery_system:
-    voltage: 11.1        # V -- stock 3S Li-Po
-    capacity: 1.8         # Ah -- stock 1800mAh Li-Po
-    charging_current: 1.0 # A -- rough estimate, 
-
+    voltage: 11.1              # V
+    capacity: 1.8              # Ah
+    charging_current: 1.0      # A
   mechanical_system:
-    mass: 1.0              # kg -- stock TB3 Burger weight
-    moment_of_inertia: 0.005 # kg*m^2 -- rough estimate, not measured
+    mass: 1.0                  # kg
+    moment_of_inertia: 0.005   # kg*m^2
     friction_coefficient: 0.22
-
   ambient_system: {power: 20.0}
   tool_system: {power: 0.0}
   recharge_threshold: 0.10
   recharge_soc: 1.0
   publish_fleet_state: 10.0
-
   account_for_battery_drain: false
 
   task_capabilities:
-    loop: true # Patrol Tassk
-    delivery: true # Delivery Task
+    loop: true
+    delivery: true
   #actions: ["dock"]
-
-  finishing_request: "park"   # Post-task action: park, charge, or nothing
+  finishing_request: "park"    # park | charge | nothing
 
   robots:
     tb3_1:
       charger: "charger_1"
       responsive_wait: false
-
     tb3_2:
       charger: "charger_2"
       responsive_wait: false
-
     tb3_3:
       charger: "charger_3"
       responsive_wait: false
 
-# VDA5050 and MQTT settings used by the adapter.
 vda5050:
-  # Match the AGV's MQTT interface, manufacturer, and serial number.
   interface_name: "AMR"
   update_rate_hz: 10.0
   honor_waypoint_timing: true
-  # Send a replanned route as an update to the live order.
   stitch_on_replan: true
-  # Reject orders and actions that break the factsheet.
   strict_validation: true
-  # Consecutive state messages with an old headerId and timestamp dropped before the sender counts as restarted; 0 keeps every message.
-  stale_state_streak: 3
-  # Seconds to wait for an AGV to answer a cancelOrder before judging it; 0 turns the tracking off.
-  cancel_confirm_timeout_s: 5
-  # Times a cancelOrder may be sent for one order, counting the first.
+  stale_state_streak: 3              # 0 = off
+  cancel_confirm_timeout_s: 5        # 0 = off
   cancel_attempts: 3
-  # Seconds without a state message after which an AGV counts as offline.
   state_timeout_s: 10
-  # Seconds an order may stay unacknowledged by the AGV before RMF is asked to replan.
   order_stuck_timeout_s: 15
-  # Seconds a traffic hold may last before the order is cancelled.
+  order_ack_timeout_s: 5
+  order_resend_attempts: 2           # 0 = off
+  cancel_unknown_orders: true
   traffic_pause_timeout_s: 10
-  # Seconds to wait for the AGV's retained factsheet before the first factsheetRequest, and between further requests.
   factsheet_first_wait_s: 5
   factsheet_retry_wait_s: 20
-  # Factsheet requests sent to one AGV before giving up; 0 turns the requests off.
-  factsheet_request_attempts: 3
-  # Metres from a waypoint within which it counts as reached when the AGV reports no nodeId.
+  factsheet_request_attempts: 3      # 0 = off
   waypoint_reached_m: 0.5
-  # Poses this close in position (m) and heading (rad) count as the same waypoint.
   same_pose_m: 0.05
   same_pose_rad: 0.05
-  # Measured speeds (m/s) below this are replaced by the fleet's nominal speed in arrival estimates.
   usable_speed_mps: 0.05
-  # Seconds ahead of RMF's plan beyond which an early arrival is logged.
   early_arrival_warn_s: 2.0
-  # Seconds between metrics reports (a log line and a JSON message on ~/metrics); 0 turns them off.
-  metrics_period_s: 60
-  # Robots added while the adapter runs (see the README, "Add a robot at runtime").
+  metrics_period_s: 60               # 0 = off
   registration:
-    # Seconds after startup before robots unknown to every fleet are reported.
     discovery_grace_s: 8.0
-    # Seconds between checks of the broker for such robots.
     discovery_period_s: 2.0
-    # Seconds RMF may take to complete a robot's registration before it is tried again.
     timeout_s: 30
-    # Relative margin a new robot's speed and acceleration may differ from the fleet's.
     limit_tolerance: 0.05
-    # Where runtime-added robots are kept for the next start; relative to this file.
-    # Default: <this file's name>.runtime_robots.yaml next to it.
     # runtime_robots_file: robots.runtime.yaml
   mqtt:
     host: "192.168.10.97"
     port: 1883
-    # username and password may be written as ${VARIABLE} to read them from the environment.
-    username: null
+    username: null                   # ${VAR} reads the environment
     password: null
-    # TLS to the broker; relative paths are relative to this file.
     tls:
       enabled: false
       # ca_file: certs/ca.crt
       # client_cert: certs/client.crt
       # client_key: certs/client.key
       # verify_hostname: true
-    # Seconds between keep-alive packets that let the broker and the adapter notice a dead connection.
     keep_alive_s: 60
-    # Seconds one connect attempt may take.
     connect_timeout_s: 10
-    # Wait before the first reconnect attempt; it doubles up to reconnect_max_s.
     reconnect_min_s: 1
     reconnect_max_s: 30
-    # Largest message payload handled, in bytes; a larger message is dropped unread.
     max_payload_bytes: 1048576
 
   robots:
     tb3_1:
       manufacturer: "ROBOTIS"
       serial: "0001"
-      transform:
-        rotation: 0.0
-        scale: 1.0
-        translation: [0.0, 0.0]
-
+      transform: {rotation: 0.0, scale: 1.0, translation: [0.0, 0.0]}
     tb3_2:
       manufacturer: "ROBOTIS"
       serial: "0002"
-      transform:
-        rotation: 0.0
-        scale: 1.0
-        translation: [0.0, 0.0]
-
+      transform: {rotation: 0.0, scale: 1.0, translation: [0.0, 0.0]}
     tb3_3:
       manufacturer: "ROBOTIS"
       serial: "0003"
-      transform:
-        rotation: 0.0
-        scale: 1.0
-        translation: [0.0, 0.0]
+      transform: {rotation: 0.0, scale: 1.0, translation: [0.0, 0.0]}

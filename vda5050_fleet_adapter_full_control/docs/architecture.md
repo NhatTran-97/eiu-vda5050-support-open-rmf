@@ -311,6 +311,9 @@ The keys below apply to either file.
 | `vda5050.state_timeout_s` | 10 | Seconds without a state message after which an AGV counts as offline (1–3600) |
 | `vda5050.offline_state_intervals` | 2 | State intervals an AGV declares in its factsheet (`defaultStateInterval`) that may pass without a state before it counts as offline, when that is longer than `state_timeout_s` (1–100) |
 | `vda5050.order_stuck_timeout_s` | 15 | Seconds an order may stay unacknowledged by the AGV, or a command unsent, before RMF is asked to replan (1–3600) |
+| `vda5050.order_ack_timeout_s` | 5 | Seconds for the AGV state to report a sent order or update (`orderId` + `orderUpdateId`) before it is sent again unchanged (0.1–3600) |
+| `vda5050.order_resend_attempts` | 2 | Times an unacknowledged order or update is sent again; 0 turns resending off (0–10) |
+| `vda5050.cancel_unknown_orders` | true | Cancel an active order the AGV reports that this adapter did not send, with `cancelOrder` + `orderId`, before sending a new one |
 | `vda5050.traffic_pause_timeout_s` | 10 | Seconds a traffic hold (`startPause`) may last before the order is cancelled (0–3600) |
 | `vda5050.factsheet_first_wait_s` / `factsheet_retry_wait_s` | 5 / 20 | Seconds to wait for the retained factsheet before the first `factsheetRequest`, and between further requests (0–3600 / 1–3600) |
 | `vda5050.factsheet_request_attempts` | 3 | `factsheetRequest`s sent to one AGV before giving up (0–10); 0 turns the requests off |

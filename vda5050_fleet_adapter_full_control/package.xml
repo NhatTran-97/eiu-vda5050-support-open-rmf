@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vda5050_fleet_adapter_full_control</name>
+  <version>0.1.0</version>
+  <description>
+    Open-RMF fleet adapter for VDA5050 AGVs. Speaks VDA5050 2.1.0 over MQTT
+    on the robot side and RMF's FullControl (RobotCommandHandle) interface
+    on the RMF side, so a planned multi-waypoint route goes out as one
+    multi-node VDA5050 order instead of one order per waypoint.
+  </description>
+  <maintainer email="nhat.tranduy1997@gmail.com">duynhat</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rmf_fleet_adapter</depend>
+  <depend>rmf_traffic</depend>
+  <depend>rmf_traffic_ros2</depend>
+  <depend>rmf_battery</depend>
+  <depend>rmf_fleet_msgs</depend>
+  <depend>rmf_utils</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>Eigen3</depend>
+  <depend>yaml-cpp</depend>
+  <depend>nlohmann_json</depend>
+  <depend>libpaho-mqtt-dev</depend>
+  <depend>libpaho-mqttpp-dev</depend>
+
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

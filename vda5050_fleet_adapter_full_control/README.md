@@ -12,33 +12,35 @@ flows, and the full config reference.
 
 | Area | What it does |
 |:---:|---|
-| Multi-robot fleet | One process per fleet, one `Connector` state slot + one `RobotCommandHandle` per robot; rejects a duplicate manufacturer/serial pair at startup |
-| Runtime robot registration | A robot that shows up on the broker but belongs to no fleet gets reported, and an operator can add it without restarting the adapter. Every request is checked first: type, limits, position on the nav graph, a free charger. Robots added this way are saved and reload at the next start. RMF can't delete a robot, so removing one just decommissions it — register it again unchanged and it comes back, no restart needed. See [Add a robot at runtime](#add-a-robot-at-runtime) |
-| Task execution | `follow_new_path` (patrol/delivery/go_to_place), `dock` (parking/charging spots), `PerformAction` (arbitrary instant actions) |
-| Task capabilities | Advertised per fleet from config: patrol, delivery, clean, plus any named instant action (e.g. `dock`) |
-| Commission tracking | A robot is only offered new tasks while its VDA5050 state is fresh, has a usable pose, is in `AUTOMATIC` or `SEMIAUTOMATIC` mode, reports no eStop, field violation or FATAL error, and is not paused by someone else — any of these failing decommissions it. A pause from the adapter's own traffic hold is tolerated |
-| Traffic hold (pause instead of cancel) | An RMF stop sends `startPause` and keeps the order, but only while an order may still run on the AGV; a stop for an idle AGV sends nothing. A new path then updates the order, or cancels it and sends a new one, and `stopPause` follows. With no new path within 10 s of the first stop the order is cancelled and the AGV unpaused; the hold also ends this way when the new order could not be sent. An operator pause outlasts the hold, and an operator resume during it leaves the AGV held until the new path. No order is sent to an AGV without a pose |
-| Horizon release | Optional `honor_waypoint_timing`: releases route waypoints to the AGV only as their scheduled time approaches, instead of the whole order at once. Nothing more is released while the AGV is held for a replan |
-| Stitching on replan | Optional `stitch_on_replan`: when RMF replans, the new tail is attached to the live order as an order update (same `orderId`) if the new route repeats the part already released; leading points on the AGV's lane, repeated turns and waypoints passed straight through are tolerated. Otherwise the order is replaced. Not attempted while the AGV has no valid pose |
-| Operator interface | ROS services/param/topic per robot: pause, resume, speed-limit override, re-localize (`init_position`) |
-| Factsheet awareness | Reads the AGV's declared actions, blocking types and limits: each action gets a blocking type from `agvActions`, custom actions it does not declare are rejected (core actions such as `cancelOrder` only warn), and a `factsheetRequest` is sent when none arrived (after 5 s, then every 20 s, up to 3 times) |
-| Order validation | Before publishing, hard violations are rejected (non-finite pose, `mapId` not among the maps the AGV reports, more nodes or edges than the factsheet allows) and soft ones only warned (`minOrderInterval`); `strict_validation: false` turns rejection into a warning |
-| Stale state filtering | Drops a state message whose `headerId` is not above the last accepted one and whose `timestamp` is not later (a duplicate or a late arrival); a `connection` `ONLINE` message, or `vda5050.stale_state_streak` consecutive drops, starts a new sequence, and `0` turns the filter off |
-| Transport security | Optional TLS to the broker (`vda5050.mqtt.tls`): the broker's certificate is checked against a CA file (or the system store) and against its host name, and a client certificate and key can be given for a broker that asks for one; a missing or unreadable file stops the adapter at startup. `username` and `password` may be written as `${VARIABLE}` to read them from the environment; credentials sent without TLS are warned about |
-| Input limits | Drops an uplink message larger than `vda5050.mqtt.max_payload_bytes` (default 1 MiB) before its payload is copied or parsed, and logs a problem that repeats with every message (bad JSON, a state missing required fields, an MQTT error) at most once per 30 s per source, with the number of messages held back |
-| Cancel confirmation | After `cancelOrder` the adapter watches the state the AGV reports: the cancel's action state (`FINISHED`, `FAILED` or still running) or the order no longer being active answers it; if the AGV neither answers nor drops the order within `vda5050.cancel_confirm_timeout_s` (default 5 s), the cancel is sent again, up to `vda5050.cancel_attempts` times (default 3), then an error is logged. A new order sent by the adapter ends the watch, so a resend never cancels it; a timeout of 0 turns the watch off |
-| Fixed-rate update loop | The update loop runs at fixed times (`update_rate_hz`) whatever each pass takes, skips slots it missed and logs a warning when a pass overruns |
-| Stuck-order detection | Replans if an AGV never acknowledges a dispatched order's `orderId` within `vda5050.order_stuck_timeout_s`, and after the same time when an order, update or dock could not be sent (validation, transport, no pose) |
-| Replacing an order | A new `orderId` goes out only after a `cancelOrder` for the order it replaces, while that order may still run on the AGV (sent and not reported finished at its final node) |
-| Position reports to RMF | While a path runs, the position goes to RMF with the lane the robot is on, or the waypoint it stands on, within the fleet's `max_merge_lane_distance` / `max_merge_waypoint_distance`; otherwise, and for an idle robot that moved, by map and coordinates |
-| Input robustness | A field of an AGV message with the wrong JSON type reads as absent, array entries that are not objects are dropped, and sequence and header IDs outside 0–4294967295 are ignored |
-| Metrics | Every `vda5050.metrics_period_s` (default 60 s) the adapter logs one `[metrics]` line and publishes the full report as JSON on `~/metrics`: robots online and the oldest state age, messages received and dropped by kind, MQTT reconnects and errors, message handling latency (p50, p99, max), wait for the shared lock, state transit time, and the update loop's pass time and overruns; 0 turns it off (see [docs/architecture.md](docs/architecture.md#metrics)) |
-| Tunable thresholds | Offline, stuck-order, traffic-hold, factsheet-request and registration timeouts, and the distances and speeds used to follow a route (`vda5050.state_timeout_s`, `order_stuck_timeout_s`, `waypoint_reached_m`, …) are YAML keys with validated ranges; the defaults are the values the adapter always used |
-| Config validation | Fails fast at startup on a numeric setting that is out of range or not a number, bad MQTT settings (including out-of-range connect timeout and reconnect backoff), duplicate identities, out-of-range `vda5050.registration` values, or a nav-graph robot missing from `vda5050.robots` |
-| Lane closures (no-go zones) | Subscribes to `/lane_closure_requests`; matching `fleet_name` calls `FleetUpdateHandle::close_lanes()` / `open_lanes()`, so RMF stops routing through those lanes fleet-wide |
-| Emergency stop (eStop) | Reads `safetyState.eStop`/`fieldViolation` from the AGV's VDA5050 state; a non-`NONE` value decommissions the robot immediately, same path as commission tracking |
-| Operating mode | An `operatingMode` other than `AUTOMATIC` or `SEMIAUTOMATIC` decommissions the robot until it returns |
-| Heterogeneous fleets | `EasyFullControl::FleetConfiguration` shares one `profile`/`limits` per fleet, so different robot types (footprint/kinematics) run as separate config files and separate fleet adapter processes, one RMF fleet name each — see [below](#multiple-robot-types-heterogeneous-fleets) |
+| Multi-robot fleet | One process per fleet; one `Connector` slot and one `RobotCommandHandle` per robot; duplicate manufacturer/serial rejected at startup |
+| Runtime robot registration | Robots on the broker that no fleet lists are reported and can be added, checked and saved without a restart; a removed robot is decommissioned and can be restored. See [Add a robot at runtime](#add-a-robot-at-runtime) |
+| Task execution | `follow_new_path` (patrol/delivery/go_to_place), `dock` (parking/charging), `PerformAction` (instant actions) |
+| Task capabilities | Per fleet from config: patrol, delivery, clean, named instant actions (e.g. `dock`) |
+| Commission tracking | New tasks only while the state is fresh, the pose usable, mode `AUTOMATIC`/`SEMIAUTOMATIC`, no eStop, field violation or FATAL error, and not paused by another party (own traffic hold tolerated) |
+| Traffic hold | An RMF stop sends `startPause` and keeps the order while it may still run; the new path updates or replaces it, then `stopPause`. No new path within 10 s → order cancelled, AGV unpaused. An operator pause outlasts the hold |
+| Horizon release | `honor_waypoint_timing`: waypoints released as their scheduled time approaches; nothing released during a hold |
+| Stitching on replan | `stitch_on_replan`: a replanned route that repeats the released part becomes an order update (same `orderId`); otherwise the order is replaced |
+| Operator interface | Per robot: pause, resume, speed-limit override, re-localize (`init_position`) |
+| Factsheet awareness | Blocking types from `agvActions`; undeclared custom actions rejected (core actions warn); `factsheetRequest` when none arrived (5 s, then every 20 s, 3 times) |
+| Order validation | Hard violations rejected (non-finite pose, unknown `mapId`, factsheet node/edge limits), soft ones warned (`minOrderInterval`); `strict_validation: false` warns only |
+| Stale state filtering | Drops a state whose `headerId` and `timestamp` are not newer; `connection` `ONLINE` or `stale_state_streak` drops start a new sequence; `0` = off |
+| Transport security | Optional TLS (`vda5050.mqtt.tls`): CA, host name, client certificate; `${VARIABLE}` credentials from the environment; warning for credentials without TLS |
+| Input limits | Messages above `mqtt.max_payload_bytes` (1 MiB) dropped unparsed; a repeating problem logged at most once per 30 s per source |
+| Cancel confirmation | `cancelOrder` resent after `cancel_confirm_timeout_s` (5 s) until the AGV answers or drops the order, up to `cancel_attempts` (3); a new order ends the watch; `0` = off |
+| Fixed-rate update loop | Runs at `update_rate_hz`, skips missed slots, warns on overrun |
+| Stuck-order detection | Replan when an order is not acknowledged within `order_stuck_timeout_s`, or could not be sent (validation, transport, no pose) |
+| Order acknowledgement | Order/update confirmed by `orderId` + `orderUpdateId` in the state; otherwise resent unchanged every `order_ack_timeout_s`, up to `order_resend_attempts` (VDA5050 6.6.4.3); not after a refusal |
+| Unknown active orders | An active order this adapter did not send is cancelled (`cancelOrder` with its `orderId`) before any new order (`cancel_unknown_orders`) |
+| Replacing an order | A new `orderId` is sent only after `cancelOrder` of the order it replaces, while that order may still run |
+| Position reports to RMF | Lane or waypoint within `max_merge_lane_distance` / `max_merge_waypoint_distance` while a path runs; otherwise map + coordinates |
+| Input robustness | Wrong JSON types read as absent, non-object array entries dropped, IDs outside 0–4294967295 ignored |
+| Metrics | Every `metrics_period_s` (60 s): one `[metrics]` log line and a JSON report on `~/metrics`; `0` = off ([details](docs/architecture.md)) |
+| Tunable thresholds | Timeouts, distances and speeds are YAML keys with validated ranges |
+| Config validation | Startup fails on out-of-range or non-numeric values, bad MQTT settings, duplicate identities, bad `registration` values, or a nav-graph robot missing from `vda5050.robots` |
+| Lane closures | `/lane_closure_requests` → `close_lanes()` / `open_lanes()` for the matching fleet |
+| Emergency stop | `safetyState.eStop` ≠ `NONE` or `fieldViolation` decommissions the robot |
+| Operating mode | Not `AUTOMATIC`/`SEMIAUTOMATIC` → decommissioned until it returns |
+| Heterogeneous fleets | One `profile`/`limits` per fleet, so each robot type runs as its own config and process — see [below](#multiple-robot-types-heterogeneous-fleets) |
 
 ## Prerequisites
 
@@ -70,8 +72,7 @@ Every CLI command and script is listed in [Command line](#command-line).
 robot in a fleet. Different footprints or kinematics need their own config
 file and their own adapter process, each with a unique `node_name`.
 `fleet_adapters.launch.py` starts both `config_tb3.yaml` and `config_amr.yaml`
-at once. Replace the `TODO` placeholders in `config_amr.yaml` with the real
-AMR specs before running against hardware.
+at once.
 
 ## Command line
 
@@ -104,21 +105,14 @@ Each robot needs a matching entry under both `rmf_fleet.robots` and
 
 ## Add a robot at runtime
 
-A robot that is not listed under `vda5050.robots` can join a running fleet.
-Nothing is registered automatically: the adapter reports what it sees and a
-person decides.
+A robot not listed under `vda5050.robots` can join a running fleet. Nothing is registered automatically;
+an operator decides.
 
-1. **Discovery.** Each adapter watches the `connection` topics of its
-   interface. A robot that is online and that no fleet lists is published on
-   `/robot_discovery` (after `discovery_grace_s`, so that every fleet has
-   announced its own robots first) with the type, speed and pose from its
-   factsheet and state. The dashboard shows it under *Needs Attention*.
-2. **Request.** The dashboard's *Register* dialog, or
-   [`scripts/register_robot.py`](scripts/register_robot.py), sends the fleet,
-   a robot name, the broker identity (manufacturer and serial) and a charger.
-   `--check` runs every check and adds nothing.
-3. **Checks.** The adapter answers with all the errors and warnings at once.
-   Any error refuses the request:
+1. **Discovery.** An online robot that no fleet lists is published on `/robot_discovery` (after
+   `discovery_grace_s`) with type, speed and pose; the dashboard shows it under *Needs Attention*.
+2. **Request.** The dashboard's *Register* dialog or [`scripts/register_robot.py`](scripts/register_robot.py)
+   sends fleet, name, manufacturer, serial and charger. `--check` runs the checks only.
+3. **Checks.** All errors and warnings are returned at once; any error refuses the request:
 
    | Code | Severity | Meaning |
    |:---:|:---:|---|
@@ -135,20 +129,14 @@ person decides.
    | `speed_too_low` | error | Its `speedMax` is below the fleet's planning speed by more than `limit_tolerance`: RMF would expect it to arrive earlier than it can |
    | `speed_higher`, `accel_low` | warning | Faster than, or less agile than, the fleet plans for |
    | `too_large` | error | Half the diagonal of its `length` × `width` exceeds the fleet's footprint radius |
-   | `unverified` | error until confirmed | Something could not be checked: the robot was never seen, is offline, has sent no state or is not localized (`positionInitialized: false`; it joins RMF once it is localized, for instance with *Re-localize* in the dashboard); it has no factsheet (or no size/speed/series in it); or no robot of the fleet has a factsheet to compare types with. Sending `confirm_unverified` adds it anyway and turns each unchecked item into a warning |
+   | `unverified` | error until confirmed | Not checkable: robot unseen, offline, without state, not localized (joins RMF once localized), without factsheet data, or no fleet factsheet to compare. `confirm_unverified` adds it with warnings |
 
-4. **Registration.** The robot is added to RMF exactly like a robot from the
-   config (`RobotManager`, one `RobotCommandHandle` per robot), gets its own
-   operator controls (`pause`, `resume`, `init_position`, `speed_limit.<name>`)
-   and is written to the runtime file, so the next start loads it before any
-   request arrives. The result says whether it was saved.
+4. **Registration.** Added like a config robot (`RobotManager`, own `RobotCommandHandle` and operator
+   controls) and saved to the runtime file for the next start; the result says whether it was saved.
 
-The checks compare a robot with *its fleet*: a fleet has one footprint,
-speed and kinematics for all its robots (see
-[Multiple robot types](#multiple-robot-types-heterogeneous-fleets)), so only a
-robot of the same type can join. A robot of another type belongs in another
-fleet, which needs its own config file and adapter process. The first robot of
-a fleet has nothing to be compared with on type; it needs `confirm_unverified`.
+A fleet has one footprint, speed and kinematics ([Multiple robot types](#multiple-robot-types-heterogeneous-fleets)),
+so only a robot of the same type can join; another type needs its own fleet config and process. The first robot of a
+fleet has no type to compare with and needs `confirm_unverified`.
 
 ### Command line
 
@@ -162,14 +150,12 @@ ros2 run vda5050_fleet_adapter_full_control register_robot.py add \
 ros2 run vda5050_fleet_adapter_full_control register_robot.py remove --fleet tb3_fleet --name tb3_3
 ```
 
-`--confirm-unverified` accepts unchecked items; `--rotation`, `--scale` and
-`--translation X Y` describe the robot's map frame when it differs from the
-fleet's. Exit status: 0 done, 1 refused, 2 no reply.
+`--confirm-unverified` accepts unchecked items; `--rotation`, `--scale`, `--translation X Y` set the robot's map
+transform. Exit status: 0 done, 1 refused, 2 no reply.
 
 ### Topics
 
-All carry JSON in `std_msgs/String`; a request names its fleet and only that
-fleet's adapter answers.
+JSON in `std_msgs/String`; only the named fleet's adapter answers.
 
 | Topic | Direction | Content |
 |:---:|:---:|---|
@@ -180,15 +166,7 @@ fleet's adapter answers.
 
 ### Settings
 
-```yaml
-vda5050:
-  registration:
-    discovery_grace_s: 8.0     # wait after startup before reporting unknown robots
-    discovery_period_s: 2.0    # how often the broker is checked
-    timeout_s: 30              # time RMF may take to register a robot before a retry
-    limit_tolerance: 0.05      # relative margin for speed and acceleration
-    # runtime_robots_file: robots.runtime.yaml
-```
+`vda5050.registration`:
 
 | Key | Default | Effect |
 |:---:|:---:|---|
@@ -198,20 +176,15 @@ vda5050:
 | `limit_tolerance` | 0.05 | Speed and acceleration may differ from the fleet's by this fraction (0–0.5) |
 | `runtime_robots_file` | `<config name>.runtime_robots.yaml` next to the config | Where runtime robots are kept; a relative path is taken from the config's directory |
 
-Robots that are not given a `responsive_wait` take the fleet's own
-`responsive_wait` default, like the robots in the config.
+A robot without `responsive_wait` takes the fleet default.
 
 ### The runtime file
 
-`<config name>.runtime_robots.yaml` lists the robots added while the adapter
-ran (`manufacturer`, `serial`, `charger`, `responsive_wait`, `transform`). It
-is written through a temporary file, so a crash cannot leave it half written,
-and the first rewrite of a run keeps the previous file as `*.bak`. At startup
-each entry passes the same name, identity, transform and charger checks as a
-request; an entry that fails, or a file that is not valid YAML, is reported in
-the log with the reason and skipped, and the adapter still starts. Delete an
-entry, or the file, to forget a robot. The file is state, not configuration:
-keep `*.runtime_robots.yaml*` out of version control.
+`<config name>.runtime_robots.yaml` lists runtime robots (`manufacturer`, `serial`, `charger`, `responsive_wait`,
+`transform`).
+- Written through a temporary file; the first rewrite of a run keeps the previous one as `*.bak`.
+- At startup each entry gets the request checks; a failing entry or invalid file is logged and skipped.
+- Delete an entry or the file to forget a robot. It is state, not configuration: keep `*.runtime_robots.yaml*` out of git.
 
 ### Try it without hardware
 
@@ -222,73 +195,48 @@ ros2 run vda5050_fleet_adapter_full_control registration_sandbox.py restart-adap
 ros2 run vda5050_fleet_adapter_full_control registration_sandbox.py down
 ```
 
-`registration_sandbox.py` starts a broker of its own (a local `mosquitto`, or
-`eclipse-mosquitto` through Docker), the RMF schedule and dispatcher, one adapter per
-`config/config_*.yaml` and a mock robot for every robot in them. It leaves `tb3_2` out of the
-config (`--dynamic` changes that) so it can be added, and starts seven more mock robots
-(`S9001`–`S9007` of the first fleet's manufacturer), each built to break one check: a good one on
-a free charger, off the nav graph, too slow, too large, without a factsheet, not localized (accepted after confirmation) and of
-another type. Poses, speeds and sizes come from the configs and the nav graph. It never touches
-the broker or the ROS domain the real system uses (`--port`, `--domain`). Its files (generated
-configs, runtime files, logs) go to `--dir`; set `SANDBOX_DIR` once so that every command finds them.
+`registration_sandbox.py` starts:
+- its own broker (local `mosquitto` or `eclipse-mosquitto` in Docker), RMF schedule and dispatcher;
+- one adapter per `config/config_*.yaml` and a mock robot per configured robot, `tb3_2` left out to be added
+  (`--dynamic` changes that);
+- mock robots `S9001`–`S9007`, one per check: valid, off graph, too slow, too large, no factsheet, not localized,
+  other type.
+
+Private `--port` and `--domain`; files go to `--dir` (or `SANDBOX_DIR`).
 
 ### Removing a robot
 
-`remove` works on robots added at runtime. **RMF has no call that deletes a
-robot**, so the adapter can only decommission it (RMF stops giving it tasks)
-and stop tracking it: its command handle drops the path, dock or action it
-was carrying out and ignores further commands, it gets a `cancelOrder` so
-that it does not finish an order nobody manages any more (and a `stopPause`
-if a traffic hold had paused it), the update loop skips it, and its
-pause/resume/`init_position`/`speed_limit` controls answer that it was
-removed. Tasks RMF had already queued for it stay queued; cancel and
-re-request them from the task API. RMF keeps the robot's last known position in the traffic
-schedule until the adapter restarts, and its name, broker identity and
-charger stay reserved until then; take the robot off the floor first. The
-runtime file is updated, so the next start does not load it. A robot defined
-in the config file has to be removed there, and the adapter restarted.
+`remove` applies to runtime robots. RMF cannot delete a robot, so the adapter:
+- decommissions it (no new tasks) and drops its current path, dock or action;
+- sends `cancelOrder` (and `stopPause` if a traffic hold paused it);
+- skips it in the update loop; its operator controls answer "removed";
+- removes it from the runtime file.
 
-**Adding a removed robot back.** The robot is still an RMF participant, so
-registering it again with the same name, identity, charger, transform and
-waiting behaviour restores it as it was, with no restart: the adapter switches
-its controls back on, resumes updating it, asks RMF for a new plan, saves it
-in the runtime file and answers with a `restored` warning. While it is online on the broker it is also
-offered again (`removed_as` in `/robot_discovery`), and the dashboard fills in
-its old name and charger. Any other setting, or another robot on that name or
-charger, is refused until the adapter restarts.
+Tasks already queued for it stay queued (cancel them through the task API). RMF keeps its last position, and its
+name, identity and charger stay reserved, until the adapter restarts; take the robot off the floor first. A config
+robot is removed in the config file plus a restart.
+
+**Adding a removed robot back.** Registering it with the same name, identity, charger, transform and waiting
+behaviour restores it without a restart (`restored` warning): controls on, updates resumed, new plan requested,
+runtime file saved. While online it is offered again (`removed_as` in `/robot_discovery`). Other settings, or
+another robot on that name or charger, are refused until a restart.
 
 ## Testing without hardware
 
-`scripts/mock_mqtt_robot.py` fakes a VDA5050 AGV over MQTT (useful for
-multi-robot load testing without extra physical robots). Its options set the
-identity, start pose and factsheet (`--series`, `--kinematic`, `--agv-class`,
-`--speed-max`, `--accel-max`, `--length`, `--width`, `--no-factsheet`,
-`--pose-uninitialized`), so each registration check can be provoked on purpose.
-`--strict` makes it follow VDA5050 to the letter: it refuses a new `orderId`
-while an order is active, keeps the `orderId` after `cancelOrder` and refuses a
-`cancelOrder` without an order, reporting each as an error in its state.
-`scripts/test_dispatch_e2e.py` and `test_pause_resume.py` drive the fleet
-adapter end-to-end against it.
+| Tool | Purpose |
+|:---:|---|
+| `scripts/mock_mqtt_robot.py` | Fake VDA5050 AGV over MQTT. Identity, pose and factsheet options (`--series`, `--kinematic`, `--agv-class`, `--speed-max`, `--accel-max`, `--length`, `--width`, `--no-factsheet`, `--pose-uninitialized`); `--strict` follows VDA5050 strictly (new `orderId` refused while active, `orderId` kept after `cancelOrder`) |
+| `scripts/test_dispatch_e2e.py`, `test_pause_resume.py` | Drive the adapter end to end against the mock robot |
+| `test_command_handle_broker` | `VdaRobotCommandHandle` + `Connector` against a real broker, RMF `MockAdapter`; skipped without a private broker |
+| `test_performance` | Cost of a state message, an update pass under load, `follow_new_path` on a large graph, `compute_plan_starts` (built, not run by `ctest`) |
+| `tools/load_test/` | `load_run.py` runs `load_probe` (real `Connector`, N robots, 10 Hz loop) against `load_gen.py` (N simulated AGVs) and prints CPU, memory, latency, lock wait, state age, drops, overruns; `--timeline` per second |
 
-`test_command_handle_broker` drives `VdaRobotCommandHandle` and `Connector` against
-a real broker and records every message they publish; its `RmfCommandHandleTest`
-cases register the robot with RMF's `MockAdapter`. They skip unless a private
-broker is given, and run in their own ROS domain on this host:
+Use a private broker only:
 
 ```bash
 mosquitto -p 18830 &
 VDA5050_TEST_BROKER=tcp://127.0.0.1:18830 ctest -R test_command_handle_broker
 ```
-
-`test_performance` (built with the tests, not run by `ctest`) prints the cost of a
-state message, of an update pass under a message flood, of `follow_new_path` on a
-large graph and of RMF's `compute_plan_starts`.
-
-`tools/load_test/` measures the message path under load: `load_probe` (built with the tests) runs the real
-`Connector` with N registered robots and a 10 Hz update loop against a broker, `load_gen.py` publishes state and
-visualization messages for N simulated AGVs, and `load_run.py` runs both and prints one line of results (CPU,
-memory growth, handling latency, lock wait, state age, drops, update-loop overruns). `--timeline` prints each
-one-second sample, to watch a broker outage. Point it at a private broker, never at the real one.
 
 ## Reviewer recommendations
 

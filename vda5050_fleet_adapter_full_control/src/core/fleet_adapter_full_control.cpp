@@ -74,8 +74,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         const Config config(args.config_file);
 
         // Load RMF fleet, graph, and task settings for FullControl.
-        auto fleet_config = EasyFullControl::FleetConfiguration::from_config_files(
-            args.config_file, args.nav_graph, config.server_uri());
+        auto fleet_config = EasyFullControl::FleetConfiguration::from_config_files(args.config_file, args.nav_graph, config.server_uri());
         if (!fleet_config)
         {
             RCLCPP_FATAL(logger, "Failed to parse fleet configuration from %s", args.config_file.c_str());
@@ -108,10 +107,8 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         }
 
         // Apply the configured post-task finishing behavior.
-        if (!fleet->set_task_planner_params(fleet_config->battery_system(), fleet_config->motion_sink(),
-                fleet_config->ambient_sink(), fleet_config->tool_sink(),
-                fleet_config->recharge_threshold(), fleet_config->recharge_soc(),
-                account_for_battery_drain, fleet_config->finishing_request()))
+        if (!fleet->set_task_planner_params(fleet_config->battery_system(), fleet_config->motion_sink(), fleet_config->ambient_sink(), fleet_config->tool_sink(),
+                fleet_config->recharge_threshold(), fleet_config->recharge_soc(), account_for_battery_drain, fleet_config->finishing_request()))
         {
             RCLCPP_FATAL(logger, "set_task_planner_params failed -- this fleet would " "never bid for a task");
             exit_now(1);
@@ -123,9 +120,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
 
         // Apply no-go zone / lane closures requested from the operator UI.
         const std::string this_fleet_name = fleet_config->fleet_name();
-        const auto lane_request_sub = adapter->node()->create_subscription<rmf_fleet_msgs::msg::LaneRequest>(
-            rmf_fleet_adapter::LaneClosureRequestTopicName,
-            rclcpp::QoS(10).reliable().transient_local(),
+        const auto lane_request_sub = adapter->node()->create_subscription<rmf_fleet_msgs::msg::LaneRequest>(rmf_fleet_adapter::LaneClosureRequestTopicName, rclcpp::QoS(10).reliable().transient_local(),
             [fleet, this_fleet_name](rmf_fleet_msgs::msg::LaneRequest::UniquePtr msg)
             {
                 if (msg->fleet_name != this_fleet_name)
@@ -193,8 +188,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         route_policy.merge_waypoint_m = fleet_config->default_max_merge_waypoint_distance();
         route_policy.merge_lane_m = fleet_config->default_max_merge_lane_distance();
 
-        RobotManager manager(logger, *connector, graph, adapter->node()->get_clock(),
-                             {nominal_speed, config.honor_waypoint_timing(), config.stitch_on_replan(), route_policy});
+        RobotManager manager(logger, *connector, graph, adapter->node()->get_clock(),{nominal_speed, config.honor_waypoint_timing(), config.stitch_on_replan(), route_policy});
 
         // Robots declared in the fleet config file.
         std::set<std::pair<std::string, std::string>> seen_identities;
@@ -235,9 +229,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         const RegistrationConfig &registration_config = config.registration();
         // Time RMF may take to complete a robot's registration before it is tried again.
         const std::chrono::duration<double> registration_timeout(registration_config.timeout_s);
-        const FleetLimits limits{fleet_name, traits->profile().footprint()->get_characteristic_length(),
-                                 traits->linear().get_nominal_velocity(), traits->linear().get_nominal_acceleration(),
-                                 registration_config.limit_tolerance};
+        const FleetLimits limits{fleet_name, traits->profile().footprint()->get_characteristic_length(), traits->linear().get_nominal_velocity(), traits->linear().get_nominal_acceleration(), registration_config.limit_tolerance};
 
         GraphFacts graph_facts;
         graph_facts.chargers = [graph]()
@@ -288,8 +280,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             view.limits = limits;
             for (const auto &entry : manager.snapshot())
             {
-                view.robots.push_back({fleet_name, entry->spec.name, entry->spec.manufacturer, entry->spec.serial,
-                                       entry->spec.charger, false});
+                view.robots.push_back({fleet_name, entry->spec.name, entry->spec.manufacturer, entry->spec.serial, entry->spec.charger, false});
             }
             const Verdict verdict = validate_spec(spec, view, graph_facts);
             if (!verdict.ok())
@@ -301,8 +292,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                 continue;
             }
             manager.add(spec);
-            RCLCPP_INFO(logger, "Runtime robot '%s' (%s/%s) loaded from %s", spec.name.c_str(),
-                        spec.manufacturer.c_str(), spec.serial.c_str(), runtime_path.c_str());
+            RCLCPP_INFO(logger, "Runtime robot '%s' (%s/%s) loaded from %s", spec.name.c_str(), spec.manufacturer.c_str(), spec.serial.c_str(), runtime_path.c_str());
         }
 
         // Register operator controls on the adapter node.
@@ -312,27 +302,22 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             const auto command = entry->command;
             hooks[entry->spec.name] = RobotHooks{[command]() { return command->pause(); }, [command]() { return command->resume(); }};
         }
-        OperatorInterface operator_interface(*adapter->node(), *connector, std::move(hooks),
-                                             std::chrono::duration<double>(config.init_position_timeout_s()));
+        OperatorInterface operator_interface(*adapter->node(), *connector, std::move(hooks), std::chrono::duration<double>(config.init_position_timeout_s()));
 
         RegistrationInterface registration(*adapter->node(), *connector, manager, operator_interface,
                                            {fleet_name, config.interface_name(), runtime_path, limits, graph_facts,
-                                            fleet_config->default_responsive_wait(),
-                                            registration_config.discovery_grace_s, registration_config.discovery_period_s});
+                                            fleet_config->default_responsive_wait(), registration_config.discovery_grace_s, registration_config.discovery_period_s});
         registration.publish_registry();
 
         // Update RMF from VDA5050 state.
         std::atomic<bool> running{true};
         const auto period = std::chrono::duration<double>(1.0 / config.update_rate_hz());
-        util::LoopPacer pacer(std::chrono::steady_clock::now(),
-                              std::chrono::duration_cast<std::chrono::steady_clock::duration>(period));
+        util::LoopPacer pacer(std::chrono::steady_clock::now(), std::chrono::duration_cast<std::chrono::steady_clock::duration>(period));
 
         // Update pass times and overruns, reported with the message path's metrics.
         util::Histogram loop_pass;
         util::Counter loop_overruns;
-        MetricsReporter metrics_reporter(
-            *adapter->node(), std::chrono::duration<double>(config.metrics_period_s()),
-            [&loop_pass, &loop_overruns, connector, period, fleet_name]()
+        MetricsReporter metrics_reporter( *adapter->node(), std::chrono::duration<double>(config.metrics_period_s()), [&loop_pass, &loop_overruns, connector, period, fleet_name]()
             {
                 nlohmann::json report = connector->metrics();
                 report["fleet"] = fleet_name;
@@ -452,10 +437,8 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                 if (pacer.overruns() > overruns_before)
                 {
                     loop_overruns.add(pacer.overruns() - overruns_before);
-                    RCLCPP_WARN_THROTTLE(logger, *adapter->node()->get_clock(), 10000,
-                        "Update loop pass took %.0f ms, over the %.0f ms period (%zu overrun(s) so far)",
-                        std::chrono::duration<double, std::milli>(pass_ended - pass_started).count(),
-                        std::chrono::duration<double, std::milli>(period).count(), pacer.overruns());
+                    RCLCPP_WARN_THROTTLE(logger, *adapter->node()->get_clock(), 10000,  "Update loop pass took %.0f ms, over the %.0f ms period (%zu overrun(s) so far)",
+                        std::chrono::duration<double, std::milli>(pass_ended - pass_started).count(),std::chrono::duration<double, std::milli>(period).count(), pacer.overruns());
                 }
                 std::this_thread::sleep_until(wake);
             }

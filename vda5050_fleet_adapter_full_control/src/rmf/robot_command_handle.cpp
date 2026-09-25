@@ -28,10 +28,8 @@ std::size_t releasable_count(const std::vector<rmf_traffic::Time> &times, rmf_tr
 }
 }  // namespace
 
-VdaRobotCommandHandle::VdaRobotCommandHandle(
-    const rclcpp::Logger &logger, std::string name, Connector &connector,
-    std::shared_ptr<const rmf_traffic::agv::Graph> graph, double nominal_speed,
-    rclcpp::Clock::SharedPtr clock, bool honor_waypoint_timing, bool stitch_on_replan, const RoutePolicy &route_policy)
+VdaRobotCommandHandle::VdaRobotCommandHandle( const rclcpp::Logger &logger, std::string name, Connector &connector,
+    std::shared_ptr<const rmf_traffic::agv::Graph> graph, double nominal_speed, rclcpp::Clock::SharedPtr clock, bool honor_waypoint_timing, bool stitch_on_replan, const RoutePolicy &route_policy)
   : _logger(logger), _name(std::move(name)), _connector(connector),
     _graph(std::move(graph)),
     _nominal_speed(nominal_speed > 0.0 ? nominal_speed : 0.5),
@@ -134,15 +132,11 @@ void VdaRobotCommandHandle::schedule_replan()
     std::lock_guard<std::mutex> lock(_mutex);
     if (!_replan_at.has_value())
     {
-        _replan_at = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                                            std::chrono::duration<double>(_route_policy.replan_after_s));
+        _replan_at = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(_route_policy.replan_after_s));
     }
 }
 
-void VdaRobotCommandHandle::follow_new_path(
-    const std::vector<rmf_traffic::agv::Plan::Waypoint> &waypoints,
-    ArrivalEstimator next_arrival_estimator,
-    RequestCompleted path_finished_callback)
+void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::Plan::Waypoint> &waypoints, ArrivalEstimator next_arrival_estimator, RequestCompleted path_finished_callback)
 {
     std::unique_lock<std::mutex> command(_command_mutex);
     {
@@ -169,8 +163,7 @@ void VdaRobotCommandHandle::follow_new_path(
     const auto current = _connector.get_data(_name);
     if (!current.has_value())
     {
-        RCLCPP_WARN(_logger, "[%s] follow_new_path: the AGV has no valid pose -- not sending the order, replanning in %.0f s",
-                    _name.c_str(), _route_policy.replan_after_s);
+        RCLCPP_WARN(_logger, "[%s] follow_new_path: the AGV has no valid pose -- not sending the order, replanning in %.0f s", _name.c_str(), _route_policy.replan_after_s);
         {
             std::lock_guard<std::mutex> lock(_mutex);
             _path.reset();

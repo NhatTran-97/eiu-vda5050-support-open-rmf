@@ -12,6 +12,12 @@ struct LinkPolicy
     double offline_state_intervals = 2.0;
     // Time an order may stay unacknowledged by the AGV before it counts as stuck.
     double order_stuck_timeout_s = 15.0;
+    // Time for the AGV state to report a sent order or update before it is sent again unchanged.
+    double order_ack_timeout_s = 5.0;
+    // Times an unacknowledged order or update is sent again; zero turns resending off.
+    int order_resend_attempts = 2;
+    // Cancel an active order the AGV reports that this adapter did not send.
+    bool cancel_unknown_orders = true;
     // Wait for the retained factsheet before the first request, and between further requests.
     double factsheet_first_wait_s = 5.0;
     double factsheet_retry_wait_s = 20.0;

@@ -81,6 +81,9 @@ TEST(ThresholdConfigTest, ThePolicyDefaultsAreTheValuesTheAdapterAlwaysUsed)
     EXPECT_DOUBLE_EQ(route.traffic_pause_timeout_s, 10.0);
     EXPECT_DOUBLE_EQ(route.timed_release_max_delay_s, 0.0);
     EXPECT_DOUBLE_EQ(link.offline_state_intervals, 2.0);
+    EXPECT_DOUBLE_EQ(link.order_ack_timeout_s, 5.0);
+    EXPECT_EQ(link.order_resend_attempts, 2);
+    EXPECT_TRUE(link.cancel_unknown_orders);
     EXPECT_DOUBLE_EQ(RegistrationConfig{}.timeout_s, 30.0);
 }
 
@@ -92,6 +95,7 @@ TEST(ThresholdConfigTest, EveryKeyIsRead)
         "  usable_speed_mps: 0.08\n  early_arrival_warn_s: 4\n  traffic_pause_timeout_s: 12\n"
         "  offline_state_intervals: 3\n  timed_release_max_delay_s: 25\n  node_deviation_xy_m: 0.3\n"
         "  node_deviation_theta_rad: 0.5\n  init_position_timeout_s: 20\n"
+        "  order_ack_timeout_s: 2.5\n  order_resend_attempts: 4\n  cancel_unknown_orders: false\n"
         "  registration:\n    timeout_s: 45\n"));
     EXPECT_DOUBLE_EQ(config.link_policy().state_timeout_s, 20.0);
     EXPECT_DOUBLE_EQ(config.link_policy().order_stuck_timeout_s, 30.5);
@@ -111,6 +115,9 @@ TEST(ThresholdConfigTest, EveryKeyIsRead)
     EXPECT_DOUBLE_EQ(config.node_deviation().xy_m, 0.3);
     EXPECT_DOUBLE_EQ(config.node_deviation().theta_rad, 0.5);
     EXPECT_DOUBLE_EQ(config.init_position_timeout_s(), 20.0);
+    EXPECT_DOUBLE_EQ(config.link_policy().order_ack_timeout_s, 2.5);
+    EXPECT_EQ(config.link_policy().order_resend_attempts, 4);
+    EXPECT_FALSE(config.link_policy().cancel_unknown_orders);
 }
 
 TEST(ThresholdConfigTest, ANullValueKeepsTheDefault)
@@ -137,6 +144,8 @@ TEST(ThresholdConfigTest, ValuesOutOfRangeAreRejectedAtStartup)
         "timed_release_max_delay_s: -1", "timed_release_max_delay_s: 3601",
         "node_deviation_xy_m: 0",        "node_deviation_theta_rad: 0", "node_deviation_theta_rad: 4",
         "init_position_timeout_s: 0",    "init_position_timeout_s: 601",
+        "order_ack_timeout_s: 0",        "order_ack_timeout_s: 3601",  "order_resend_attempts: -1",
+        "order_resend_attempts: 11",     "order_resend_attempts: 1.5", "cancel_unknown_orders: maybe",
     };
     for (const auto &line : bad)
     {

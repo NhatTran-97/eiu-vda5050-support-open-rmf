@@ -49,8 +49,7 @@ PositionUpdate choose_position_update(const rmf_traffic::agv::Graph &graph, cons
             continue;
         }
         const auto &lane = graph.get_lane(index);
-        if (graph.get_waypoint(lane.entry().waypoint_index()).get_map_name() == map_name &&
-            distance_to_lane(graph, lane, point) <= merge_lane_m)
+        if (graph.get_waypoint(lane.entry().waypoint_index()).get_map_name() == map_name && distance_to_lane(graph, lane, point) <= merge_lane_m)
         {
             update.lanes.push_back(index);
         }

@@ -196,6 +196,12 @@ Config::Config(const std::string &config_file)
     read_number("state_timeout_s", _link_policy.state_timeout_s, 1.0, 3600.0);
     read_number("offline_state_intervals", _link_policy.offline_state_intervals, 1.0, 100.0);
     read_number("order_stuck_timeout_s", _link_policy.order_stuck_timeout_s, 1.0, 3600.0);
+    read_number("order_ack_timeout_s", _link_policy.order_ack_timeout_s, 0.1, 3600.0);
+    if (const auto attempts = optional_whole(vda, "order_resend_attempts", "vda5050", 0, 10))
+    {
+        _link_policy.order_resend_attempts = *attempts;
+    }
+    _link_policy.cancel_unknown_orders = optional_bool(vda, "cancel_unknown_orders", "vda5050", true);
     _route_policy.replan_after_s = _link_policy.order_stuck_timeout_s;
     read_number("factsheet_first_wait_s", _link_policy.factsheet_first_wait_s, 0.0, 3600.0);
     read_number("factsheet_retry_wait_s", _link_policy.factsheet_retry_wait_s, 1.0, 3600.0);

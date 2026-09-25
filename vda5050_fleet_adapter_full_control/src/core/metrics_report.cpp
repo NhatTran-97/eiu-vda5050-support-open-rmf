@@ -106,8 +106,7 @@ std::string metrics_summary(const json &now, const json &before)
     return line;
 }
 
-MetricsReporter::MetricsReporter(rclcpp::Node &node, std::chrono::duration<double> period, Collect collect)
-    : _node(node), _collect(std::move(collect)), _started(std::chrono::steady_clock::now()), _last(_started)
+MetricsReporter::MetricsReporter(rclcpp::Node &node, std::chrono::duration<double> period, Collect collect): _node(node), _collect(std::move(collect)), _started(std::chrono::steady_clock::now()), _last(_started)
 {
     if (!(period.count() > 0.0))
     {
