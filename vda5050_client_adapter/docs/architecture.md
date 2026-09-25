@@ -116,18 +116,18 @@ stateDiagram-v2
     SHUTTING_DOWN --> [*]
 ```
 
-`recompute_mode_locked()` checks `shutting_down_` first, before every other
-flag — so `SHUTTING_DOWN` overrides whatever mode the adapter was in the
-moment `start_shutdown()` is called (node destructor), not just a mode
-reachable from a specific state.
+`SHUTTING_DOWN` has priority over every other flag: `start_shutdown()` (node destructor) enters it from any mode.
 
-`AdapterStateMachine` is intentionally narrow:
-- It owns top-level adapter mode, MQTT connectivity, effective driving suppression, fatal-error mode, and built-in pause/resume/cancel confirmations.
-- `OrderManager` still owns route semantics and base/horizon progression.
-- `ActionManager` still owns per-action lifecycle and blocking semantics.
-- `VDA5050Node` translates ROS/MQTT callbacks into state-machine events and publish side effects.
+| Component | Owns |
+|---|---|
+| `AdapterStateMachine` | Adapter mode, MQTT connectivity, driving mask, fatal-error mode, pause/resume/cancel confirmation |
+| `OrderManager` | Route, base/horizon progress |
+| `ActionManager` | Action lifecycle, blocking |
+| `VDA5050Node` | ROS/MQTT callbacks → state-machine events, publishing |
 
-**Superseded cancel:** a `cancelOrder` normally completes only once `!driving && !order_active` (order activity includes a step goal still in flight). When `vda5050_fleet_adapter_full_control` supersedes an order still in progress, `follow_new_path()` issues `cancelOrder` and immediately follows it with the replacement order while the robot is still driving (see that package's `robot_command_handle.cpp`), so that condition never holds and the adapter would stay stuck in `CANCELLING`. When a new order is accepted, `take_pending_cancel()` resolves the still-pending cancel (marks the `cancelOrder` action FINISHED, "superseded by new order") and the mode recomputes to `ORDER_ACTIVE`.
+**Superseded cancel:** `cancelOrder` finishes when `!driving && !order_active` (a step goal in flight counts as active).
+A new order accepted while the cancel is pending finishes it at once (`take_pending_cancel()`, "superseded by new order"),
+since a master may send `cancelOrder` and the replacement order back to back while the robot still drives.
 
 ---
 
@@ -378,14 +378,10 @@ while an order is active and keeps `orderId`/`orderUpdateId` after `cancelOrder`
 
 ## 11b. OrderManager — Order Replacement
 
-A **new** `orderId` (not an update to the active one) supersedes whatever is
-active regardless of remaining route (legacy mode) — this fleet issues one fresh order
-per leg rather than one long stitched order, so that's the normal case, not
-a reason to reject it. The only continuity check kept is that the new
-order's first node matches the AGV's actual last-traversed node **by name**
-(`sequence_id` isn't comparable across orders — each order's base restarts
-at 0). The new order's first step preempts the goal in flight, so no progress of the
-replaced order can reach the new one.
+Legacy mode: a new `orderId` replaces the active order, whatever route remains. Its first node must be the
+last traversed node, compared by `nodeId` (`sequenceId` restarts at 0 per order). Its first step preempts the goal
+in flight, so no progress of the replaced order is applied to it. Strict mode refuses a new `orderId` while an order
+is active.
 
 ---
 

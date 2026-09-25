@@ -143,10 +143,10 @@ handling:
 | `state.driving` | Masked while paused, action-blocked or faulted | Driver value |
 | Running HARD/SOFT action | Route keeps going | Route waits (step goal cancelled) until it ends |
 
-Both modes: an order or instantActions message that fails to parse (bad JSON, unknown enum such as
-`"blockingType": "hard"`) is reported as `validationError` and not executed; an order repeating the
-current `orderId` and `orderUpdateId` is ignored (VDA5050 6.6.4.3, a master resend); `factsheetRequest`
-republishes the factsheet.
+Both modes:
+- An order or instantActions message that fails to parse (bad JSON, unknown enum) → `validationError`, not executed.
+- An order repeating the current `orderId` and `orderUpdateId` → ignored (VDA5050 6.6.4.3).
+- `factsheetRequest` → factsheet republished.
 
 ## Testing
 
@@ -166,7 +166,7 @@ VDA5050_TEST_BROKER=tcp://127.0.0.1:18830 ROS_DOMAIN_ID=77 ROS_AUTOMATIC_DISCOVE
 | `test_order_manager` | 59 | Accept, stitch, newBaseRequest, cancel, reject, order replacement, next step and progress, strict mode |
 | `test_action_manager` | 39 | NONE/SOFT/HARD blocking, control actions, sequential HARD, pause/resume/cancel, HARD-wait timeout, instant action cap |
 | `test_converters` | 50 | JSON round-trips, schema compliance, strict enums, ROS↔internal |
-| `test_full_control_compat` | 64 | `vda5050_fleet_adapter_full_control` builders/parsers against the client; live node + fake `NavigateToNode` server + MQTT in both modes: route steps, update without resend, preemption, cancel/pause/resume, blocking actions, failed/dropped/abandoned steps, driver restart, lost driver, stale goals at start, local status topics, factsheetRequest (54 cases need `VDA5050_TEST_BROKER`) |
+| `test_full_control_compat` | 64 | Client against `full_control` builders/parsers; live node + fake `NavigateToNode` server + MQTT, both modes (54 cases need `VDA5050_TEST_BROKER`) |
 
 `test_full_control_compat` compiles sources from `../vda5050_fleet_adapter_full_control`
 (CMake cache `VDA5050_FULL_CONTROL_SOURCE_DIR`); it is skipped when they are absent.
