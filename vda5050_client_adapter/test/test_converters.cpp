@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -798,4 +799,54 @@ TEST(RosConverterTest, ActionStatusStringMapping) {
   EXPECT_EQ(internal_from_ros_action_status("FINISHED"),      vda5050::ActionStatus::FINISHED);
   EXPECT_EQ(internal_from_ros_action_status("FAILED"),        vda5050::ActionStatus::FAILED);
   EXPECT_EQ(internal_from_ros_action_status("other"),         vda5050::ActionStatus::WAITING);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Strict enum parsing
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(JsonConverterTest, UnknownBlockingTypeIsRejected) {
+  const auto parse = [](const nlohmann::json& blocking) {
+    return nlohmann::json{{"actionType", "pick"}, {"actionId", "a1"}, {"blockingType", blocking}}
+      .get<vda5050::Action>();
+  };
+  EXPECT_THROW(parse("hard"), std::invalid_argument);
+  EXPECT_THROW(parse(""), std::invalid_argument);
+  EXPECT_THROW(parse(2), std::invalid_argument);
+  EXPECT_EQ(parse("HARD").blocking_type, vda5050::BlockingType::HARD);
+  EXPECT_EQ(parse("SOFT").blocking_type, vda5050::BlockingType::SOFT);
+  EXPECT_EQ(parse("NONE").blocking_type, vda5050::BlockingType::NONE);
+}
+
+TEST(JsonConverterTest, OrderWithAnUnknownEnumFailsToParse) {
+  const auto order = nlohmann::json::parse(R"({
+    "headerId": 1, "timestamp": "2026-01-01T00:00:00.000Z", "version": "2.1.0",
+    "manufacturer": "M", "serialNumber": "S", "orderId": "o", "orderUpdateId": 0,
+    "nodes": [{"nodeId": "n1", "sequenceId": 0, "released": true,
+               "actions": [{"actionType": "pick", "actionId": "a1", "blockingType": "hard"}]}],
+    "edges": []})");
+  EXPECT_THROW(order.get<vda5050::Order>(), std::invalid_argument);
+}
+
+TEST(JsonConverterTest, EveryEnumNameRoundTrips) {
+  for (const auto* name : {"WAITING", "INITIALIZING", "RUNNING", "PAUSED", "FINISHED", "FAILED"}) {
+    const nlohmann::json j = nlohmann::json(name).get<vda5050::ActionStatus>();
+    EXPECT_EQ(j.get<std::string>(), name);
+  }
+  for (const auto* name : {"AUTOMATIC", "SEMIAUTOMATIC", "MANUAL", "SERVICE", "TEACHIN"}) {
+    const nlohmann::json j = nlohmann::json(name).get<vda5050::OperatingMode>();
+    EXPECT_EQ(j.get<std::string>(), name);
+  }
+  for (const auto* name : {"ONLINE", "OFFLINE", "CONNECTIONBROKEN"}) {
+    const nlohmann::json j = nlohmann::json(name).get<vda5050::ConnectionState>();
+    EXPECT_EQ(j.get<std::string>(), name);
+  }
+  EXPECT_THROW(nlohmann::json("RUN").get<vda5050::ActionStatus>(), std::invalid_argument);
+}
+
+TEST(RosConverterTest, UnknownOperatingModeNameIsNotParsed) {
+  EXPECT_EQ(vda5050_adapter::parse_operating_mode("MANUAL"), vda5050::OperatingMode::MANUAL);
+  EXPECT_EQ(vda5050_adapter::parse_operating_mode("AUTOMATIC"), vda5050::OperatingMode::AUTOMATIC);
+  EXPECT_FALSE(vda5050_adapter::parse_operating_mode("manual").has_value());
+  EXPECT_FALSE(vda5050_adapter::parse_operating_mode("").has_value());
 }

@@ -13,6 +13,7 @@
  *  - Edge actions cancelled when edge is left before completion
  *  - Feedback: set_action_running/finished/failed/paused
  *  - State queries: action_states, has_active_actions, is_hard_blocked, is_soft_blocked
+ *  - Control actions bypass blocking; sequential HARD actions; finished instant action cap
  */
 
 #include <gtest/gtest.h>
@@ -682,4 +683,169 @@ TEST(ActionManagerTest, IdleManagerHasNoActiveActions) {
   EXPECT_FALSE(mgr.is_hard_blocked());
   EXPECT_FALSE(mgr.is_soft_blocked());
   EXPECT_TRUE(mgr.action_states().empty());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Control actions (instant actions the adapter executes itself)
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+const std::vector<std::string> kControlTypes{"cancelOrder", "startPause", "stopPause", "stateRequest"};
+
+}  // namespace
+
+TEST(ActionManagerTest, HardControlActionRunsWhileAHardOrderActionRuns) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_control_action_types(kControlTypes);
+  std::vector<std::string> executed, paused;
+  mgr.set_execute_callback([&](const vda5050::Action& a){ executed.push_back(a.action_id); });
+  mgr.set_pause_callback([&](const std::string& id){ paused.push_back(id); });
+
+  mgr.sync_order_actions({make_node("n1", 0, {make_action("lift", "lift", vda5050::BlockingType::HARD)})}, {});
+  mgr.on_node_reached("n1", 0);
+  mgr.set_action_running("lift");
+  executed.clear();
+
+  mgr.process_instant_actions(make_instant({make_action("c1", "cancelOrder", vda5050::BlockingType::HARD)}));
+  EXPECT_EQ(executed, std::vector<std::string>{"c1"});
+  EXPECT_TRUE(paused.empty());
+}
+
+TEST(ActionManagerTest, RunningControlActionNeitherBlocksNorGetsPausedForHard) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_control_action_types(kControlTypes);
+  std::vector<std::string> executed, paused;
+  mgr.set_execute_callback([&](const vda5050::Action& a){ executed.push_back(a.action_id); });
+  mgr.set_pause_callback([&](const std::string& id){ paused.push_back(id); });
+
+  mgr.process_instant_actions(make_instant({make_action("p1", "startPause", vda5050::BlockingType::HARD)}));
+  mgr.set_action_running("p1");
+  EXPECT_FALSE(mgr.is_hard_blocked());
+  executed.clear();
+
+  mgr.process_instant_actions(make_instant({make_action("h1", "t", vda5050::BlockingType::HARD)}));
+  EXPECT_EQ(executed, std::vector<std::string>{"h1"});
+  EXPECT_TRUE(paused.empty());
+}
+
+TEST(ActionManagerTest, PauseAllAndResumeAllSkipControlActions) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_control_action_types(kControlTypes);
+  std::vector<std::string> paused;
+  mgr.set_execute_callback([](const vda5050::Action&){});
+  mgr.set_pause_callback([&](const std::string& id){ paused.push_back(id); });
+
+  mgr.process_instant_actions(make_instant({make_action("c1", "cancelOrder"), make_action("x1", "beep")}));
+  mgr.set_action_running("c1");
+  mgr.set_action_running("x1");
+
+  mgr.pause_all("p1");
+  EXPECT_EQ(paused, std::vector<std::string>{"x1"});
+}
+
+TEST(ActionManagerTest, WithoutControlTypesInstantActionsKeepBlockingRules) {
+  vda5050_adapter::ActionManager mgr;
+  std::vector<std::string> executed;
+  mgr.set_execute_callback([&](const vda5050::Action& a){ executed.push_back(a.action_id); });
+
+  mgr.process_instant_actions(make_instant({make_action("h1", "t", vda5050::BlockingType::HARD)}));
+  mgr.set_action_running("h1");
+  executed.clear();
+
+  mgr.process_instant_actions(make_instant({make_action("c1", "cancelOrder")}));
+  EXPECT_TRUE(executed.empty());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sequential HARD actions (VDA5050 §6.12, strict mode)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(ActionManagerSequentialTest, HardActionWaitsForRunningActionsWithoutPausingThem) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_sequential_hard_actions(true);
+  std::vector<std::string> executed, paused;
+  mgr.set_execute_callback([&](const vda5050::Action& a){ executed.push_back(a.action_id); });
+  mgr.set_pause_callback([&](const std::string& id){ paused.push_back(id); });
+
+  mgr.process_instant_actions(make_instant({make_action("none1")}));
+  mgr.set_action_running("none1");
+  executed.clear();
+
+  mgr.process_instant_actions(make_instant({make_action("hard1", "t", vda5050::BlockingType::HARD)}));
+  EXPECT_TRUE(executed.empty());
+  EXPECT_TRUE(paused.empty());
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::WAITING);
+
+  mgr.set_action_finished("none1");
+  EXPECT_EQ(executed, std::vector<std::string>{"hard1"});
+}
+
+TEST(ActionManagerSequentialTest, LaterActionsQueueBehindAWaitingHardAction) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_sequential_hard_actions(true);
+  std::vector<std::string> executed;
+  mgr.set_execute_callback([&](const vda5050::Action& a){ executed.push_back(a.action_id); });
+
+  mgr.sync_order_actions({make_node("n1", 0, {
+    make_action("a1"), make_action("h1", "t", vda5050::BlockingType::HARD), make_action("a2")})}, {});
+  mgr.on_node_reached("n1", 0);
+  EXPECT_EQ(executed, std::vector<std::string>{"a1"});
+
+  mgr.set_action_running("a1");
+  mgr.set_action_finished("a1");
+  EXPECT_EQ(executed, (std::vector<std::string>{"a1", "h1"}));
+
+  mgr.set_action_running("h1");
+  mgr.set_action_finished("h1");
+  EXPECT_EQ(executed, (std::vector<std::string>{"a1", "h1", "a2"}));
+}
+
+TEST(ActionManagerSequentialTest, WaitingHardActionNeverTimesOut) {
+  using namespace std::chrono_literals;
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_sequential_hard_actions(true);
+  mgr.set_execute_callback([](const vda5050::Action&){});
+
+  mgr.process_instant_actions(make_instant({make_action("none1")}));
+  mgr.set_action_running("none1");
+  mgr.process_instant_actions(make_instant({make_action("hard1", "t", vda5050::BlockingType::HARD)}));
+
+  const auto t0 = std::chrono::steady_clock::now();
+  EXPECT_FALSE(mgr.check_timeouts(t0, 1s));
+  EXPECT_FALSE(mgr.check_timeouts(t0 + 60s, 1s));
+  EXPECT_EQ(status_of(mgr, "hard1"), vda5050::ActionStatus::WAITING);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Finished instant action history
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(ActionManagerTest, FinishedInstantActionsAreCappedOldestFirst) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_control_action_types(kControlTypes);
+  mgr.set_max_finished_instant_actions(3);
+  mgr.set_execute_callback([&](const vda5050::Action& a) {
+    if (a.action_type == "stateRequest") mgr.set_action_finished(a.action_id);
+  });
+
+  mgr.sync_order_actions({make_node("n1", 0, {make_action("order_action")})}, {});
+  mgr.process_instant_actions(make_instant({make_action("running", "beep")}));
+  for (int i = 0; i < 10; ++i) {
+    mgr.process_instant_actions(make_instant({make_action("sr" + std::to_string(i), "stateRequest")}));
+  }
+
+  const auto states = mgr.action_states();
+  std::vector<std::string> ids;
+  for (const auto& s : states) ids.push_back(s.action_id);
+  EXPECT_EQ(ids, (std::vector<std::string>{"order_action", "running", "sr7", "sr8", "sr9"}));
+}
+
+TEST(ActionManagerTest, ZeroLimitKeepsEveryFinishedInstantAction) {
+  vda5050_adapter::ActionManager mgr;
+  mgr.set_execute_callback([&](const vda5050::Action& a) { mgr.set_action_finished(a.action_id); });
+  for (int i = 0; i < 100; ++i) {
+    mgr.process_instant_actions(make_instant({make_action("sr" + std::to_string(i), "stateRequest")}));
+  }
+  EXPECT_EQ(mgr.action_states().size(), 100u);
 }

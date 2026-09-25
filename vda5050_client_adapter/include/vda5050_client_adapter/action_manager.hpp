@@ -4,9 +4,9 @@
 #include <functional>
 #include <mutex>
 #include <optional>
-#include <queue>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "vda5050_client_adapter/vda5050_types.hpp"
@@ -22,8 +22,12 @@ namespace vda5050_adapter {
  *
  * Blocking types:
  *   - NONE:  Runs concurrently with other actions; does not block driving.
- *   - SOFT:  Driving stops; NONE actions may run in parallel; other SOFT/HARD wait.
- *   - HARD:  Pauses all other actions; runs alone; resumes others when finished.
+ *   - SOFT:  Runs concurrently with other actions; driving stops.
+ *   - HARD:  Runs alone. By default it pauses the running actions first; with sequential
+ *            HARD actions it waits for them to end and later actions wait for it (VDA5050 §6.12).
+ *
+ * Control actions (instant actions the adapter handles itself, e.g. cancelOrder) are
+ * dispatched at once and neither block nor get blocked by other actions.
  *
  * Key responsibilities:
  *  - Ingest and queue node/edge/instant actions with their trigger conditions
@@ -32,6 +36,7 @@ namespace vda5050_adapter {
  *  - Dispatch callbacks (execute, pause, resume, cancel) to robot driver
  *  - Handle pause/resume/cancel requests on all active actions
  *  - Timeout HARD actions waiting too long for pause confirmation
+ *  - Keep a bounded history of finished instant actions
  *  - Thread-safe: all public methods callable from any thread
  */
 class ActionManager {
@@ -143,6 +148,13 @@ public:
   // Return true if any order action (not instant action) is active.
   bool has_active_order_actions() const;
 
+  // Instant action types (types) the caller executes itself; they bypass blocking rules.
+  void set_control_action_types(const std::vector<std::string>& types);
+  // Run HARD actions strictly in sequence instead of pausing the running ones.
+  void set_sequential_hard_actions(bool sequential);
+  // Keep at most max_count finished/failed instant actions (0 = keep all until the next order).
+  void set_max_finished_instant_actions(std::size_t max_count);
+
   // Set callback to execute when action (action) should start.
   void set_execute_callback(ActionExecuteCallback cb);
   // Set callback to pause action by id (action_id).
@@ -162,6 +174,9 @@ private:
     std::vector<std::string>      pause_action_ids;
     std::vector<std::string>      resume_action_ids;
     std::vector<std::string>      cancel_action_ids;
+
+    // Append other's ids; callbacks already set here are kept.
+    void append(PendingCallbacks&& other);
   };
 
   enum class TriggerKind {
@@ -220,10 +235,16 @@ private:
   // Invoke all callbacks in pending (pending) (static, thread-safe).
   static void invoke_pending_callbacks(const PendingCallbacks& pending);
 
-  // Return true if any HARD-blocking action is INITIALIZING/RUNNING/PAUSED (mutex held).
+  // Return true if any non-control HARD action is INITIALIZING/RUNNING (mutex held).
   bool any_hard_running() const;
-  // Return true if any SOFT-blocking action is INITIALIZING/RUNNING/PAUSED (mutex held).
+  // Return true if any non-control SOFT action is INITIALIZING/RUNNING (mutex held).
   bool any_soft_running() const;
+  // Return true if any non-control action other than action_id is INITIALIZING/RUNNING/PAUSED (mutex held).
+  bool any_other_active(const std::string& action_id) const;
+  // Return true if rec is an instant action the caller handles itself (mutex held).
+  bool is_control(const ActionRecord& rec) const;
+  // Drop the oldest finished instant actions beyond the configured limit (mutex held).
+  void prune_finished_instant_actions_locked();
 
   // ─── State ────────────────────────────────────────────────────────────────
 
@@ -232,6 +253,9 @@ private:
   std::vector<std::string>                              action_order_;
   std::unordered_map<std::string, ActionRecord>         actions_;
   bool                                                  dispatch_paused_{false};
+  std::unordered_set<std::string>                       control_action_types_;
+  bool                                                  sequential_hard_actions_{false};
+  std::size_t                                           max_finished_instant_actions_{0};
 
   // ─── Callbacks ────────────────────────────────────────────────────────────
 

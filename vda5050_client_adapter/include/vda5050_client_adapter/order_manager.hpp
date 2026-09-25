@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -17,7 +19,16 @@ namespace vda5050_adapter {
 struct OrderAcceptResult
 {
   bool        accepted{false};           ///< true if order passed validation and was accepted.
-  std::string rejection_reason;          ///< Reason if accepted=false.
+  bool        duplicate{false};          ///< true if it repeats the current orderId and orderUpdateId (ignored).
+  std::string error_type;                ///< VDA5050 errorType if rejected.
+  std::string rejection_reason;          ///< Reason if rejected.
+
+  static OrderAcceptResult ok() { return {true, false, "", ""}; }
+  static OrderAcceptResult ignored_duplicate() { return {false, true, "", ""}; }
+  static OrderAcceptResult rejected(std::string type, std::string reason)
+  {
+    return {false, false, std::move(type), std::move(reason)};
+  }
 };
 
 /// Data passed with a node-reached event.
@@ -26,6 +37,16 @@ struct NodeReachedEvent
   std::string node_id;
   uint32_t    sequence_id;
   double      distance_driven;  ///< meters since previous node
+};
+
+/// Next node to drive to and the edge leading to it.
+struct RouteStep
+{
+  std::string                 order_id;
+  uint32_t                    order_update_id{0};
+  vda5050::Node               node;
+  std::optional<vda5050::Edge> incoming_edge;  ///< absent for the first node of an order
+  bool                        edge_entered{false};
 };
 
 /**
@@ -40,7 +61,7 @@ struct NodeReachedEvent
  *  - Validate order acceptance per VDA5050 spec and internal invariants
  *  - Stitch order updates while protecting already-traversed nodes
  *  - Track base/horizon and emit newBaseRequest when base depletes below threshold
- *  - Report navigation events (node_reached, edge_entered, edge_completed)
+ *  - Provide the next route step and apply its progress (edge entered/completed, node reached)
  *  - Fire callbacks on order acceptance/cancellation and base request signals
  */
 class OrderManager
@@ -93,19 +114,43 @@ public:
   OrderAcceptResult process_order(const vda5050::Order& order);
 
   /**
-   * @brief Cancel the active order.
+   * @brief Check the node/edge structure of an order (VDA5050 §6.6).
+   * @return Empty string if valid, otherwise the reason.
+   */
+  static std::string validate_structure(const vda5050::Order& order);
+
+  /**
+   * @brief Enable strict VDA5050 order handling.
+   *
+   * Both modes ignore an order repeating the current orderId and orderUpdateId (VDA5050 6.6.4.3).
+   * Strict: structure validation (validationError), a new orderId is refused while an order is
+   * active, a lower orderUpdateId is an orderUpdateError, updates must stitch at the base end,
+   * and cancel_order() keeps orderId/orderUpdateId.
+   * Default: a new orderId replaces the active order, every rejection is an orderError, an update
+   * may also stitch at the horizon end, and cancel_order() clears the order identity.
+   */
+  void set_strict_mode(bool strict);
+
+  // Raise newBaseRequest when fewer than min_base_nodes released nodes remain and a horizon exists.
+  void set_new_base_request_min_base_nodes(std::size_t min_base_nodes);
+
+  /**
+   * @brief Cancel the active order (see set_strict_mode() for what is kept).
    * @param order_id If non-empty, only cancel if it matches the current order ID.
    */
   void cancel_order(const std::string& order_id = "");
 
-  // ─── Navigation feedback (called by the robot driver) ─────────────────────
+  // ─── Route progress ───────────────────────────────────────────────────────
 
+  /// First released node not yet reached, with its incoming edge; nullopt without one.
+  std::optional<RouteStep> next_step() const;
+
+  /// Pops the next base node; false unless it is (node_id, sequence_id).
   bool node_reached(const NodeReachedEvent& evt);
+  /// Moves the next base edge to the active edges; false unless it is (edge_id, sequence_id).
   bool edge_entered(const std::string& edge_id, uint32_t sequence_id);
+  /// Removes an active edge; false if (edge_id, sequence_id) is not active.
   bool edge_completed(const std::string& edge_id, uint32_t sequence_id);
-
-  // True (once) for an edge_entered that arrives after its edge_completed; the caller ignores it.
-  bool absorb_late_edge_entered(const std::string& edge_id, uint32_t sequence_id);
 
   // Live progress on the current leg, streamed from the driver between
   // node_reached events (node_reached still sets the exact value on arrival).
@@ -150,9 +195,6 @@ private:
   void apply_order(const vda5050::Order& order);
   void apply_stitch(const vda5050::Order& update);
 
-  bool is_stale_node(const std::string& node_id) const;
-  bool is_stale_edge(const std::string& edge_id) const;
-
   static vda5050::NodeState node_to_state(const vda5050::Node& n);
   static vda5050::EdgeState edge_to_state(const vda5050::Edge& e);
 
@@ -168,22 +210,17 @@ private:
   uint32_t    last_node_sequence_id_{0};
   double      distance_since_last_node_{0.0};
 
-  std::vector<vda5050::Node>  remaining_base_nodes_;
-  std::vector<vda5050::Edge>  remaining_base_edges_;
+  std::deque<vda5050::Node>   remaining_base_nodes_;   ///< Consumed from the front as the robot advances.
+  std::deque<vda5050::Edge>   remaining_base_edges_;
   std::vector<vda5050::Node>  horizon_nodes_;
   std::vector<vda5050::Edge>  horizon_edges_;
   std::vector<vda5050::Edge>  active_edges_;  ///< Edges currently being traversed (entered but not completed)
 
-  // Node/edge ids the previously active order still knew about, snapshotted
-  // right before apply_order() clears it -- see is_stale_node/is_stale_edge.
-  std::vector<std::string> stale_node_ids_;
-  std::vector<std::string> stale_edge_ids_;
-
-  // Edges completed before their edge_entered arrived.
-  std::vector<std::pair<std::string, uint32_t>> completed_before_entered_;
-
   bool new_base_request_{false};
   bool order_active_{false};
+
+  bool        strict_mode_{false};
+  std::size_t new_base_request_min_base_nodes_{2};
 
   // ─── Callbacks ────────────────────────────────────────────────────────────
 

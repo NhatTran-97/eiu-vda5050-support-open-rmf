@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ─── ROS2 / ament dependencies ────────────────────────────────────────────────
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(vda5050_msgs REQUIRED)
 
@@ -106,6 +107,7 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
 
 ament_target_dependencies(${PROJECT_NAME}_core
   rclcpp
+  rclcpp_action
   std_msgs
   vda5050_msgs
 )
@@ -174,7 +176,49 @@ if(BUILD_TESTING)
   ament_add_gtest(test_adapter_state_machine
     test/test_adapter_state_machine.cpp)
   target_link_libraries(test_adapter_state_machine ${PROJECT_NAME}_core)
+
+  # Wire compatibility with vda5050_fleet_adapter_full_control: its VDA5050 message
+  # builders/parsers are compiled in from its source tree. Live cases need VDA5050_TEST_BROKER.
+  set(VDA5050_FULL_CONTROL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vda5050_fleet_adapter_full_control"
+    CACHE PATH "Source tree of vda5050_fleet_adapter_full_control for test_full_control_compat")
+  set(_full_control_sources
+    src/vda5050/message_builder.cpp
+    src/vda5050/order_handler.cpp
+    src/vda5050/instant_action_handler.cpp
+    src/vda5050/json_read.cpp
+    src/vda5050/state_handler.cpp
+    src/vda5050/cancel_tracker.cpp
+    src/vda5050/factsheet_handler.cpp)
+  set(_full_control_found TRUE)
+  set(_full_control_files "")
+  foreach(_source ${_full_control_sources})
+    if(NOT EXISTS "${VDA5050_FULL_CONTROL_SOURCE_DIR}/${_source}")
+      set(_full_control_found FALSE)
+    endif()
+    list(APPEND _full_control_files "${VDA5050_FULL_CONTROL_SOURCE_DIR}/${_source}")
+  endforeach()
+
+  if(_full_control_found)
+    ament_add_gtest(test_full_control_compat
+      test/test_full_control_compat.cpp
+      ${_full_control_files}
+      TIMEOUT 300)
+    target_include_directories(test_full_control_compat PRIVATE
+      "${VDA5050_FULL_CONTROL_SOURCE_DIR}/include")
+    target_link_libraries(test_full_control_compat ${PROJECT_NAME}_core)
+    ament_target_dependencies(test_full_control_compat
+      rclcpp
+      rclcpp_action
+      std_msgs
+      vda5050_msgs
+    )
+  else()
+    message(STATUS "[vda5050_client_adapter] vda5050_fleet_adapter_full_control sources not found "
+                   "in ${VDA5050_FULL_CONTROL_SOURCE_DIR} -- test_full_control_compat skipped")
+  endif()
 endif()
 
-ament_export_dependencies(rclcpp std_msgs vda5050_msgs)
+ament_export_include_directories(include)
+ament_export_libraries(${PROJECT_NAME}_core)
+ament_export_dependencies(rclcpp rclcpp_action std_msgs vda5050_msgs)
 ament_package()

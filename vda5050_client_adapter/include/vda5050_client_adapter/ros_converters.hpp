@@ -13,6 +13,8 @@
 #include "vda5050_client_adapter/vda5050_types.hpp"
 
 #include <limits>
+#include <optional>
+#include <string>
 
 #include <vda5050_msgs/msg/action.hpp>
 #include <vda5050_msgs/msg/action_parameter.hpp>
@@ -48,6 +50,17 @@ namespace vda5050_adapter {
 // ─────────────────────────────────────────────────────────────────────────────
 // String ↔ Enum helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+// Operating mode for a VDA5050 name (s), or nullopt if the name is unknown.
+inline std::optional<vda5050::OperatingMode>
+parse_operating_mode(const std::string& s) {
+  if (s == "AUTOMATIC")     return vda5050::OperatingMode::AUTOMATIC;
+  if (s == "SEMIAUTOMATIC") return vda5050::OperatingMode::SEMIAUTOMATIC;
+  if (s == "MANUAL")        return vda5050::OperatingMode::MANUAL;
+  if (s == "SERVICE")       return vda5050::OperatingMode::SERVICE;
+  if (s == "TEACHIN")       return vda5050::OperatingMode::TEACHIN;
+  return std::nullopt;
+}
 
 inline vda5050::OperatingMode
 internal_from_ros_operating_mode(const std::string& s) {

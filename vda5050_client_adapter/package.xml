@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vda5050_client_adapter</name>
+  <version>2.1.0</version>
+  <description>
+    VDA5050 v2.1.0 adapter for ROS 2.
+    Bridges Master Control (via MQTT/JSON) with the robot's internal ROS2 software.
+    Implements order management, action lifecycle, state reporting,
+    connection handling, and visualization topics.
+  </description>
+  <maintainer email="nhat.tranduy1997@gmail.com">duynhat</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- ROS2 dependencies -->
+  <depend>rclcpp</depend>
+  <depend>rclcpp_action</depend>
+  <depend>std_msgs</depend>
+  <depend>vda5050_msgs</depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+
+  <!-- System dependencies (installed via apt) -->
+  <!-- sudo apt install libpaho-mqttpp-dev libpaho-mqtt-dev -->
+  <build_depend>libpaho-mqttpp-dev</build_depend>
+  <exec_depend>libpaho-mqttpp-dev</exec_depend>
+  <build_depend>libpaho-mqtt-dev</build_depend>
+  <exec_depend>libpaho-mqtt-dev</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

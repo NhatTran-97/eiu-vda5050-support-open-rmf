@@ -129,4 +129,21 @@ TEST(AdapterStateMachineTest, ReplacedPendingPauseResumeCancelActionsAreReturned
   EXPECT_EQ(sm.request_cancel("cancel-2"), "cancel-1");
 }
 
+TEST(AdapterStateMachineTest, DrivingIsMaskedByDefaultAndActualWhenRequested)
+{
+  AdapterStateMachine sm;
+  sm.mark_initialized();
+  sm.on_mqtt_connection_changed(true);
+  sm.on_driver_driving_changed(true);
+  sm.on_action_blocking_changed(true);
+  EXPECT_FALSE(sm.reported_driving());
+
+  sm.set_report_actual_driving(true);
+  EXPECT_TRUE(sm.reported_driving());
+  sm.on_fatal_error_changed(true);
+  EXPECT_TRUE(sm.reported_driving());
+  sm.on_driver_driving_changed(false);
+  EXPECT_FALSE(sm.reported_driving());
+}
+
 }  // namespace

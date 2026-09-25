@@ -105,8 +105,11 @@ public:
   bool mqtt_connected() const;
   // Return true if adapter is in PAUSED mode.
   bool paused() const;
-  // Return true if last reported driver state was driving.
+  // Driving flag for the state message: the driver's value, or (default) masked while
+  // paused, action-blocked or faulted.
   bool reported_driving() const;
+  // Report the driver's driving flag unmasked (actual).
+  void set_report_actual_driving(bool actual);
 
   // Convert AdapterMode (mode) to human-readable string.
   static const char* to_string(AdapterMode mode);
@@ -130,6 +133,7 @@ private:
   bool driver_driving_{false};
   bool driver_paused_{false};
   bool fatal_error_{false};
+  bool report_actual_driving_{false};
 
   std::string pending_pause_action_id_;
   std::string pending_resume_action_id_;

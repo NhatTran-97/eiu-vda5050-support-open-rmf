@@ -83,9 +83,11 @@ std::string AdapterStateMachine::request_pause(const std::string& action_id)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   std::string replaced;
-  if (!pending_pause_action_id_.empty() && pending_pause_action_id_ != action_id) {
+  if (!pending_pause_action_id_.empty() && pending_pause_action_id_ != action_id) 
+  {
     replaced = pending_pause_action_id_;
-  } else if (!pending_resume_action_id_.empty()) {
+  } else if (!pending_resume_action_id_.empty()) 
+  {
     replaced = pending_resume_action_id_;
   }
   pending_pause_action_id_ = action_id;
@@ -99,9 +101,11 @@ std::string AdapterStateMachine::request_resume(const std::string& action_id)
 {
   std::lock_guard<std::mutex> lock(mutex_);
   std::string replaced;
-  if (!pending_resume_action_id_.empty() && pending_resume_action_id_ != action_id) {
+  if (!pending_resume_action_id_.empty() && pending_resume_action_id_ != action_id) 
+  {
     replaced = pending_resume_action_id_;
-  } else if (!pending_pause_action_id_.empty()) {
+  } else if (!pending_pause_action_id_.empty()) 
+  {
     replaced = pending_pause_action_id_;
   }
   pending_resume_action_id_ = action_id;
@@ -144,22 +148,22 @@ std::vector<CompletedControlAction> AdapterStateMachine::consume_ready_control_a
 
   std::vector<CompletedControlAction> completed;
 
-  if (!pending_pause_action_id_.empty() && driver_paused_) {
+  if (!pending_pause_action_id_.empty() && driver_paused_)
+  {
     completed.push_back(
       {ControlActionKind::START_PAUSE, pending_pause_action_id_, "Pause activated"});
     pending_pause_action_id_.clear();
   }
 
-  if (!pending_resume_action_id_.empty() && !driver_paused_) {
-    completed.push_back(
-      {ControlActionKind::STOP_PAUSE, pending_resume_action_id_, "Pause deactivated"});
+  if (!pending_resume_action_id_.empty() && !driver_paused_) 
+  {
+    completed.push_back({ControlActionKind::STOP_PAUSE, pending_resume_action_id_, "Pause deactivated"});
     pending_resume_action_id_.clear();
   }
 
   if (!pending_cancel_action_id_.empty() && !driver_driving_ && !order_active_)
   {
-    completed.push_back(
-      {ControlActionKind::CANCEL_ORDER, pending_cancel_action_id_, "Order cancelled"});
+    completed.push_back({ControlActionKind::CANCEL_ORDER, pending_cancel_action_id_, "Order cancelled"});
     pending_cancel_action_id_.clear();
   }
 
@@ -192,11 +196,19 @@ bool AdapterStateMachine::paused() const
   return driver_paused_;
 }
 
-// Return true if driver reported driving
+// Return the driving flag for the state message (see header).
 bool AdapterStateMachine::reported_driving() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  if (report_actual_driving_) return driver_driving_;
   return driver_driving_ && !driver_paused_ && !action_blocked_ && !fatal_error_;
+}
+
+// Report the driver's driving flag as is (actual) or masked.
+void AdapterStateMachine::set_report_actual_driving(bool actual)
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  report_actual_driving_ = actual;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,47 +248,56 @@ const char* AdapterStateMachine::to_string(AdapterMode mode)
 // Recompute mode_ from all internal flags (priority: shutting_down > initialized > fatal_error > mqtt_connected > pending_cancel > pending_pause > pending_resume > paused > action_blocked > order_active). Must hold mutex.
 void AdapterStateMachine::recompute_mode_locked()
 {
-  if (shutting_down_) {
+  if (shutting_down_) 
+  {
     mode_ = AdapterMode::SHUTTING_DOWN;
     return;
   }
 
-  if (!initialized_) {
+  if (!initialized_) 
+  {
     mode_ = AdapterMode::INITIALIZING;
     return;
   }
 
-  if (fatal_error_) {
+  if (fatal_error_)
+   {
     mode_ = AdapterMode::FAULTED;
     return;
   }
 
-  if (!mqtt_connected_) {
+  if (!mqtt_connected_) 
+  {
     mode_ = AdapterMode::CONNECTING;
     return;
   }
 
-  if (!pending_cancel_action_id_.empty()) {
+  if (!pending_cancel_action_id_.empty()) 
+  {
     mode_ = AdapterMode::CANCELLING;
     return;
   }
 
-  if (!pending_pause_action_id_.empty()) {
+  if (!pending_pause_action_id_.empty()) 
+  {
     mode_ = AdapterMode::PAUSE_PENDING;
     return;
   }
 
-  if (!pending_resume_action_id_.empty()) {
+  if (!pending_resume_action_id_.empty()) 
+  {
     mode_ = AdapterMode::RESUME_PENDING;
     return;
   }
 
-  if (driver_paused_) {
+  if (driver_paused_) 
+  {
     mode_ = AdapterMode::PAUSED;
     return;
   }
 
-  if (action_blocked_) {
+  if (action_blocked_) 
+  {
     mode_ = AdapterMode::ACTION_BLOCKED;
     return;
   }

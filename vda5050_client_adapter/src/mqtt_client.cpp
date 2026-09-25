@@ -1,14 +1,27 @@
 #include "vda5050_client_adapter/mqtt_client.hpp"
 
 #include <chrono>
-#include <iostream>
 #include <stdexcept>
 
 #include <mqtt/async_client.h>
+#include <rclcpp/clock.hpp>
+#include <rclcpp/logging.hpp>
 
 namespace vda5050_adapter {
 
 namespace {
+
+rclcpp::Logger logger()
+{
+  return rclcpp::get_logger("vda5050_client_adapter.mqtt");
+}
+
+// Clock for throttled log lines.
+rclcpp::Clock& steady_clock()
+{
+  static rclcpp::Clock clock(RCL_STEADY_TIME);
+  return clock;
+}
 
 // Run callable (fn) safely, catching and logging exceptions (what): Paho callbacks must not throw.
 template <typename Fn>
@@ -16,10 +29,11 @@ void safe_invoke(const char* what, Fn&& fn)
 {
   try {
     fn();
-  } catch (const std::exception& ex) {
-    std::cerr << "[MqttClient] " << what << " threw: " << ex.what() << "\n";
+  } catch (const std::exception& ex) 
+  {
+    RCLCPP_ERROR(logger(), "%s threw: %s", what, ex.what());
   } catch (...) {
-    std::cerr << "[MqttClient] " << what << " threw a non-standard exception\n";
+    RCLCPP_ERROR(logger(), "%s threw a non-standard exception", what);
   }
 }
 
@@ -29,7 +43,8 @@ void safe_invoke(const char* what, Fn&& fn)
 // Internal implementation (Paho callback class)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class MqttClient::Impl: public mqtt::callback,public mqtt::iaction_listener {
+class MqttClient::Impl: public mqtt::callback,public mqtt::iaction_listener 
+{
 public:
   struct SubscriptionEntry 
   {
@@ -69,7 +84,8 @@ public:
     }
 
     // Last Will (CONNECTIONBROKEN for VDA5050)
-    if (!config_.will_topic.empty()) {
+    if (!config_.will_topic.empty()) 
+    {
       auto will = mqtt::message(
         config_.will_topic,
         config_.will_payload,
@@ -81,13 +97,20 @@ public:
     conn_opts_ = conn_builder.finalize();
   }
 
+  // Stop Paho callbacks before any member they use is destroyed.
+  ~Impl()
+  {
+    if (client_) client_->disable_callbacks();
+    client_.reset();
+  }
+
   // ─── mqtt::callback interface ──────────────────────────────────────────────
 
   // Paho callback: resubscribe to all registered topics and invoke on_connected(true).
   void connected(const std::string& /*cause*/) override
   {
     outer_.connected_.store(true);
-    std::cerr << "[MqttClient] Connected to " << config_.broker_url << "\n";
+    RCLCPP_INFO(logger(), "Connected to %s", config_.broker_url.c_str());
 
     std::vector<std::pair<std::string, int>> subscriptions;
     MqttClient::ConnectionCallback on_connected;
@@ -106,8 +129,9 @@ public:
       try
       {
         client_->subscribe(filter, qos);
-      } catch (const mqtt::exception& ex) {
-        std::cerr << "[MqttClient] re-subscribe() failed for '" << filter<< "': " << ex.what() << "\n";
+      } catch (const mqtt::exception& ex) 
+      {
+        RCLCPP_ERROR(logger(), "re-subscribe() failed for '%s': %s", filter.c_str(), ex.what());
       }
     }
 
@@ -115,9 +139,10 @@ public:
   }
 
   // Paho callback: mark disconnected and invoke on_connected(false); Paho auto-reconnect handles recovery.
-  void connection_lost(const std::string& cause) override {
+  void connection_lost(const std::string& cause) override 
+  {
     outer_.connected_.store(false);
-    std::cerr << "[MqttClient] Connection lost: " << cause << "\n";
+    RCLCPP_WARN(logger(), "Connection lost: %s", cause.c_str());
     MqttClient::ConnectionCallback on_connected;
     {
       std::lock_guard<std::mutex> lock(subs_mutex_);
@@ -142,14 +167,16 @@ public:
     {
       std::lock_guard<std::mutex> lock(subs_mutex_);
       callbacks.reserve(subscriptions_.size());
-      for (const auto& [filter, entry] : subscriptions_) {
+      for (const auto& [filter, entry] : subscriptions_) 
+      {
         if (topic_matches(filter, m.topic) && entry.callback)
         {
           callbacks.push_back(entry.callback);
         }
       }
     }
-    for (const auto& cb : callbacks) {
+    for (const auto& cb : callbacks) 
+    {
       safe_invoke("message callback", [&] { cb(m); });
     }
   }
@@ -160,8 +187,9 @@ public:
   // ─── mqtt::iaction_listener interface ─────────────────────────────────────
 
   // Paho callback: log action failure (tok).
-  void on_failure(const mqtt::token& tok) override {
-    std::cerr << "[MqttClient] Action failed: " << tok.get_message_id() << "\n";
+  void on_failure(const mqtt::token& tok) override 
+  {
+    RCLCPP_WARN(logger(), "Action failed: %d", tok.get_message_id());
   }
 
   // Paho callback: action success (unused).
@@ -175,11 +203,14 @@ public:
   {
     // Simple iterative matcher
     size_t fi = 0, ti = 0;
-    while (fi < filter.size() && ti < topic.size()) {
-      if (filter[fi] == '#') {
+    while (fi < filter.size() && ti < topic.size()) 
+    {
+      if (filter[fi] == '#') 
+      {
         return true;  
       }
-      if (filter[fi] == '+') {
+      if (filter[fi] == '+') 
+      {
   
         while (ti < topic.size() && topic[ti] != '/') ++ti;
         ++fi;
@@ -205,13 +236,11 @@ MqttClient::MqttClient(const MqttConfig& config)
   : impl_(std::make_unique<Impl>(*this, config))
 {}
 
-// Clean up: disconnect if connected.
+// Clean up: stop callbacks and reconnect attempts, then disconnect.
 MqttClient::~MqttClient()
 {
-  if (is_connected())
-  {
-    disconnect(3000);
-  }
+  impl_->client_->disable_callbacks();
+  disconnect(3000);
 }
 
 // Connect to broker and register connection callback (on_connected) to be invoked on state changes.
@@ -231,14 +260,13 @@ void MqttClient::connect(ConnectionCallback on_connected)
   }
 }
 
-// Disconnect from broker with timeout (timeout_ms milliseconds); best-effort if already disconnected.
+// Disconnect from broker with timeout (timeout_ms milliseconds); also ends automatic reconnects.
 void MqttClient::disconnect(int timeout_ms)
 {
-  if (!is_connected()) return;
   try
   {
     impl_->client_->disconnect()->wait_for(std::chrono::milliseconds(timeout_ms));
-  } catch (...) { /* best-effort */ }
+  } catch (...) { /* best-effort: not connected */ }
   connected_.store(false);
 }
 
@@ -250,7 +278,7 @@ bool MqttClient::publish(const std::string& topic,
 {
   if (!is_connected())
   {
-    std::cerr << "[MqttClient] Cannot publish: not connected\n";
+    RCLCPP_WARN_THROTTLE(logger(), steady_clock(), 5000, "Cannot publish to %s: not connected", topic.c_str());
     return false;
   }
   try {
@@ -259,7 +287,7 @@ bool MqttClient::publish(const std::string& topic,
     return true;
   } catch (const mqtt::exception& ex)
   {
-    std::cerr << "[MqttClient] publish() failed: " << ex.what() << "\n";
+    RCLCPP_ERROR(logger(), "publish() to %s failed: %s", topic.c_str(), ex.what());
     return false;
   }
 }
@@ -269,7 +297,8 @@ void MqttClient::subscribe(const std::string& topic_filter, int qos, MessageCall
 {
   {
     std::lock_guard<std::mutex> lock(impl_->subs_mutex_);
-    impl_->subscriptions_[topic_filter] = MqttClient::Impl::SubscriptionEntry{
+    impl_->subscriptions_[topic_filter] = MqttClient::Impl::SubscriptionEntry
+    {
       qos, std::move(callback)};
   }
   if (is_connected())
@@ -279,7 +308,7 @@ void MqttClient::subscribe(const std::string& topic_filter, int qos, MessageCall
       impl_->client_->subscribe(topic_filter, qos);
     } catch (const mqtt::exception& ex)
     {
-      std::cerr << "[MqttClient] subscribe() failed: " << ex.what() << "\n";
+      RCLCPP_ERROR(logger(), "subscribe() failed for '%s': %s", topic_filter.c_str(), ex.what());
     }
   }
 }
@@ -298,7 +327,7 @@ void MqttClient::unsubscribe(const std::string& topic_filter)
       impl_->client_->unsubscribe(topic_filter);
     } catch (const mqtt::exception& ex)
     {
-      std::cerr << "[MqttClient] unsubscribe() failed: " << ex.what() << "\n";
+      RCLCPP_ERROR(logger(), "unsubscribe() failed for '%s': %s", topic_filter.c_str(), ex.what());
     }
   }
 }

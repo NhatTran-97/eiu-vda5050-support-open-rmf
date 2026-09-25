@@ -6,13 +6,15 @@
  *  - New order acceptance (base + horizon split)
  *  - Order update / stitching (from base node, from last-traversed)
  *  - Stale / invalid update rejection
- *  - node_reached / edge_completed feedback
+ *  - Route progress: next_step, node_reached, edge_entered / edge_completed
  *  - new_base_request trigger logic
  *  - distance_since_last_node tracking
  *  - cancel_order (matching, empty, mismatched ID)
  *  - Replacement order (allowed regardless of remaining route; blocked only
  *    if it doesn't start from the robot's actual last-traversed node)
  *  - State-query consistency after mutations
+ *  - Strict VDA5050 mode: structure validation, duplicates, orderUpdateError,
+ *    no preemption, orderId kept after cancel, base-end stitching only
  */
 
 #include <gtest/gtest.h>
@@ -227,13 +229,16 @@ TEST(OrderManagerTest, NodeReachedOnEmptyQueueReturnsFalse) {
 // edge_completed feedback
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(OrderManagerTest, EdgeCompletedConsumesEdgeFromBase) {
+TEST(OrderManagerTest, EdgeCompletedRequiresTheEdgeToBeEntered) {
   vda5050_adapter::OrderManager mgr;
   ASSERT_TRUE(mgr.process_order(make_order("o", 1,
     {make_node("n1", 0, true), make_node("n2", 2, true)},
     {make_edge("e12", 1, true, "n1", "n2")}
   )).accepted);
 
+  EXPECT_FALSE(mgr.edge_completed("e12", 1));
+  EXPECT_EQ(mgr.edge_states().size(), 1u);
+  ASSERT_TRUE(mgr.edge_entered("e12", 1));
   ASSERT_TRUE(mgr.edge_completed("e12", 1));
   EXPECT_EQ(mgr.edge_states().size(), 0u);
 }
@@ -334,14 +339,15 @@ TEST(OrderManagerTest, RejectsUpdateWithNonIncreasingUpdateId) {
     {make_node("n1", 0, true)}, {}
   )).accepted);
 
-  // Same ID
+  // Same ID: ignored
   auto r1 = mgr.process_order(make_order("o", 5, {make_node("n1", 0, true)}, {}));
   EXPECT_FALSE(r1.accepted);
-  EXPECT_NE(r1.rejection_reason.find("greater"), std::string::npos);
+  EXPECT_TRUE(r1.duplicate);
 
   // Smaller ID
   auto r2 = mgr.process_order(make_order("o", 3, {make_node("n1", 0, true)}, {}));
   EXPECT_FALSE(r2.accepted);
+  EXPECT_NE(r2.rejection_reason.find("greater"), std::string::npos);
 }
 
 TEST(OrderManagerTest, StitchFromLastTraversedNodeWhenBaseIsEmpty) {
@@ -609,10 +615,8 @@ TEST(OrderManagerTest, AcceptsReplacementFromRightNodeDespiteDifferentSequenceId
   EXPECT_EQ(mgr.current_order_id(), "ord-2");
 }
 
-// A late edge_entered/node_reached for whatever ord-1 still had queued,
-// arriving after ord-2 already replaced it, is absorbed instead of rejected
-// -- and must leave ord-2's own progress untouched.
-TEST(OrderManagerTest, AbsorbsStaleEchoFromJustReplacedOrder) {
+// Progress events for a replaced order do not touch the new order.
+TEST(OrderManagerTest, EventsOfAReplacedOrderAreRejected) {
   vda5050_adapter::OrderManager mgr;
   ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
     {make_node("n1", 0, true), make_node("n2", 2, true)},
@@ -625,12 +629,14 @@ TEST(OrderManagerTest, AbsorbsStaleEchoFromJustReplacedOrder) {
     {make_edge("e14", 1, true, "n1", "n4")}
   )).accepted);
 
-  EXPECT_TRUE(mgr.edge_entered("e12", 1));
-  EXPECT_TRUE(mgr.node_reached(evt("n2", 2)));
+  EXPECT_FALSE(mgr.edge_entered("e12", 1));
+  EXPECT_FALSE(mgr.edge_completed("e12", 1));
+  EXPECT_FALSE(mgr.node_reached(evt("n2", 2)));
 
   EXPECT_EQ(mgr.current_order_id(), "ord-2");
-  EXPECT_EQ(mgr.last_node_id(), "n1");        // unaffected by the stale echo
-  EXPECT_EQ(mgr.node_states().size(), 2u);    // ord-2's own nodes, untouched
+  EXPECT_EQ(mgr.last_node_id(), "n1");
+  EXPECT_EQ(mgr.node_states().size(), 2u);
+  EXPECT_EQ(mgr.edge_states().size(), 1u);
   EXPECT_TRUE(mgr.active_edge_states().empty());
 }
 
@@ -667,6 +673,7 @@ TEST(OrderManagerTest, FullOrderCycleLeavesMgrReadyForNextOrder) {
   )).accepted);
 
   ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+  ASSERT_TRUE(mgr.edge_entered("e12", 1));
   ASSERT_TRUE(mgr.edge_completed("e12", 1));
   ASSERT_TRUE(mgr.node_reached(evt("n2", 2)));
 
@@ -763,49 +770,7 @@ TEST(OrderManagerTest, EdgeCompletedRemovesEdgeFromActiveState) {
   EXPECT_EQ(mgr.edge_states().size(), 0u);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// edge_entered arriving after edge_completed
-// ─────────────────────────────────────────────────────────────────────────────
-
-TEST(OrderManagerTest, AbsorbsEdgeEnteredThatArrivesAfterItsEdgeCompleted) {
-  vda5050_adapter::OrderManager mgr;
-  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
-    {make_node("n1", 0, true), make_node("n2", 2, true)},
-    {make_edge("e12", 1, true, "n1", "n2")}
-  )).accepted);
-
-  ASSERT_TRUE(mgr.edge_completed("e12", 1));
-  EXPECT_TRUE(mgr.absorb_late_edge_entered("e12", 1));
-  EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));  // absorbed once only
-}
-
-TEST(OrderManagerTest, AbsorbsLateEdgeEnteredForConsecutiveEdges) {
-  vda5050_adapter::OrderManager mgr;
-  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
-    {make_node("n1", 0, true), make_node("n2", 2, true), make_node("n3", 4, true)},
-    {make_edge("e12", 1, true, "n1", "n2"), make_edge("e23", 3, true, "n2", "n3")}
-  )).accepted);
-
-  ASSERT_TRUE(mgr.edge_completed("e12", 1));
-  ASSERT_TRUE(mgr.edge_completed("e23", 3));
-  EXPECT_TRUE(mgr.absorb_late_edge_entered("e12", 1));
-  EXPECT_TRUE(mgr.absorb_late_edge_entered("e23", 3));
-}
-
-TEST(OrderManagerTest, DoesNotAbsorbEdgeEnteredInNormalOrder) {
-  vda5050_adapter::OrderManager mgr;
-  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
-    {make_node("n1", 0, true), make_node("n2", 2, true)},
-    {make_edge("e12", 1, true, "n1", "n2")}
-  )).accepted);
-
-  EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));
-  ASSERT_TRUE(mgr.edge_entered("e12", 1));
-  ASSERT_TRUE(mgr.edge_completed("e12", 1));
-  EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));
-}
-
-TEST(OrderManagerTest, RepeatedEdgeEnteredForActiveEdgeIsIgnored) {
+TEST(OrderManagerTest, RepeatedEdgeEnteredIsRejected) {
   vda5050_adapter::OrderManager mgr;
   ASSERT_TRUE(mgr.process_order(make_order("o1", 0,
     {make_node("n1", 0, true), make_node("n2", 2, true), make_node("n3", 4, true)},
@@ -813,12 +778,14 @@ TEST(OrderManagerTest, RepeatedEdgeEnteredForActiveEdgeIsIgnored) {
   )).accepted);
 
   ASSERT_TRUE(mgr.edge_entered("e12", 1));
-  EXPECT_TRUE(mgr.edge_entered("e12", 1));
+  EXPECT_FALSE(mgr.edge_entered("e12", 1));
+  EXPECT_EQ(mgr.active_edge_states().size(), 1u);
   ASSERT_TRUE(mgr.edge_completed("e12", 1));
+  EXPECT_FALSE(mgr.edge_completed("e12", 1));
   ASSERT_TRUE(mgr.edge_entered("e23", 3));
 }
 
-TEST(OrderManagerTest, EdgeEnteredForAnUnknownEdgeIsStillRejected) {
+TEST(OrderManagerTest, EdgeEnteredForAnUnknownEdgeIsRejected) {
   vda5050_adapter::OrderManager mgr;
   ASSERT_TRUE(mgr.process_order(make_order("o1", 0,
     {make_node("n1", 0, true), make_node("n2", 2, true)},
@@ -828,51 +795,337 @@ TEST(OrderManagerTest, EdgeEnteredForAnUnknownEdgeIsStillRejected) {
   EXPECT_FALSE(mgr.edge_entered("e99", 1));
 }
 
-TEST(OrderManagerTest, LateEdgeEnteredIsForgottenWhenANewOrderStarts) {
+// ─────────────────────────────────────────────────────────────────────────────
+// next_step
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(OrderManagerTest, NextStepWalksTheBaseNodeByNode) {
   vda5050_adapter::OrderManager mgr;
-  ASSERT_TRUE(mgr.process_order(make_order("o1", 1,
+  ASSERT_TRUE(mgr.process_order(make_order("o", 3,
     {make_node("n1", 0, true), make_node("n2", 2, true)},
     {make_edge("e12", 1, true, "n1", "n2")}
   )).accepted);
+
+  auto step = mgr.next_step();
+  ASSERT_TRUE(step.has_value());
+  EXPECT_EQ(step->order_id, "o");
+  EXPECT_EQ(step->order_update_id, 3u);
+  EXPECT_EQ(step->node.node_id, "n1");
+  EXPECT_FALSE(step->incoming_edge.has_value());
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+
+  step = mgr.next_step();
+  ASSERT_TRUE(step.has_value());
+  EXPECT_EQ(step->node.node_id, "n2");
+  ASSERT_TRUE(step->incoming_edge.has_value());
+  EXPECT_EQ(step->incoming_edge->edge_id, "e12");
+  EXPECT_FALSE(step->edge_entered);
+
+  ASSERT_TRUE(mgr.edge_entered("e12", 1));
+  step = mgr.next_step();
+  ASSERT_TRUE(step.has_value());
+  ASSERT_TRUE(step->incoming_edge.has_value());
+  EXPECT_TRUE(step->edge_entered);
+
   ASSERT_TRUE(mgr.edge_completed("e12", 1));
-
-  ASSERT_TRUE(mgr.process_order(make_order("o2", 1,
-    {make_node("n1", 0, true), make_node("n2", 2, true)},
-    {make_edge("e12", 1, true, "n1", "n2")}
-  )).accepted);
-  EXPECT_FALSE(mgr.absorb_late_edge_entered("e12", 1));
+  ASSERT_TRUE(mgr.node_reached(evt("n2", 2)));
+  EXPECT_FALSE(mgr.next_step().has_value());
 }
 
-TEST(OrderManagerTest, AbsorbsStaleEdgeCompletedFromJustReplacedOrder) {
+TEST(OrderManagerTest, NextStepStopsAtTheHorizonUntilItIsReleased) {
   vda5050_adapter::OrderManager mgr;
-  ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
+  ASSERT_TRUE(mgr.process_order(make_order("o", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, false)},
+    {make_edge("e12", 1, false, "n1", "n2")}
+  )).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+  EXPECT_FALSE(mgr.next_step().has_value());
+  EXPECT_TRUE(mgr.has_active_order());
+
+  ASSERT_TRUE(mgr.process_order(make_order("o", 1,
     {make_node("n1", 0, true), make_node("n2", 2, true)},
     {make_edge("e12", 1, true, "n1", "n2")}
   )).accepted);
-
-  ASSERT_TRUE(mgr.process_order(make_order("ord-2", 1,
-    {make_node("n1", 0, true), make_node("n4", 2, true)},
-    {make_edge("e14", 1, true, "n1", "n4")}
-  )).accepted);
-
-  EXPECT_TRUE(mgr.edge_completed("e12", 1));   // echo from ord-1
-  EXPECT_FALSE(mgr.edge_completed("zzz", 9));  // unknown edge is still an error
-  EXPECT_EQ(mgr.edge_states().size(), 1u);     // ord-2's edge untouched
+  const auto step = mgr.next_step();
+  ASSERT_TRUE(step.has_value());
+  EXPECT_EQ(step->node.node_id, "n2");
+  EXPECT_EQ(step->order_update_id, 1u);
+  ASSERT_TRUE(step->incoming_edge.has_value());
+  EXPECT_EQ(step->incoming_edge->edge_id, "e12");
 }
 
-TEST(OrderManagerTest, AbsorbsStaleEdgeEventsWhenReplacementHasNoReleasedEdge) {
+TEST(OrderManagerTest, NextStepIsEmptyWithoutAnOrderAndAfterCancel) {
   vda5050_adapter::OrderManager mgr;
-  ASSERT_TRUE(mgr.process_order(make_order("ord-1", 1,
+  EXPECT_FALSE(mgr.next_step().has_value());
+  ASSERT_TRUE(mgr.process_order(make_order("o", 0, {make_node("n1", 0, true)}, {})).accepted);
+  EXPECT_TRUE(mgr.next_step().has_value());
+  mgr.cancel_order();
+  EXPECT_FALSE(mgr.next_step().has_value());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Default mode: behavior pinned by the adapter's existing users
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// n1..n3 released up to n2, n3 in the horizon.
+vda5050::Order three_node_order(const std::string& oid, uint32_t uid) {
+  return make_order(oid, uid,
+    {make_node("n1", 0, true), make_node("n2", 2, true), make_node("n3", 4, false)},
+    {make_edge("e12", 1, true, "n1", "n2"), make_edge("e23", 3, false, "n2", "n3")});
+}
+
+}  // namespace
+
+TEST(OrderManagerTest, DefaultModeIgnoresARepeatedOrderAndRejectsALowerUpdateId) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(three_node_order("o", 2)).accepted);
+
+  const auto repeated = mgr.process_order(three_node_order("o", 2));
+  EXPECT_FALSE(repeated.accepted);
+  EXPECT_TRUE(repeated.duplicate);
+  EXPECT_TRUE(repeated.error_type.empty());
+
+  const auto lower = mgr.process_order(three_node_order("o", 1));
+  EXPECT_FALSE(lower.accepted);
+  EXPECT_FALSE(lower.duplicate);
+  EXPECT_EQ(lower.error_type, "orderError");
+}
+
+TEST(OrderManagerTest, DefaultModeCancelClearsOrderIdentity) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(three_node_order("o", 3)).accepted);
+  mgr.cancel_order("");
+  EXPECT_EQ(mgr.current_order_id(), "");
+  EXPECT_EQ(mgr.current_order_update_id(), 0u);
+}
+
+TEST(OrderManagerTest, DefaultModeHorizonEndStitchKeepsEarlierHorizonNodes) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o", 0,
+    {make_node("a", 0, true), make_node("b", 2, false), make_node("c", 4, false)},
+    {make_edge("ab", 1, false, "a", "b"), make_edge("bc", 3, false, "b", "c")})).accepted);
+
+  const auto r = mgr.process_order(make_order("o", 1,
+    {make_node("c", 4, true), make_node("d", 6, false)},
+    {make_edge("cd", 5, false, "c", "d")}));
+  ASSERT_TRUE(r.accepted) << r.rejection_reason;
+
+  const auto ns = mgr.node_states();
+  ASSERT_EQ(ns.size(), 4u);
+  EXPECT_EQ(ns[0].node_id, "a");
+  EXPECT_EQ(ns[1].node_id, "b");
+  EXPECT_EQ(ns[2].node_id, "c");
+  EXPECT_EQ(ns[3].node_id, "d");
+  const auto es = mgr.edge_states();
+  ASSERT_EQ(es.size(), 3u);
+  EXPECT_EQ(es[0].edge_id, "ab");
+  EXPECT_EQ(es[1].edge_id, "bc");
+  EXPECT_EQ(es[2].edge_id, "cd");
+}
+
+TEST(OrderManagerTest, UpdateOfACompletedOrderMakesItActiveAgain) {
+  vda5050_adapter::OrderManager mgr;
+  ASSERT_TRUE(mgr.process_order(make_order("o", 0,
     {make_node("n1", 0, true), make_node("n2", 2, true)},
-    {make_edge("e12", 1, true, "n1", "n2")}
-  )).accepted);
+    {make_edge("e12", 1, true, "n1", "n2")})).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+  ASSERT_TRUE(mgr.node_reached(evt("n2", 2)));
+  ASSERT_FALSE(mgr.has_active_order());
 
-  ASSERT_TRUE(mgr.process_order(make_order("ord-2", 1,
-    {make_node("n1", 0, true), make_node("n4", 2, false)},
-    {make_edge("e14", 1, false, "n1", "n4")}
-  )).accepted);
+  const auto r = mgr.process_order(make_order("o", 1,
+    {make_node("n2", 2, true), make_node("n3", 4, true)},
+    {make_edge("e23", 3, true, "n2", "n3")}));
+  ASSERT_TRUE(r.accepted) << r.rejection_reason;
+  EXPECT_TRUE(mgr.has_active_order());
+  EXPECT_TRUE(mgr.node_reached(evt("n3", 4)));
+  EXPECT_FALSE(mgr.has_active_order());
+}
 
-  EXPECT_TRUE(mgr.edge_entered("e12", 1));
-  EXPECT_TRUE(mgr.edge_completed("e12", 1));
-  EXPECT_FALSE(mgr.edge_entered("zzz", 9));
+TEST(OrderManagerTest, NewBaseRequestThresholdIsConfigurable) {
+  vda5050_adapter::OrderManager mgr;
+  mgr.set_new_base_request_min_base_nodes(3);
+  ASSERT_TRUE(mgr.process_order(make_order("o", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, true), make_node("n3", 4, true),
+     make_node("n4", 6, false)},
+    {make_edge("e12", 1, true, "n1", "n2"), make_edge("e23", 3, true, "n2", "n3"),
+     make_edge("e34", 5, false, "n3", "n4")})).accepted);
+
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+  EXPECT_TRUE(mgr.new_base_request());
+}
+
+TEST(OrderManagerTest, StateListsFollowSequenceIdAcrossManyNodes) {
+  vda5050_adapter::OrderManager mgr;
+  std::vector<vda5050::Node> nodes;
+  std::vector<vda5050::Edge> edges;
+  for (uint32_t i = 0; i < 200; ++i) {
+    nodes.push_back(make_node("n" + std::to_string(i), 2 * i, i < 150));
+    if (i > 0) {
+      edges.push_back(make_edge("e" + std::to_string(i), 2 * i - 1, i < 150,
+                                "n" + std::to_string(i - 1), "n" + std::to_string(i)));
+    }
+  }
+  ASSERT_TRUE(mgr.process_order(make_order("o", 0, nodes, edges)).accepted);
+  for (uint32_t i = 0; i < 150; ++i) {
+    ASSERT_TRUE(mgr.node_reached(evt("n" + std::to_string(i), 2 * i)));
+  }
+  const auto ns = mgr.node_states();
+  ASSERT_EQ(ns.size(), 50u);
+  EXPECT_EQ(ns.front().node_id, "n150");
+  EXPECT_FALSE(ns.front().released);
+  EXPECT_TRUE(mgr.new_base_request());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Strict mode (VDA5050 §6.6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+std::string structure_error(const vda5050::Order& order) {
+  return vda5050_adapter::OrderManager::validate_structure(order);
+}
+
+}  // namespace
+
+TEST(OrderManagerStrictTest, ValidStructurePasses) {
+  EXPECT_EQ(structure_error(three_node_order("o", 0)), "");
+  EXPECT_EQ(structure_error(make_order("o", 0, {make_node("n1", 8, true)}, {})), "");
+}
+
+TEST(OrderManagerStrictTest, StructureErrorsAreDetected) {
+  EXPECT_NE(structure_error(make_order("", 0, {make_node("n1", 0, true)}, {})), "");
+  EXPECT_NE(structure_error(make_order("o", 0, {}, {})), "");
+  // Edge count.
+  EXPECT_NE(structure_error(make_order("o", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, true)}, {})), "");
+  // Sequence ids.
+  EXPECT_NE(structure_error(make_order("o", 0,
+    {make_node("n1", 0, true), make_node("n2", 4, true)},
+    {make_edge("e12", 1, true, "n1", "n2")})), "");
+  // Edge endpoints.
+  EXPECT_NE(structure_error(make_order("o", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n2", "n1")})), "");
+  // First node in the horizon.
+  EXPECT_NE(structure_error(make_order("o", 0,
+    {make_node("n1", 0, false), make_node("n2", 2, false)},
+    {make_edge("e12", 1, false, "n1", "n2")})), "");
+  // Released node after a horizon node.
+  EXPECT_NE(structure_error(make_order("o", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, false), make_node("n3", 4, true)},
+    {make_edge("e12", 1, false, "n1", "n2"), make_edge("e23", 3, true, "n2", "n3")})), "");
+  // Edge released flag differs from its end node.
+  EXPECT_NE(structure_error(make_order("o", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, true)},
+    {make_edge("e12", 1, false, "n1", "n2")})), "");
+  // Repeated actionId.
+  EXPECT_NE(structure_error(make_order("o", 0,
+    {make_node("n1", 0, true, {make_action("a1")}), make_node("n2", 2, true)},
+    {make_edge("e12", 1, true, "n1", "n2", {make_action("a1")})})), "");
+  // Empty actionId.
+  EXPECT_NE(structure_error(make_order("o", 0,
+    {make_node("n1", 0, true, {make_action("")})}, {})), "");
+}
+
+TEST(OrderManagerStrictTest, MalformedOrderIsAValidationErrorAndChangesNothing) {
+  vda5050_adapter::OrderManager mgr;
+  mgr.set_strict_mode(true);
+  int accepted = 0;
+  mgr.set_order_accepted_callback([&](auto&&...) { ++accepted; });
+  const auto r = mgr.process_order(make_order("o", 0,
+    {make_node("n1", 0, true), make_node("n2", 2, true)}, {}));
+  EXPECT_FALSE(r.accepted);
+  EXPECT_EQ(r.error_type, "validationError");
+  EXPECT_EQ(accepted, 0);
+  EXPECT_EQ(mgr.current_order_id(), "");
+}
+
+TEST(OrderManagerStrictTest, RepeatedUpdateIdIsIgnored) {
+  vda5050_adapter::OrderManager mgr;
+  mgr.set_strict_mode(true);
+  int accepted = 0;
+  mgr.set_order_accepted_callback([&](auto&&...) { ++accepted; });
+  ASSERT_TRUE(mgr.process_order(three_node_order("o", 1)).accepted);
+
+  const auto r = mgr.process_order(three_node_order("o", 1));
+  EXPECT_FALSE(r.accepted);
+  EXPECT_TRUE(r.duplicate);
+  EXPECT_TRUE(r.error_type.empty());
+  EXPECT_EQ(accepted, 1);
+  EXPECT_EQ(mgr.node_states().size(), 3u);
+}
+
+TEST(OrderManagerStrictTest, LowerUpdateIdIsAnOrderUpdateError) {
+  vda5050_adapter::OrderManager mgr;
+  mgr.set_strict_mode(true);
+  ASSERT_TRUE(mgr.process_order(three_node_order("o", 5)).accepted);
+  const auto r = mgr.process_order(three_node_order("o", 4));
+  EXPECT_FALSE(r.accepted);
+  EXPECT_EQ(r.error_type, "orderUpdateError");
+  EXPECT_EQ(mgr.current_order_update_id(), 5u);
+}
+
+TEST(OrderManagerStrictTest, NewOrderIsRefusedWhileAnOrderIsActive) {
+  vda5050_adapter::OrderManager mgr;
+  mgr.set_strict_mode(true);
+  ASSERT_TRUE(mgr.process_order(three_node_order("o1", 0)).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+
+  const auto r = mgr.process_order(three_node_order("o2", 0));
+  EXPECT_FALSE(r.accepted);
+  EXPECT_EQ(r.error_type, "orderError");
+  EXPECT_EQ(mgr.current_order_id(), "o1");
+}
+
+TEST(OrderManagerStrictTest, CancelKeepsOrderIdentityAndAllowsANewOrder) {
+  vda5050_adapter::OrderManager mgr;
+  mgr.set_strict_mode(true);
+  auto order = three_node_order("o1", 2);
+  order.zone_set_id = "z";
+  ASSERT_TRUE(mgr.process_order(order).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+
+  mgr.cancel_order("");
+  EXPECT_EQ(mgr.current_order_id(), "o1");
+  EXPECT_EQ(mgr.current_order_update_id(), 2u);
+  EXPECT_EQ(mgr.current_zone_set_id(), "z");
+  EXPECT_FALSE(mgr.has_active_order());
+  EXPECT_TRUE(mgr.node_states().empty());
+  EXPECT_TRUE(mgr.edge_states().empty());
+
+  // A resend of the cancelled order is a duplicate, a new orderId is accepted.
+  EXPECT_TRUE(mgr.process_order(three_node_order("o1", 2)).duplicate);
+  EXPECT_TRUE(mgr.process_order(make_order("o2", 0, {make_node("n1", 0, true)}, {})).accepted);
+}
+
+TEST(OrderManagerStrictTest, HorizonEndStitchIsAnOrderUpdateError) {
+  vda5050_adapter::OrderManager mgr;
+  mgr.set_strict_mode(true);
+  ASSERT_TRUE(mgr.process_order(three_node_order("o", 0)).accepted);
+
+  const auto r = mgr.process_order(make_order("o", 1,
+    {make_node("n3", 4, true), make_node("n4", 6, true)},
+    {make_edge("e34", 5, true, "n3", "n4")}));
+  EXPECT_FALSE(r.accepted);
+  EXPECT_EQ(r.error_type, "orderUpdateError");
+  EXPECT_EQ(mgr.node_states().size(), 3u);
+}
+
+TEST(OrderManagerStrictTest, BaseEndStitchReleasesTheHorizon) {
+  vda5050_adapter::OrderManager mgr;
+  mgr.set_strict_mode(true);
+  ASSERT_TRUE(mgr.process_order(three_node_order("o", 0)).accepted);
+  ASSERT_TRUE(mgr.node_reached(evt("n1", 0)));
+
+  const auto r = mgr.process_order(make_order("o", 1,
+    {make_node("n2", 2, true), make_node("n3", 4, true)},
+    {make_edge("e23", 3, true, "n2", "n3")}));
+  ASSERT_TRUE(r.accepted) << r.rejection_reason;
+  const auto ns = mgr.node_states();
+  ASSERT_EQ(ns.size(), 2u);
+  EXPECT_TRUE(ns[0].released);
+  EXPECT_TRUE(ns[1].released);
 }

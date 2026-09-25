@@ -14,7 +14,11 @@
  *   std::string payload = j.dump();
  */
 
+#include <initializer_list>
 #include <optional>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 #include "vda5050_client_adapter/vda5050_types.hpp"
@@ -29,6 +33,29 @@
 #define VDA_TO_OPT(j, key, field)  \
   if ((field).has_value()) {       \
     (j)[#key] = (field).value();   \
+  }
+
+// Helper macro: enum <-> string mapping; an unknown name or value throws std::invalid_argument.
+#define VDA_STRICT_ENUM(ENUM_TYPE, ...)                                                        \
+  template <typename BasicJsonType>                                                            \
+  inline void to_json(BasicJsonType& j, const ENUM_TYPE& e) {                                  \
+    for (const auto& entry :                                                                   \
+         std::initializer_list<std::pair<ENUM_TYPE, const char*>> __VA_ARGS__) {               \
+      if (entry.first == e) { j = entry.second; return; }                                      \
+    }                                                                                          \
+    throw std::invalid_argument("unknown " #ENUM_TYPE " value");                               \
+  }                                                                                            \
+  template <typename BasicJsonType>                                                            \
+  inline void from_json(const BasicJsonType& j, ENUM_TYPE& e) {                                \
+    if (!j.is_string()) {                                                                      \
+      throw std::invalid_argument(#ENUM_TYPE " must be a string");                             \
+    }                                                                                          \
+    const auto name = j.template get<std::string>();                                           \
+    for (const auto& entry :                                                                   \
+         std::initializer_list<std::pair<ENUM_TYPE, const char*>> __VA_ARGS__) {               \
+      if (name == entry.second) { e = entry.first; return; }                                   \
+    }                                                                                          \
+    throw std::invalid_argument("unknown " #ENUM_TYPE " '" + name + "'");                      \
   }
 
 namespace nlohmann {
@@ -54,13 +81,13 @@ struct adl_serializer<std::optional<T>> {
 // Enum conversions
 // ─────────────────────────────────────────────────────────────────────────────
 
-NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::BlockingType, {
+VDA_STRICT_ENUM(vda5050::BlockingType, {
   {vda5050::BlockingType::NONE, "NONE"},
   {vda5050::BlockingType::SOFT, "SOFT"},
   {vda5050::BlockingType::HARD, "HARD"},
 })
 
-NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::ActionStatus, {
+VDA_STRICT_ENUM(vda5050::ActionStatus, {
   {vda5050::ActionStatus::WAITING,       "WAITING"},
   {vda5050::ActionStatus::INITIALIZING,  "INITIALIZING"},
   {vda5050::ActionStatus::RUNNING,       "RUNNING"},
@@ -69,14 +96,14 @@ NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::ActionStatus, {
   {vda5050::ActionStatus::FAILED,        "FAILED"},
 })
 
-NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::EStop, {
+VDA_STRICT_ENUM(vda5050::EStop, {
   {vda5050::EStop::AUTOACK, "AUTOACK"},
   {vda5050::EStop::MANUAL,  "MANUAL"},
   {vda5050::EStop::REMOTE,  "REMOTE"},
   {vda5050::EStop::NONE,    "NONE"},
 })
 
-NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::OperatingMode, {
+VDA_STRICT_ENUM(vda5050::OperatingMode, {
   {vda5050::OperatingMode::AUTOMATIC,    "AUTOMATIC"},
   {vda5050::OperatingMode::SEMIAUTOMATIC,"SEMIAUTOMATIC"},
   {vda5050::OperatingMode::MANUAL,       "MANUAL"},
@@ -84,23 +111,23 @@ NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::OperatingMode, {
   {vda5050::OperatingMode::TEACHIN,      "TEACHIN"},
 })
 
-NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::ConnectionState, {
+VDA_STRICT_ENUM(vda5050::ConnectionState, {
   {vda5050::ConnectionState::ONLINE,            "ONLINE"},
   {vda5050::ConnectionState::OFFLINE,           "OFFLINE"},
   {vda5050::ConnectionState::CONNECTIONBROKEN,  "CONNECTIONBROKEN"},
 })
 
-NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::ErrorLevel, {
+VDA_STRICT_ENUM(vda5050::ErrorLevel, {
   {vda5050::ErrorLevel::WARNING, "WARNING"},
   {vda5050::ErrorLevel::FATAL,   "FATAL"},
 })
 
-NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::InfoLevel, {
+VDA_STRICT_ENUM(vda5050::InfoLevel, {
   {vda5050::InfoLevel::DEBUG, "DEBUG"},
   {vda5050::InfoLevel::INFO,  "INFO"},
 })
 
-NLOHMANN_JSON_SERIALIZE_ENUM(vda5050::MapStatus, {
+VDA_STRICT_ENUM(vda5050::MapStatus, {
   {vda5050::MapStatus::ENABLED,  "ENABLED"},
   {vda5050::MapStatus::DISABLED, "DISABLED"},
 })
