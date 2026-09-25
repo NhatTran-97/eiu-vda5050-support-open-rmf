@@ -609,7 +609,8 @@ void BridgeNode::send_navigation_goal()
   };
   options.result_callback = [this, token, step, node_id](const Nav2GoalHandle::WrappedResult& result) 
   {
-    if (token != step_token_ || step != active_step_) {
+    if (token != step_token_ || step != active_step_) 
+    {
       RCLCPP_DEBUG(get_logger(), "Ignoring stale Nav2 result for node %s", node_id.c_str());
       return;
     }

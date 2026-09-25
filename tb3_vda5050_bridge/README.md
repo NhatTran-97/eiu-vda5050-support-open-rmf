@@ -104,12 +104,9 @@ Start order does not matter: the adapter waits for the step server, and the brid
 
 ## Testing without hardware
 
-`mock/mock_load_publisher.py` stands in for a load sensor that doesn't exist
-yet — it republishes a fixed `vda5050_msgs/Load` onto
-`vda5050_client_adapter/load` (relative to the launch namespace, `--topic` to change it) every second, so `state.loads` reaches the
-fleet adapter and the UI over the real MQTT `state` message, proving the
-pipeline end to end. Swap it for a real sensor node later; nothing
-downstream (adapter, MQTT, fleet adapter, UI) needs to change.
+`mock/mock_load_publisher.py` publishes a fixed `vda5050_msgs/Load` every second on `vda5050_client_adapter/load`
+(relative to the launch namespace, `--topic` to change it), so `state.loads` reaches the fleet adapter and the UI.
+A real load sensor node replaces it on the same topic.
 
 ```bash
 ros2 run tb3_vda5050_bridge mock_load_publisher.py \
@@ -128,7 +125,7 @@ VDA5050_TEST_BROKER=tcp://127.0.0.1:18830 ROS_DOMAIN_ID=77 ROS_AUTOMATIC_DISCOVE
 | Suite | Tests | Coverage |
 |:---:|:---:|---|
 | `test_odom_distance_tracker` | 6 | Driven distance |
-| `test_bridge_node` | 22 | Node against a fake Nav2 and a fake adapter (`NavigateToNode` client): reach with distance, node under the robot, position-less node, speed limit, preemption, cancel, local cancel, retries and manual override, session id, liveliness lease and heartbeat, actions, telemetry |
+| `test_bridge_node` | 22 | Node against a fake Nav2 and a fake adapter: steps, preemption, cancel, retries, driver status, actions, telemetry |
 | `test_system_e2e` | 10 | Fleet adapter (MQTT, `full_control` builders) → client adapter → bridge → fake Nav2 in both client modes, including a bridge restart mid-route (step resent) and a bridge gone until it is back (`driverConnectionError`) |
 
 ## Related
