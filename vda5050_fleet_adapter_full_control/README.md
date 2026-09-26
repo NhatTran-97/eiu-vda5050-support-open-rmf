@@ -4,6 +4,11 @@ Connects Open-RMF to AGVs that speak VDA5050 2.1 over MQTT.
 RMF plans the routes; this adapter turns each route into VDA5050 orders and reports the AGVs' state back to RMF.
 It uses RMF's full control interface (`RobotCommandHandle`), so a whole route is sent as one order with many nodes.
 
+<p align="center">
+  <img src="../assets/img/vda5050_fleet_logo.png" alt="RMF sends routes through the VDA5050 fleet adapter to several AGVs and receives their state" width="80%" />
+</p>
+<p align="center"><em>RMF (master control) plans the routes. The adapter turns them into VDA5050 orders and instant actions for every AGV (green) and passes their state back to RMF (blue).</em></p>
+
 Diagrams and message flows: [docs/architecture.md](docs/architecture.md). Config keys: [Configuration](#configuration).
 
 ## Key features
@@ -77,7 +82,7 @@ ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py \
 ```
 
 `fleet_adapters.launch.py` starts the TB3 and AMR fleets in one command.
-Without robots: [Demo with virtual AGVs](#demo-with-virtual-agvs).
+Without robots: [Gazebo simulation](#gazebo-simulation) or [Demo with virtual AGVs](#demo-with-virtual-agvs).
 
 The adapter's ROS topics and services (operator controls, registration, lane closures) are open to every node in the
 same `ROS_DOMAIN_ID`, as is RMF's task API. Run the system on an isolated network, or use SROS2 to restrict access.
@@ -215,6 +220,16 @@ ros2 run vda5050_fleet_adapter_full_control register_robot.py remove --fleet tb3
   (starts its own broker, RMF, both fleets and mock robots).
 
 ## Testing without hardware
+
+### Gazebo simulation
+
+The Gazebo simulation runs three TurtleBot3 robots with Nav2 and the same VDA5050 stack as the real robots. Start a broker on `localhost:1883` (`mosquitto -p 1883`), then the simulation and the VDA5050 bridges as described in [tb3_simulation](../tb3_simulation/README.md#running-it). Then start the adapter with `config_tb3_sim.yaml`, which uses the local broker and turns on charging at chargers:
+
+```bash
+ros2 launch vda5050_fleet_adapter_full_control fleet_adapter.launch.py \
+    config_file:=/ros2_ws/src/vda5050_fleet_adapter_full_control/config/config_tb3_sim.yaml \
+    node_name:=vda5050_fleet_adapter_tb3
+```
 
 ### Demo with virtual AGVs
 
