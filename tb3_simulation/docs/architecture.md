@@ -4,35 +4,30 @@
 
 The system uses two isolated ROS 2 domains. The ground-station container runs Open-RMF core, the fleet adapter, and the operator UI on `ROS_DOMAIN_ID=10`. The simulation container runs Gazebo, Nav2, the VDA5050 client adapters, and the TurtleBot3 bridges on `ROS_DOMAIN_ID=1`. MQTT transfers VDA5050 messages between the two domains.
 
-<div align="center">
-<pre style="display: inline-block; text-align: left;">
-┌──────────────────────────────────────────────────────┐
-│ Ground station · ROS_DOMAIN_ID=10                    │
-│ Open-RMF schedule · task dispatcher · fleet adapter  │
-│ eiu_fleet_ui                                         │
-└──────────────────────────┬───────────────────────────┘
-                           │ VDA5050 over MQTT
-                           ▼
-                 ┌─────────────────────┐
-                 │ MQTT broker         │
-                 │ localhost:1883      │
-                 └──────────┬──────────┘
-                            │
-                            ▼
-┌──────────────────────────────────────────────────────┐
-│ Simulation · ROS_DOMAIN_ID=1                         │
-│                                                      │
-│ VDA5050 client adapter  (per robot)                  │
-│            ↕ NavigateToNode and telemetry            │
-│ TurtleBot3 bridge       (per robot)                  │
-│            ↕ NavigateToPose and robot state          │
-│ Nav2 stack              (per robot)                  │
-│            ↕ velocity commands and sensor data       │
-│ ROS-Gazebo bridge  ↔  Gazebo                         │
-│ Gazebo  →  clock bridge  →  ROS /clock               │
-└──────────────────────────────────────────────────────┘
-</pre>
-</div>
+```mermaid
+flowchart TB
+    subgraph GS ["Ground station · ROS_DOMAIN_ID=10"]
+        RMF["Open-RMF schedule · task dispatcher"]
+        FA["fleet adapter"]
+        UI["eiu_fleet_ui"]
+    end
+    MQ[("MQTT broker\nlocalhost:1883")]
+    subgraph SIM ["Simulation · ROS_DOMAIN_ID=1 (per robot)"]
+        CA["VDA5050 client adapter"]
+        BR["TurtleBot3 bridge"]
+        N2["Nav2 stack"]
+        GZB["ROS-Gazebo bridge"]
+        GZ["Gazebo"]
+        CLK["ROS /clock"]
+    end
+    FA <-->|VDA5050 over MQTT| MQ
+    MQ <--> CA
+    CA <-->|NavigateToNode, telemetry| BR
+    BR <-->|NavigateToPose, robot state| N2
+    N2 <-->|velocity commands, sensor data| GZB
+    GZB <--> GZ
+    GZ -->|clock bridge| CLK
+```
 
 ## Runtime components
 
