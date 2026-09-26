@@ -2,12 +2,9 @@
 
 <div style="text-align: justify">
 
-A ROS 2 Jazzy implementation of the VDA5050 v2.1.0 protocol connecting
-**Open-RMF** (fleet management) to a heterogeneous robot fleet — a
-**TurtleBot3** line and a custom **AMR** line — via MQTT. Open-RMF core,
-the fleet adapter, and the operator dashboard all run together in one
-Docker container (`fleet_bringup`); each robot runs its own client
-adapter + Nav2 stack and talks to that container over MQTT.
+This is a ROS 2 Jazzy implementation of the VDA5050 v2.1.0 protocol. It connects **Open-RMF** to two robot lines, **TurtleBot3** and a custom **AMR**, over MQTT.
+Open-RMF core, the fleet adapter and the operator dashboard run together in one Docker container (`fleet_bringup`) on the ground station.
+Each robot runs its own client adapter and Nav2 stack, and connects to that container over MQTT.
 
 </div>
 
@@ -100,9 +97,7 @@ Same integration in Gazebo
 <td colspan="2" align="center">
 
 **Milestone 2 demos — updated after review round 1**
-Improvements made in response to round 1 feedback — see the
-[Reviewer recommendations](vda5050_fleet_adapter_full_control/README.md#reviewer-recommendations)
-checklist for what was addressed.
+Improvements made in response to round 1 feedback. The [Reviewer recommendations](vda5050_fleet_adapter_full_control/README.md#reviewer-recommendations) checklist lists what was addressed.
 
 </td>
 </tr>
@@ -128,11 +123,7 @@ Multi-robot demo — two robots deconflicting via RMF
 <td colspan="2" align="center">
 
 **Milestone 2 demos — updated after review round 2**
-Round 2 feedback addressed: factsheet request + gating, hard/soft order validation, and
-multi-node order stitching on replan (see the
-[Reviewer recommendations](vda5050_fleet_adapter_full_control/README.md#reviewer-recommendations)
-checklist) — plus the dashboard now surfaces live VDA5050 order/traffic
-([`eiu_fleet_ui`](eiu_fleet_ui/README.md#features)).
+Round 2 feedback addressed: factsheet request and gating, hard and soft order validation, and multi-node order stitching on replan. See the [Reviewer recommendations](vda5050_fleet_adapter_full_control/README.md#reviewer-recommendations) checklist for details. The dashboard now also shows the live VDA5050 order and traffic ([`eiu_fleet_ui`](eiu_fleet_ui/README.md#key-features)).
 
 </td>
 </tr>
@@ -154,20 +145,30 @@ Multi-robot fleet demo — both fleets running together
 
 </td>
 </tr>
+<tr>
+<td colspan="2" align="center">
+
+**Third-party VDA5050 client — 3 virtual AGVs**
+Tests the fleet adapter against a client other than `vda5050_client_adapter`: 3 simulated AGVs built on [vda-5050-lib](https://github.com/coatyio/vda-5050-lib.js)
+
+[<img src="https://img.youtube.com/vi/L0Zu4yaiQOU/hqdefault.jpg" width="60%" alt="Watch: third-party VDA5050 client demo with virtual AGVs" />](https://youtu.be/L0Zu4yaiQOU)
+
+</td>
+</tr>
 </table>
 
 ## Packages
 
 <table width="100%" style="width:100%; table-layout:fixed">
 <tr><th width="22%">Package</th><th width="13%">Layer</th><th>Description</th></tr>
-<tr><td><code>eiu_fleet_ui</code></td><td>Dashboard</td><td style="text-align: justify">PySide6 + QML desktop app. Monitors robot status, dispatches/cancels tasks (a specific robot or let RMF choose), draws no-go zones, edits the nav graph, and gives direct per-robot control (pause/resume/speed/re-localize). Shows each robot's live VDA5050 order and message traffic, and each fleet adapter's health/metrics. Notifies when a new robot appears on the broker and registers — or restores — it into a fleet after the fleet adapter has checked it. Supports multiple fleet adapters at once.</td></tr>
-<tr><td><code>vda5050_fleet_adapter_full_control</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>RobotCommandHandle</code>/<code>FleetUpdateHandle</code> (full control, not EasyFullControl) — sends a planned multi-waypoint route as one VDA5050 order. Different robot types (TB3/AMR) run as separate config files and processes. Robots can be added to, removed from, and restored to a running fleet (checked against the fleet's type, limits, nav graph and chargers) and are saved for the next start.</td></tr>
-<tr><td><code>vda5050_fleet_adapter</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>EasyFullControl</code> — one VDA5050 order per destination. The simpler path: same factsheet, commissioning, pause/resume, re-localize and lane-closure handling, but no multi-node orders, horizon release or stitching. TB3 and AMR run as separate config files and processes.</td></tr>
-<tr><td><code>fleet_bringup</code></td><td>Ground-station bringup</td><td style="text-align: justify">One launch file for the whole ground-station side: <code>rmf_traffic_schedule</code>, <code>rmf_task_dispatcher</code>, the fleet adapter, mock dispenser/ingestor, and <code>eiu_fleet_ui</code> — all in one process group.</td></tr>
-<tr><td><code>vda5050_client_adapter</code></td><td>Robot</td><td style="text-align: justify">Receives VDA5050 MQTT orders, exposes them as ROS 2 <code>vda5050_msgs</code> topics, and publishes robot state/connection back to MQTT.</td></tr>
-<tr><td><code>tb3_vda5050_bridge</code></td><td>Robot</td><td style="text-align: justify">Converts <code>vda5050_client_adapter</code> order topics into Nav2 <code>NavigateToPose</code> goals for the TurtleBot3, and feeds odometry, battery, and navigation progress back.</td></tr>
-<tr><td><code>tb3_simulation</code></td><td>Simulation</td><td style="text-align: justify">TurtleBot3 Gazebo (Harmonic) + Nav2 simulation, world generated from the traffic-editor <code>.building.yaml</code>.</td></tr>
-<tr><td><code>vda5050_msgs</code></td><td>Shared</td><td style="text-align: justify">ROS 2 message definitions shared between the client adapter and robot-side bridge nodes.</td></tr>
+<tr><td><code>eiu_fleet_ui</code></td><td>Dashboard</td><td style="text-align: justify">A PySide6 and QML desktop app. It monitors robot status, dispatches and cancels tasks for a chosen robot or for RMF to assign, draws no-go zones, edits the nav graph, and gives direct per-robot control: pause, resume, speed limit and re-localize. It shows each robot's live VDA5050 order and message traffic, and each fleet adapter's health and metrics. It reports a new robot found on the broker, and registers or restores it into a fleet once the fleet adapter has checked it. It can follow several fleet adapters at once.</td></tr>
+<tr><td><code>vda5050_fleet_adapter_full_control</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>RobotCommandHandle</code> and <code>FleetUpdateHandle</code> (full control, not EasyFullControl). It sends a planned multi-waypoint route as one VDA5050 order. Each robot type, TB3 or AMR, runs as its own config file and process. A robot can be added to, removed from and restored to a running fleet, checked against the fleet's type, limits, nav graph and chargers, and saved for the next start.</td></tr>
+<tr><td><code>vda5050_fleet_adapter</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>EasyFullControl</code>, sending one VDA5050 order per destination. It handles the factsheet, commissioning, pause and resume, re-localizing and lane closures the same way as the full-control adapter, but without multi-node orders, horizon release or stitching. TB3 and AMR run as separate config files and processes.</td></tr>
+<tr><td><code>fleet_bringup</code></td><td>Ground-station bringup</td><td style="text-align: justify">One launch file for the whole ground-station side. It starts <code>rmf_traffic_schedule</code>, <code>rmf_task_dispatcher</code>, the fleet adapter, the mock dispenser and ingestor, and <code>eiu_fleet_ui</code> in one process group.</td></tr>
+<tr><td><code>vda5050_client_adapter</code></td><td>Robot</td><td style="text-align: justify">It receives VDA5050 orders over MQTT and exposes them as ROS 2 <code>vda5050_msgs</code> topics. It publishes the robot's state and connection status back to MQTT.</td></tr>
+<tr><td><code>tb3_vda5050_bridge</code></td><td>Robot</td><td style="text-align: justify">It converts the order topics of <code>vda5050_client_adapter</code> into Nav2 <code>NavigateToPose</code> goals for the TurtleBot3. It reports odometry, battery and navigation progress back to the client adapter.</td></tr>
+<tr><td><code>tb3_simulation</code></td><td>Simulation</td><td style="text-align: justify">It simulates the TurtleBot3 in Gazebo (Harmonic) with Nav2, in a world generated from the traffic editor's <code>.building.yaml</code>.</td></tr>
+<tr><td><code>vda5050_msgs</code></td><td>Shared</td><td style="text-align: justify">It defines the ROS 2 messages shared between the client adapter and the robot-side bridge nodes.</td></tr>
 </table>
 
 ## Repository layout
@@ -189,10 +190,9 @@ ros2_ws/src/
 
 ### System overview
 
-Open-RMF core, the fleet adapter, and the dashboard all run in the same
-Docker container and process group (`fleet_bringup`) — no cross-domain ROS 2
-setup needed on the ground-station side. Only the MQTT broker crosses to
-the robot side.
+The system has one ground station and one process per robot. The ground station runs Open-RMF core, the fleet adapter and the dashboard together in one Docker container and process group (`fleet_bringup`), so the ground-station side needs no cross-domain ROS 2 setup: everything on it shares one ROS domain. Each robot runs its own client adapter and navigation stack. Only the MQTT broker crosses over to the robot side.
+
+<div align="center">
 
 ```mermaid
 flowchart TB
@@ -211,19 +211,28 @@ flowchart TB
 
     subgraph robot_amr ["🤖  AMR (amr_fleet)"]
         ca2("vda5050_client_adapter")
-        nav2b("Nav2 / robot driver")
+        br2("tb3_vda5050_bridge")
+        nav2b("Nav2")
+        ca2 <--> br2
+        br2 <--> nav2b
     end
 
     ui   <-->|"ROS 2\n/fleet_states · /task_api_*"| rmf
-    ui   -->|"ROS 2\npause/resume/speed/init_position"| fa
+    ui   <-->|"ROS 2\nrobot control · registration · lane closures"| fa
+    ui   -.->|"MQTT, read only"| broker
     rmf  <-->|"FullControl API"| fa
     fa   <-->|"VDA5050 JSON\norder · state · viz"| broker
     broker <-->|"VDA5050 JSON"| ca1
     broker <-->|"VDA5050 JSON"| ca2
     ca1  <-->|"ROS 2 vda5050_msgs"| br1
     br1  <-->|"NavigateToPose\n+ odometry · battery"| nav2a
-    ca2  <-->|"ROS 2 vda5050_msgs"| nav2b
+    ca2  <-->|"ROS 2 vda5050_msgs"| br2
+    br2  <-->|"NavigateToPose\n+ odometry · battery"| nav2b
 ```
+
+</div>
+
+This diagram shows the real-robot setup. To try the system without hardware, see [Gazebo simulation](vda5050_fleet_adapter_full_control/README.md#gazebo-simulation) or [Demo with virtual AGVs](vda5050_fleet_adapter_full_control/README.md#demo-with-virtual-agvs).
 
 The robot side exposes two interfaces:
 
@@ -232,9 +241,7 @@ The robot side exposes two interfaces:
 | **Northbound** | MQTT — VDA5050 v2.1.0 | Fleet adapter ↔ `vda5050_client_adapter` | order, instantActions, state, visualization, connection, factsheet |
 | **Southbound** | ROS 2 topics (`vda5050_msgs`) | `vda5050_client_adapter` ↔ bridge/driver | order dispatch, action feedback, AGV position, battery, node/edge progress |
 
-If an external VDA5050 master control system is used instead of Open-RMF, it can
-publish orders directly to the MQTT broker and the robot-side stack consumes them
-unchanged.
+A VDA5050 master control other than Open-RMF can also drive this robot-side stack: it publishes orders directly to the MQTT broker, and the robot-side stack consumes them unchanged.
 
 ## MQTT topics (VDA5050 v2.1.0)
 
@@ -261,45 +268,47 @@ git clone https://github.com/NhatTran-97/eiu-vda5050-support-open-rmf.git .
 ### Ground station (fleet adapter + RMF core + dashboard)
 
 ```bash
-# Build image (once) and open an interactive shell:
+# Build the image (once) and open an interactive shell
 cd ~/ros2_ws
 src/vda5050_fleet_adapter_full_control/docker/run.sh
 
-# Inside the container — build and run everything in one process group:
+# Inside the container: build and run everything in one process group
 colcon build --packages-select fleet_bringup
 source install/setup.bash
 ros2 launch fleet_bringup fleet_bringup.launch.py
 
-# Dispatch a patrol task (same container, another shell):
+# From another shell in the same container: dispatch a patrol task
 python3 src/vda5050_fleet_adapter_full_control/scripts/dispatch_patrol.py charger_1
 ```
 
-`fleet_bringup` starts one `vda5050_fleet_adapter_full_control` process for
-the TB3 fleet by default. Running a second robot type (e.g. the AMR) at the
-same time means launching a second fleet adapter process against its own
-config file — see [that package's README](vda5050_fleet_adapter_full_control/README.md#multiple-robot-types-heterogeneous-fleets).
+By default, `fleet_bringup` starts one `vda5050_fleet_adapter_full_control` process for the TB3 fleet.
+To run a second robot type, such as the AMR, at the same time, launch a second fleet adapter process against its own config file.
+See [that package's README](vda5050_fleet_adapter_full_control/README.md#build--run).
 
-### Robot side (TurtleBot3)
+### Robot side (TurtleBot3 / AMR)
+
+Both robot lines run the same client adapter and bridge software, each on its own onboard computer. These commands build and run them from source; the AMR build lives in that robot's own workspace and is not included in this repository.
 
 ```bash
-# Build and start client adapter + broker via Docker Compose:
+# Docker Compose: build and start the client adapter and its MQTT broker
 cd ~/ros2_ws/src/vda5050_client_adapter
 docker compose up -d --build
 
-# Build and run TurtleBot3 bridge:
+# Or from source: build and run the client adapter
 cd ~/ros2_ws
+colcon build --packages-select vda5050_msgs vda5050_client_adapter
+source install/setup.bash
+ros2 launch vda5050_client_adapter vda5050_adapter.launch.py
+
+# Build and run the TurtleBot3 bridge
 colcon build --packages-select vda5050_msgs tb3_vda5050_bridge
 source install/setup.bash
 ros2 launch tb3_vda5050_bridge bridge.launch.py
 ```
 
-The AMR line runs its own client adapter + robot driver stack the same way,
-against the `amr_fleet` identity — not included in this repo since it lives
-on that robot's own workspace.
-
 ## Configuration
 
-Fleet adapter (one file per robot type — see [Robots](#robots) above):
+Fleet adapter, one config file per robot type (see [Robots](#robots) above):
 
 - [`vda5050_fleet_adapter_full_control/config/config_tb3.yaml`](vda5050_fleet_adapter_full_control/config/config_tb3.yaml)
 - [`vda5050_fleet_adapter_full_control/config/config_amr.yaml`](vda5050_fleet_adapter_full_control/config/config_amr.yaml)
@@ -316,10 +325,7 @@ vda5050:
   serial_number:  "0001"
 ```
 
-The `interface_name`, `manufacturer`, and `serial_number` must match on both
-sides (fleet adapter's `vda5050.robots.<name>` and the robot's own client
-adapter) so both ends share the same MQTT topics. `mqtt.client_id` must be
-unique per robot connected to the broker.
+The fleet adapter identifies a robot by `vda5050.robots.<name>`, and the robot's own client adapter identifies itself by `interface_name`, `manufacturer` and `serial_number`. These values must match on both sides, because they form the MQTT topic each side publishes and subscribes to. Each robot connected to the broker must also use a unique `mqtt.client_id`.
 
 ## Documentation
 
