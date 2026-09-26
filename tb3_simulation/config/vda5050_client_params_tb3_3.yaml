@@ -1,15 +1,15 @@
 /**:
   ros__parameters:
 
-    # ── MQTT broker connection ──────────────────────────────────────────────
+    # MQTT broker
     mqtt:
       broker_url: "tcp://localhost:1883"
-      client_id:  "vda5050_client_adapter_tb3_3"   # unique per robot -- same id kicks other connections off the broker
+      client_id:  "vda5050_client_adapter_tb3_3"   # Unique per robot.
       username:   ""
       password:   ""
 
-    # ── VDA5050 AGV identity ────────────────────────────────────────────────
-    # MQTT topic structure: {interface_name}/v2/{manufacturer}/{serial_number}/{topic}
+    # VDA5050 AGV identity
+    # MQTT topic: {interface_name}/v2/{manufacturer}/{serial_number}/{topic}
     vda5050:
       interface_name: "AMR"
       manufacturer:   "ROBOTIS"
@@ -21,36 +21,36 @@
       hard_action_pause_timeout: 30.0    # s
       event_loop_period: 0.01            # s
       new_base_request_min_base_nodes: 2
-      max_finished_instant_actions: 50   # 0 = keep all
-      driver_status_max_lease: 10.0      # s, 0 = off
-      strict_mode: true                  # false = legacy
+      max_finished_instant_actions: 50   # 0 retains all.
+      driver_status_max_lease: 10.0      # s; 0 disables the lease.
+      strict_mode: true                  # false selects legacy mode.
 
-    # ── Factsheet (VDA5050 §9.4) ────────────────────────────────────────────
-    # Published once on connect (QoS 1, retained).
+    # VDA5050 factsheet (section 9.4)
+    # Published on connection with retained QoS 1.
     factsheet:
 
-      # ── typeSpecification ─────────────────────────────────────────────────
+      # Type specification
       type_specification:
         series_name:        "TurtleBot3 Burger"
         series_description: "Indoor differential-drive mobile robot"
         agv_kinematic: "DIFF"               # "DIFF" | "OMNI" | "THREEWHEEL"
         agv_class: "CARRIER"                # "FORKLIFT" | "CONVEYOR" | "TUGGER" | "CARRIER"
-        max_load_mass: 0.5                  # Max load (kg)
-        localization_types: ["NATURAL"]     # Supported localization technologies
-        navigation_types: ["AUTONOMOUS"]    # Navigation method
+        max_load_mass: 0.5                  # Maximum load (kg).
+        localization_types: ["NATURAL"]     # Localization methods.
+        navigation_types: ["AUTONOMOUS"]    # Navigation mode.
 
-      # ── physicalParameters ────────────────────────────────────────────────
+      # Physical parameters
       physical_parameters:
         speed_min:        0.05      # m/s
         speed_max:        0.22      # m/s
         acceleration_max: 1.0       # m/s²
         deceleration_max: 2.0       # m/s²
-        height_min:      -1.0       # m  (-1.0 to omit)
+        height_min:      -1.0       # m; -1.0 omits the field.
         height_max:       0.192     # m
         width:            0.178     # m
         length:           0.138     # m
 
-      # ── supported action types ────────────────────────────────────────────
+      # Supported action types
       supported_action_types:
         - "startPause"
         - "stopPause"
@@ -58,3 +58,5 @@
         - "stateRequest"
         - "factsheetRequest"
         - "initPosition"
+        - "startCharging"
+        - "stopCharging"

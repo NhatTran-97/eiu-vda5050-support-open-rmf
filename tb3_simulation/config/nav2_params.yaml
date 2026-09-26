@@ -58,7 +58,7 @@ bt_navigator:
 
 controller_server:
   ros__parameters:
-    # Keep in step with MPPI's model_dt (0.1 s) and the local costmap rate.
+    # Match the MPPI step and local costmap update rate.
     controller_frequency: 10.0
     costmap_update_timeout: 0.30
     min_x_velocity_threshold: 0.001
@@ -81,13 +81,12 @@ controller_server:
       yaw_goal_tolerance: 0.25
     FollowPath:
       plugin: "nav2_mppi_controller::MPPIController"
-      # Horizon 64 * 0.1 s = 6.4 s, so trajectories reach ~1.41 m at vx_max --
-      # this must stay close to the critics' threshold_to_consider of 1.4 m.
+      # A 6.4 s horizon reaches about 1.41 m at vx_max.
+      # Keep this range near threshold_to_consider (1.4 m).
       time_steps: 64
       model_dt: 0.1
       batch_size: 2000
-      # Limits are the TurtleBot3 Burger datasheet values, matching the fleet
-      # limits in config_tb3_sim.yaml and the factsheet in vda5050_client_params.
+      # Use TurtleBot3 Burger limits across Nav2, RMF, and VDA5050.
       ax_max: 1.0
       ax_min: -2.0
       az_max: 3.2
@@ -102,8 +101,7 @@ controller_server:
       temperature: 0.3
       gamma: 0.015
       motion_model: "DiffDrive"
-      # Candidate-trajectory markers cost real CPU at every control cycle; turn
-      # on only while debugging in RViz.
+      # Enable trajectory markers only for RViz debugging.
       visualize: false
       regenerate_noises: false
       TrajectoryVisualizer:
@@ -177,7 +175,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      # Burger is 138 x 178 mm, so the circumscribed radius is ~0.113 m.
+      # The 138 x 178 mm footprint has a 0.113 m circumscribed radius.
       robot_radius: 0.115
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
@@ -238,8 +236,7 @@ global_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
         inflation_radius: 0.35
-      # The office map is static, so republishing all 660x272 cells every second
-      # is wasted bandwidth; incremental updates carry the changes.
+      # Publish incremental updates for the static 660 x 272 cell map.
       always_send_full_costmap: False
 
 map_saver:

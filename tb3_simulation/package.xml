@@ -9,10 +9,10 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- Build-time: generate world từ .building.yaml -->
+  <!-- Generates worlds from .building.yaml files. -->
   <build_depend>rmf_building_map_tools</build_depend>
 
-  <!-- Runtime: mô phỏng + điều hướng -->
+  <!-- Provides simulation and navigation dependencies. -->
   <exec_depend>rmf_building_map_tools</exec_depend>
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>

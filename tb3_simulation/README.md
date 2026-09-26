@@ -1,48 +1,79 @@
 # tb3_simulation
 
-Simulates a fleet of TurtleBot3 Burgers in Gazebo Harmonic with a full Nav2 stack each, on ROS 2 Jazzy. Every robot runs in its own namespace behind its own VDA5050 client, so the fleet adapter talks to the simulation exactly as it would to real AGVs.
+`tb3_simulation` is a ROS 2 Jazzy package for testing TurtleBot3 navigation through the Open-RMF VDA5050 fleet adapter. It runs multiple TurtleBot3 Burger robots in Gazebo Harmonic. Each robot has an independent Nav2 stack, ROS namespace, and VDA5050 client.
 
 <p align="center">
-  <img src="../assets/img/gazebo_simulation.png" alt="tb3_world in Gazebo, with the three Burgers at their chargers" width="95%" />
+  <img src="../assets/img/gazebo_simulation.png" alt="Gazebo view of tb3_world with three TurtleBot3 Burger robots at charging stations" width="95%" />
 </p>
 
-The node graph, ROS domains and startup order are documented in [docs/architecture.md](docs/architecture.md).
+The node graph, ROS domains, and startup order are documented in [docs/architecture.md](docs/architecture.md).
 
 ## Package structure
 
-```
+```text
 tb3_simulation/
 ├── launch/
-│   ├── tb3_simulation_nav2.launch.py    Gazebo, /clock bridge, spawning, Nav2, RViz
-│   └── vda5050_bridge_fleet.launch.py   VDA5050 bridge + client, per robot
+│   ├── tb3_simulation_nav2.launch.py     Gazebo, robot spawning, Nav2, and RViz
+│   └── vda5050_bridge_fleet.launch.py    Per-robot VDA5050 bridge and client
 ├── config/
-│   ├── robot_poses.yaml                 Robot names and spawn positions
-│   ├── nav2_params.yaml                 Nav2 tuning, shared by all robots
-│   ├── vda5050_bridge_sim*.yaml         Bridge topics, Nav2 action, pose thresholds
-│   ├── vda5050_client_params_tb3_*.yaml VDA5050 identity, MQTT, factsheet
-│   └── cyclonedds_sim.xml               DDS profile
-├── maps/tb3_world/                      Map, world file, models
-├── docker/                              Dockerfile, compose file, launcher script
-└── scripts/patch_world.py               traffic-editor → Gazebo world generation
+│   ├── robot_poses.yaml                  Robot names and spawn positions
+│   ├── nav2_params.yaml                  Shared Nav2 parameters
+│   ├── vda5050_bridge_sim*.yaml          Per-robot bridge parameters
+│   ├── vda5050_client_params_tb3_*.yaml  Per-robot VDA5050 and MQTT parameters
+│   └── cyclonedds_sim.xml                DDS configuration
+├── maps/tb3_world/
+│   ├── tb3_world.building.yaml           Traffic Editor source
+│   ├── tb3_world.world                   Gazebo world
+│   ├── map.yaml, map.pgm, map.png        Nav2 map
+│   ├── nav_graphs/                       RMF navigation graph
+│   └── models/                           Gazebo models and meshes
+├── scripts/
+│   └── patch_world.py                    Generated world post-processing
+├── docker/
+│   ├── Dockerfile                        Simulation image
+│   ├── docker-compose.yaml               Container configuration
+│   ├── entrypoint.sh                     Container shell initialization
+│   ├── launch_docker.sh                  X11 and container launcher
+│   └── cmd.txt                           Command examples
+├── docs/
+│   └── architecture.md                   Node graph, ROS domains, and startup order
+├── CMakeLists.txt                        Build, world generation, and installation
+└── package.xml                           ROS 2 package metadata and dependencies
 ```
 
-## Running it
+## Prerequisites
 
-The simulation runs in the `tb3-simulation` container, which uses host networking and NVIDIA passthrough for Gazebo rendering. The launcher script handles the X11 permissions and drops you into a shell; leaving that shell stops the container.
+Host requirements:
+
+- Docker Engine with the Docker Compose plugin
+- NVIDIA driver and NVIDIA Container Toolkit
+- Active X11 session with `xhost` for Gazebo rendering
+
+Build the Docker image:
 
 ```bash
 cd ~/ros2_ws/src/tb3_simulation/docker
+docker compose build
+```
+
+Start the container and open a shell:
+
+```bash
 ./launch_docker.sh
 ```
 
-To keep it up in the background instead:
+The launcher grants X11 access, recreates `tb3-simulation`, and opens a Bash shell. Closing the shell stops and removes the container.
+
+Run the container in the background:
 
 ```bash
-docker compose -f ~/ros2_ws/src/tb3_simulation/docker/docker-compose.yaml up -d --force-recreate
+docker compose up -d --force-recreate
 docker exec -it tb3-simulation bash
 ```
 
-`~/ros2_ws` is bind-mounted at `/home/eiu/sim_ws`, while `build/`, `install/` and `log/` are named volumes, so a rebuilt container keeps its previous build. Every shell in the container sources `/home/eiu/install`, so build into it after changing sources:
+## Build & run
+
+**Build the workspace**
 
 ```bash
 source /opt/ros/jazzy/setup.bash
@@ -52,58 +83,68 @@ colcon build --packages-up-to tb3_simulation tb3_vda5050_bridge vda5050_client_a
 source /home/eiu/install/setup.bash
 ```
 
-Start the simulation and navigation stacks first. With three robots, give it about 40 seconds before every lifecycle node reports `active`:
+**Start simulation and navigation**
+
+Start three robots with the Gazebo GUI:
 
 ```bash
 ros2 launch tb3_simulation tb3_simulation_nav2.launch.py robot_count:=3 use_gz_gui:=True
 ```
 
-Then bring up the VDA5050 layer from a second shell in the same container. Until this runs, nothing publishes AGV state to MQTT and the fleet adapter sees no robots at all:
+Nav2 lifecycle activation takes approximately 40 seconds.
+
+**More robots**
+
+Use Nav2 composition and disable graphical clients to reduce resource usage:
+
+```bash
+ros2 launch tb3_simulation tb3_simulation_nav2.launch.py \
+  robot_count:=N use_composition:=True use_gz_gui:=False use_rviz:=False
+```
+
+`N` sets the number of robots and must not exceed the entries in `config/robot_poses.yaml`.
+
+Start the Gazebo GUI from a second shell in the same container after a short spawn delay:
+
+```bash
+docker exec -it tb3-simulation bash
+gz sim -g
+```
+
+The VDA5050 layer supports `tb3_1` to `tb3_3`. Additional robots run only in Gazebo and Nav2.
+
+**Start the VDA5050 layer**
+
+Start the VDA5050 bridges and clients from a second shell in the same container:
 
 ```bash
 docker exec -it tb3-simulation bash
 ros2 launch tb3_simulation vda5050_bridge_fleet.launch.py broker_url:=tcp://localhost:1883
 ```
 
-## More robots
+The VDA5050 layer publishes AGV state to MQTT for fleet adapter discovery.
 
-`robot_count:=N` spawns the first N robots listed in `config/robot_poses.yaml`; add entries there for more. Run larger fleets with `use_composition:=True` and without the GUI and RViz:
+**Start the fleet adapter**
 
-```bash
-ros2 launch tb3_simulation tb3_simulation_nav2.launch.py robot_count:=10 \
-  use_composition:=True use_gz_gui:=False use_rviz:=False
-```
-
-To watch the run, open the GUI once every robot has spawned, from another shell in the container. This also recovers a GUI that crashed or is missing a robot; the simulation keeps running without it.
-
-```bash
-gz sim -g
-```
-
-The VDA5050 layer covers `tb3_1..3` only; the other robots run in Gazebo and Nav2 but do not reach the fleet adapter.
+Use `config_tb3_sim.yaml`. See [vda5050_fleet_adapter_full_control](../vda5050_fleet_adapter_full_control/README.md#gazebo-simulation) for the launch command and configuration.
 
 ## Launch arguments
 
 `tb3_simulation_nav2.launch.py`:
 
-| Argument | Default | |
+| Argument | Default | Description |
 |---|---|---|
-| `robot_count` | `3` | At most the robots listed in `config/robot_poses.yaml` |
-| `use_composition` | `False` | Each robot's Nav2 stack in one process |
-| `use_gz_gui` | `False` | Gazebo GUI client |
-| `use_rviz` | `True` | One RViz, following `tb3_1` |
-| `slam` | `False` | Otherwise AMCL localises against `maps/tb3_world` |
-| `use_sim_time` | `True` | |
-| `map`, `params_file` | package files | Alternative map or Nav2 tuning |
+| `robot_count` | `3` | Number of robots; limited by `config/robot_poses.yaml` |
+| `use_composition` | `False` | `False`: separate Nav2 processes; `True`: one composed process per robot |
+| `use_gz_gui` | `False` | Starts the Gazebo GUI |
+| `use_rviz` | `True` | Starts one RViz instance for `tb3_1` |
+| `slam` | `False` | `True`: SLAM; `False`: AMCL with the supplied map |
+| `use_sim_time` | `True` | Uses the Gazebo `/clock` topic |
+| `map`, `params_file` | Package files | Overrides the map or Nav2 parameter file |
 
-`vda5050_bridge_fleet.launch.py` takes `broker_url` (default `tcp://localhost:1883`) and `robot_count` (1–3, default 3).
+`vda5050_bridge_fleet.launch.py`:
 
-## Checking a run
-
-```bash
-ros2 topic info /clock      # expect exactly one publisher
-ros2 topic hz /clock        # ~100 Hz
-ros2 topic echo /tb3_1/amcl_pose --once
-```
-
-`/clock` is worth checking first. With `use_sim_time` enabled and nothing publishing it, every Nav2 node holds a clock frozen at zero, so none of the timeouts that normally recover a stuck goal can expire — the robot simply stops and logs nothing. Hardware runs on the wall clock and never reproduces this.
+| Argument | Default | Description |
+|---|---|---|
+| `broker_url` | `tcp://localhost:1883` | MQTT broker URL |
+| `robot_count` | `3` | Number of VDA5050 bridges and clients; valid range: 1–3 |

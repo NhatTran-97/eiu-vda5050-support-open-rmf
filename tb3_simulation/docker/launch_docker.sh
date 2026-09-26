@@ -6,7 +6,7 @@ COMPOSE_FILE="${SCRIPT_DIR}/docker-compose.yaml"
 CONTAINER_NAME="tb3-simulation"
 CLEANED_UP=0
 
-# Verify that an X display is available before starting the container.
+# Require an active X display.
 if [ -z "$DISPLAY" ]; then
   echo "ERROR: DISPLAY is not set. Run this script inside an X session."
   exit 1
@@ -24,7 +24,7 @@ export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
 touch "$XAUTHORITY"
 mkdir -p "$HOME/.config/open-robotics" "$HOME/.cache/open-robotics"
 
-# Allow local processes (the container) to connect to the X server.
+# Allow the container to connect to the local X server.
 echo ">>> Granting X11 access to local connections"
 xhost +local:
 

@@ -31,7 +31,7 @@
                         <uri>file://media/materials/scripts/gazebo.material</uri>
                         <name>Gazebo/Wood</name>
                     </script>
-                    <!-- PBR for Ignition, material scripts for gazebo classic-->
+                    <!-- PBR for Gazebo Sim; material scripts for Gazebo Classic. -->
                     <pbr>
                         <metal>
                             <albedo_map>https://fuel.gazebosim.org/1.0/openrobotics/models/table/4/files/Table_Diffuse.jpg</albedo_map>

@@ -37,7 +37,7 @@ services:
 
     group_add:
       - video
-      - "110"  # host's "render" group (GID for /dev/dri/renderD128) — lets eiu open the GPU render node
+      - "110"  # Host render group for /dev/dri/renderD128 access.
 
     privileged: true
 

@@ -5,10 +5,6 @@
   <Domain>
     <Discovery>
       <ParticipantIndex>auto</ParticipantIndex>
-      <!-- Each simulated robot runs a full Nav2 stack of ~24 processes, each a
-           participant in the one domain; a node started after the auto
-           participant-index pool is full fails with "Failed to find a free
-           participant index". 500 covers about 20 robots. -->
       <MaxAutoParticipantIndex>500</MaxAutoParticipantIndex>
     </Discovery>
   </Domain>

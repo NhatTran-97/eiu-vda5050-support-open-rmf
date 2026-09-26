@@ -8,10 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(Python3 REQUIRED)
 
-# ---------------------------------------------------------------------------
-# building_map_generator (từ rmf_building_map_tools) để generate Gazebo world
-# từ file .building.yaml của traffic-editor.
-# ---------------------------------------------------------------------------
+# Generate Gazebo worlds from Traffic Editor building maps.
 find_program(BUILDING_MAP_GENERATOR_EXECUTABLE building_map_generator
   HINTS
     "/opt/ros/jazzy/lib/rmf_building_map_tools"
@@ -45,8 +42,8 @@ if(NOT building_yaml)
   message(FATAL_ERROR "[tb3_simulation] Không tìm thấy file .building.yaml nào trong maps/")
 endif()
 
-# Install the source map assets first. Generated worlds and models below must
-# replace any checked-in copies so Gazebo loads matching model:// URIs.
+# Install source assets before generated worlds and models.
+# Generated files replace checked-in copies to preserve model:// URIs.
 install(
   DIRECTORY maps/
   DESTINATION share/${PROJECT_NAME}/maps
@@ -64,7 +61,7 @@ foreach(path ${building_yaml})
   set(world_phony ${out_dir}/world_phony)
   set(nav_phony   ${nav_dir}/nav_phony)
 
-  # Generate Gazebo world + patch sensors plugin (lidar/imu)
+  # Generate the Gazebo world and add lidar and IMU plugins.
   add_custom_command(
     OUTPUT ${world_phony}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${out_dir}
@@ -84,7 +81,7 @@ foreach(path ${building_yaml})
     DEPENDS ${world_phony}
   )
 
-  # Generate nav graphs
+  # Generate navigation graphs.
   add_custom_command(
     OUTPUT ${nav_phony}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${nav_dir}

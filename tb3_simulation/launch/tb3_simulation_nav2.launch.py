@@ -22,20 +22,19 @@ from launch_ros.actions import Node
 from nav2_common.launch import ReplaceString
 
 
-# Head start before the first spawn so the Gazebo GUI client has time to
-# connect to the scene; entities spawned before that miss the GUI's render.
+# Delay spawning until the Gazebo GUI connects to the scene.
 SPAWN_DELAY_OFFSET = 5.0
 
 
 def load_robots(poses_file):
-    """Return [(name, x, y)] in spawn order from the robot poses file."""
+    """Load robot names and spawn positions in file order."""
     with open(poses_file, 'r') as f:
         entries = yaml.safe_load(f)['robots']
     return [(e['name'], float(e['x']), float(e['y'])) for e in entries]
 
 
 def spawn_robots(context, sdf_path, robot_description, nav2_launch, count, robots, poses_file):
-    """Spawn each Burger with an isolated ROS namespace and Nav2 stack."""
+    """Spawn each Burger in a separate ROS namespace and Nav2 stack."""
     with open(sdf_path, 'r') as f:
         base_sdf = f.read()
 
@@ -144,7 +143,7 @@ def generate_launch_description():
     ros_gz_sim_dir = get_package_share_directory('ros_gz_sim')
     tb3_gazebo_dir = get_package_share_directory('turtlebot3_gazebo')
 
-    # Set TURTLEBOT3_MODEL
+    # Select the TurtleBot3 Burger model.
     os.environ['TURTLEBOT3_MODEL'] = 'burger'
 
     poses_file = os.path.join(tb3_simulation_dir, 'config', 'robot_poses.yaml')
@@ -200,7 +199,7 @@ def generate_launch_description():
         description='Number of TurtleBot3 robots and independent Nav2 stacks '
                     '(at most the robots listed in config/robot_poses.yaml)')
 
-    # Append GZ_SIM_RESOURCE_PATH - dùng AppendEnvironmentVariable như mẫu
+    # Add model directories to the Gazebo resource path.
     set_gz_resource_path = AppendEnvironmentVariable(
         'GZ_SIM_RESOURCE_PATH', os.path.join(tb3_gazebo_dir, 'models'))
 
@@ -210,7 +209,7 @@ def generate_launch_description():
     set_gz_resource_path3 = AppendEnvironmentVariable('GZ_SIM_RESOURCE_PATH',
     os.path.join(os.path.expanduser('~'), '.gz', 'fuel', 'fuel.gazebosim.org', '1.0', 'openrobotics', 'models'))   
 
-    # URDF từ turtlebot3_gazebo - không có namespace issue
+    # Load the Burger URDF from turtlebot3_gazebo.
     urdf_path = os.path.join(
         tb3_gazebo_dir, 'urdf', 'turtlebot3_burger.urdf')
     with open(urdf_path, 'r') as f:
@@ -221,9 +220,7 @@ def generate_launch_description():
         launch_arguments={'gz_args': ['-r -s -v2 ', os.path.join(
                 tb3_simulation_dir, 'maps', 'tb3_world', 'tb3_world.world')], 'on_exit_shutdown': 'True'}.items())
 
-    # Gazebo publishes the clock only on gz transport; every use_sim_time node
-    # needs it on the ROS side or its clock never advances and no Nav2 timeout
-    # (progress checker, failure tolerance, costmap staleness) can ever fire.
+    # Bridge the Gazebo clock for ROS nodes that use simulation time.
     clock_bridge_cmd = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -232,7 +229,7 @@ def generate_launch_description():
         output='screen',
     )
 
-    # Gazebo GUI client — chỉ chạy khi use_gz_gui:=True (mặc định tắt vì hay crash trong Docker)
+    # Start the Gazebo GUI only when use_gz_gui is enabled.
     gzclient_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(ros_gz_sim_dir, 'launch', 'gz_sim.launch.py')),
         condition=IfCondition(LaunchConfiguration('use_gz_gui')),
@@ -242,8 +239,7 @@ def generate_launch_description():
         }.items()
     )
 
-    # One RViz instance follows tb3_1. The other robots remain available under
-    # their own namespaces for VDA5050 bridges and command-line inspection.
+    # Use one RViz instance for the first robot.
     rviz_cmd = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(launch_dir, 'rviz_launch.py')),

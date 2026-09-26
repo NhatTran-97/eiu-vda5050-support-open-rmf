@@ -1,14 +1,7 @@
-"""Bridge + client_adapter for the simulated TB3 fleet in tb3_simulation,
-namespaced per robot so multiple instances don't collide on node name or
-private (~/...) topics -- for testing vda5050_fleet_adapter_full_control
-against Gazebo instead of real hardware.
+"""Launch VDA5050 bridges and client adapters for simulated TB3 robots.
 
-Reuses tb3_vda5050_bridge/launch/bridge.launch.py and
-vda5050_client_adapter/launch/vda5050_adapter.launch.py unmodified, one pair
-per robot wrapped in GroupAction(PushRosNamespace(name)). Per-robot bridge
-topic overrides live in tb3_simulation/config/vda5050_bridge_sim*.yaml
-(adapter_ns and the Nav2/odom/battery topics are absolute strings inside the
-bridge, so they need a file per robot regardless of the namespace push).
+Each robot uses a separate ROS namespace and parameter files. This prevents
+node, topic, and MQTT client ID conflicts.
 
     ros2 launch tb3_simulation vda5050_bridge_fleet.launch.py
     ros2 launch tb3_simulation vda5050_bridge_fleet.launch.py robot_count:=1
@@ -25,13 +18,8 @@ from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import PushRosNamespace
 
 
-# name -> (VDA5050 serial, bridge params file, client_adapter params file)
-# The client_adapter params file exists per robot only because
-# vda5050_adapter.launch.py's overridable launch args don't cover
-# mqtt.client_id -- reusing one client_id for all 3 robots makes the broker
-# kick each older connection off whenever a newer one connects (its
-# adapter_params_file arg is otherwise the same mechanism the launch file
-# already exposes, so this doesn't touch the package itself).
+# Map each robot to its VDA5050 serial number and parameter files.
+# Separate client files provide unique MQTT client IDs.
 ROBOTS = (
     ('tb3_1', '0001', 'vda5050_bridge_sim.yaml', 'vda5050_client_params_tb3_1.yaml'),
     ('tb3_2', '0002', 'vda5050_bridge_sim_tb3_2.yaml', 'vda5050_client_params_tb3_2.yaml'),

@@ -7,9 +7,7 @@ LABEL maintainer="EIU - School of Engineering" \
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# ----------------------------------------------------------
 # Base tools
-# ----------------------------------------------------------
 RUN apt-get update && apt-get install -y \
     build-essential \
     cmake \
@@ -28,18 +26,14 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-# ----------------------------------------------------------
 # Gazebo Harmonic apt repository
-# ----------------------------------------------------------
 RUN curl -sSL https://packages.osrfoundation.org/gazebo.gpg \
         -o /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
         http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
         > /etc/apt/sources.list.d/gazebo-stable.list
 
-# ----------------------------------------------------------
-# Simulation + Navigation + VDA5050 dependencies
-# ----------------------------------------------------------
+# Simulation, navigation, and VDA5050 dependencies
 RUN apt-get update && apt-get install -y \
     gz-harmonic \
     ros-jazzy-ros-gz-sim \
@@ -61,6 +55,7 @@ RUN apt-get update && apt-get install -y \
     libpaho-mqttpp-dev \
     nlohmann-json3-dev \
     mosquitto-clients \
+    python3-jsonschema \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
