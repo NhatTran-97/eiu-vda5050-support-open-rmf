@@ -132,7 +132,7 @@ json agv_state(int header, const std::string &order_id, int update_id, bool acti
 
 std::vector<Connector::RoutePoint> route()
 {
-    return {{"B", 2.0, 0.0, 0.0, std::nullopt}, {"C", 4.0, 0.0, 0.0, std::nullopt}};
+    return {{"B", 2.0, 0.0, 0.0, std::nullopt, ""}, {"C", 4.0, 0.0, 0.0, std::nullopt, ""}};
 }
 
 std::string parameter(const json &instant_actions, const std::string &key)

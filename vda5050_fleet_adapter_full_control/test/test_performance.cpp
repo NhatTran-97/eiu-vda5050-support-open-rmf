@@ -317,7 +317,7 @@ TEST(Performance, StitchPlanningOnLongRoutes)
     std::vector<vda::RouteWaypoint> route;
     for (int i = 0; i < 500; ++i)
     {
-        route.push_back({"wp" + std::to_string(i), {1.0 * i, 0.0, 0.0}, std::nullopt});
+        route.push_back({"wp" + std::to_string(i), {1.0 * i, 0.0, 0.0}, std::nullopt, ""});
     }
     const std::vector<vda::RouteWaypoint> replanned(route.begin() + 100, route.end());
     constexpr int kCalls = 2000;

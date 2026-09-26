@@ -209,6 +209,22 @@ std::string ParsedState::first_fatal_error() const
     return {};
 }
 
+std::vector<AgvError> ParsedState::agv_errors() const
+{
+    std::vector<AgvError> out;
+    for (const auto &e : errors)
+    {
+        const std::string level = e.value("errorLevel", std::string{});
+        if (level != "WARNING" && level != "FATAL")
+        {
+            continue;
+        }
+        const std::string type = e.value("errorType", std::string{});
+        out.push_back({type.empty() ? "(unnamed error)" : type, level, e.value("errorDescription", std::string{})});
+    }
+    return out;
+}
+
 std::optional<std::string> ParsedState::action_status(const std::string &action_id) const
 {
     for (const auto &a : action_states)

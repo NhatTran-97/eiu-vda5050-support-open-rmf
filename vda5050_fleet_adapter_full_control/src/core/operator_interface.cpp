@@ -42,10 +42,11 @@ std::string OperatorInterface::robot_of_speed_limit_parameter(const std::string 
 }
 
 OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, const std::map<std::string, RobotHooks> &hooks,
-                                     std::chrono::duration<double> init_action_timeout)
+                                     std::chrono::duration<double> init_action_timeout, NodeLocator node_at)
     : _node(node),
       _connector(connector),
-      _init_action_timeout(std::chrono::duration_cast<std::chrono::steady_clock::duration>(init_action_timeout))
+      _init_action_timeout(std::chrono::duration_cast<std::chrono::steady_clock::duration>(init_action_timeout)),
+      _node_at(std::move(node_at))
 {
     for (const auto &[name, robot_hooks] : hooks)
     {
@@ -55,13 +56,13 @@ OperatorInterface::OperatorInterface(rclcpp::Node &node, rmf::Connector &connect
     _init_action_timer = _node.create_wall_timer( std::chrono::milliseconds(500), [this]() { poll_pending_init_actions(); });
 
     _on_set_params = _node.add_on_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &parameters)
-        {
-            return on_set_parameters(parameters);
-        });
+    {
+        return on_set_parameters(parameters);
+    });
     _post_set_params = _node.add_post_set_parameters_callback([this](const std::vector<rclcpp::Parameter> &parameters)
-        {
-            on_parameters_set(parameters);
-        });
+    {
+        on_parameters_set(parameters);
+    });
 }
 
 void OperatorInterface::add_robot(const std::string &name, const RobotHooks &robot_hooks)
@@ -91,36 +92,35 @@ void OperatorInterface::add_robot(const std::string &name, const RobotHooks &rob
     }
     _init_position_subs.push_back(_node.create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>("~/" + name + "/init_position", rclcpp::QoS(1),[this, name](
                                                                                                     const geometry_msgs::msg::PoseWithCovarianceStamped &msg)
-            {
-                on_init_position(name, msg);
-            }));
+    {
+        on_init_position(name, msg);
+    }));
 
     const auto make_service = [&](const std::string &verb, const std::function<std::string()> &action)
     {
         return _node.create_service<std_srvs::srv::Trigger>("~/" + name + "/" + verb, [this, name, verb, action](
-                // NOLINTNEXTLINE(performance-unnecessary-value-param): the service signature is fixed by rclcpp
                 const std::shared_ptr<std_srvs::srv::Trigger::Request>, std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+        {
+            if (!has_robot(name))
             {
-                if (!has_robot(name))
-                {
-                    response->success = false;
-                    response->message = "the robot was removed from the fleet";
-                    return;
-                }
-                if (!action)
-                {
-                    response->success = false;
-                    response->message = "not available for this robot";
-                    return;
-                }
-                const std::string error = action();
-                response->success = error.empty();
-                response->message = error.empty() ? verb + "d" : error;
-                if (!response->success)
-                {
-                    RCLCPP_WARN(_node.get_logger(), "%s for '%s' refused: %s", verb.c_str(), name.c_str(), error.c_str());
-                }
-            });
+                response->success = false;
+                response->message = "the robot was removed from the fleet";
+                return;
+            }
+            if (!action)
+            {
+                response->success = false;
+                response->message = "not available for this robot";
+                return;
+            }
+            const std::string error = action();
+            response->success = error.empty();
+            response->message = error.empty() ? verb + "d" : error;
+            if (!response->success)
+            {
+                RCLCPP_WARN(_node.get_logger(), "%s for '%s' refused: %s", verb.c_str(), name.c_str(), error.c_str());
+            }
+        });
     };
 
     _services.push_back(make_service("pause", robot_hooks.pause));
@@ -193,7 +193,6 @@ void OperatorInterface::on_parameters_set(const std::vector<rclcpp::Parameter> &
     for (const auto &parameter : parameters)
     {
         const std::string robot = robot_of_speed_limit_parameter(parameter.get_name());
-        // Values reaching this callback have already passed validation.
         if (robot.empty() || !has_robot(robot))
         {
             continue;
@@ -206,7 +205,6 @@ void OperatorInterface::apply_speed_limit(const std::string &robot_name, double 
 {
     const std::optional<double> cap = limit == kNoSpeedLimit ? std::nullopt : std::optional<double>(limit);
 
-    // Declaring a parameter reports its default; there is nothing to change then.
     if (_connector.speed_limit(robot_name) == cap)
     {
         return;
@@ -249,7 +247,7 @@ void OperatorInterface::on_init_position(
 
     RCLCPP_INFO(_node.get_logger(), "init_position for '%s': (%.2f, %.2f, %.2f rad) on '%s'", robot_name.c_str(), x, y, theta, map_name->c_str());
 
-    const std::string action_id = _connector.init_position(robot_name, x, y, theta, *map_name);
+    const std::string action_id = _connector.init_position(robot_name, x, y, theta, *map_name, _node_at ? _node_at(*map_name, x, y) : std::string{});
     if (action_id.empty())
     {
         RCLCPP_ERROR(_node.get_logger(), "init_position for '%s' was not published",robot_name.c_str());

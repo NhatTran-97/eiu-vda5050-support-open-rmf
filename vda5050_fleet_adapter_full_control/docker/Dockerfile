@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-colcon-common-extensions \
       python3-paho-mqtt \
       python3-yaml \
+      python3-jsonschema \
       mosquitto-clients \
     && rm -rf /var/lib/apt/lists/*
 

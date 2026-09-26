@@ -120,8 +120,9 @@ int run_fleet_adapter_full_control(int argc, char **argv)
 
         // Apply no-go zone / lane closures requested from the operator UI.
         const std::string this_fleet_name = fleet_config->fleet_name();
+        const auto lanes_changed = std::make_shared<std::atomic<bool>>(false);
         const auto lane_request_sub = adapter->node()->create_subscription<rmf_fleet_msgs::msg::LaneRequest>(rmf_fleet_adapter::LaneClosureRequestTopicName, rclcpp::QoS(10).reliable().transient_local(),
-            [fleet, this_fleet_name](rmf_fleet_msgs::msg::LaneRequest::UniquePtr msg)
+            [fleet, this_fleet_name, lanes_changed](rmf_fleet_msgs::msg::LaneRequest::UniquePtr msg)
             {
                 if (msg->fleet_name != this_fleet_name)
                 {
@@ -135,6 +136,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
                 {
                     fleet->open_lanes(std::vector<std::size_t>(msg->open_lanes.begin(), msg->open_lanes.end()));
                 }
+                lanes_changed->store(true);
             });
 
         // Register configured PerformAction categories with the task planner.
@@ -188,7 +190,7 @@ int run_fleet_adapter_full_control(int argc, char **argv)
         route_policy.merge_waypoint_m = fleet_config->default_max_merge_waypoint_distance();
         route_policy.merge_lane_m = fleet_config->default_max_merge_lane_distance();
 
-        RobotManager manager(logger, *connector, graph, adapter->node()->get_clock(),{nominal_speed, config.honor_waypoint_timing(), config.stitch_on_replan(), route_policy});
+        RobotManager manager(logger, *connector, graph, adapter->node()->get_clock(),{nominal_speed, config.honor_waypoint_timing(), config.stitch_on_replan(), route_policy, config.action_policy()});
 
         // Robots declared in the fleet config file.
         std::set<std::pair<std::string, std::string>> seen_identities;
@@ -302,7 +304,30 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             const auto command = entry->command;
             hooks[entry->spec.name] = RobotHooks{[command]() { return command->pause(); }, [command]() { return command->resume(); }};
         }
-        OperatorInterface operator_interface(*adapter->node(), *connector, std::move(hooks), std::chrono::duration<double>(config.init_position_timeout_s()));
+        // Nearest graph waypoint within waypoint_reached_m, named as in orders.
+        const double reached_m = route_policy.waypoint_reached_m;
+        const auto node_at = [graph, reached_m](const std::string &map, double x, double y)
+        {
+            std::optional<std::size_t> nearest;
+            double best = reached_m;
+            for (std::size_t i = 0; i < graph->num_waypoints(); ++i)
+            {
+                const auto &waypoint = graph->get_waypoint(i);
+                const double distance = (waypoint.get_location() - Eigen::Vector2d(x, y)).norm();
+                if (waypoint.get_map_name() == map && distance <= best)
+                {
+                    best = distance;
+                    nearest = i;
+                }
+            }
+            if (!nearest)
+            {
+                return std::string{};
+            }
+            const auto &waypoint = graph->get_waypoint(*nearest);
+            return rmf::VdaRobotCommandHandle::derive_node_id(waypoint.name() ? *waypoint.name() : std::string{}, *nearest, waypoint.get_location().x(), waypoint.get_location().y());
+        };
+        OperatorInterface operator_interface(*adapter->node(), *connector, std::move(hooks), std::chrono::duration<double>(config.init_position_timeout_s()), node_at);
 
         RegistrationInterface registration(*adapter->node(), *connector, manager, operator_interface,
                                            {fleet_name, config.interface_name(), runtime_path, limits, graph_facts,
@@ -331,11 +356,16 @@ int run_fleet_adapter_full_control(int argc, char **argv)
             while (running && rclcpp::ok())
             {
                 const auto pass_started = std::chrono::steady_clock::now();
+                const bool lanes_changed_now = lanes_changed->exchange(false);
                 for (const auto &entry : manager.snapshot())
                 {
                     if (entry->retired)
                     {
                         continue;
+                    }
+                    if (lanes_changed_now)
+                    {
+                        entry->command->report_position_again();
                     }
                     const std::string &name = entry->spec.name;
                     const auto &command = entry->command;

@@ -1,8 +1,4 @@
 #!/bin/bash
-# Run cppcheck and clang-tidy over the package's translation units.
-# Usage: static_analysis.sh <compile_commands.json>
-# Build the package with -DCMAKE_EXPORT_COMPILE_COMMANDS=ON to get the compile database.
-# CLANG_TIDY_ARGS holds extra clang-tidy options, e.g. "--extra-arg-before=-isystem/usr/include/c++/11".
 set -u
 DB=${1:?usage: static_analysis.sh <compile_commands.json>}
 PKG="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,7 +23,7 @@ if command -v clang-tidy >/dev/null; then
     echo "== clang-tidy =="
     files=$(python3 -c "import json,sys; print('\n'.join(sorted({e['file'] for e in json.load(open(sys.argv[1])) if e['file'].startswith(sys.argv[2] + '/src/')})))" "$DB" "$PKG")
     # shellcheck disable=SC2086
-    clang-tidy -p "$(dirname "$DB")" --config-file="$PKG/.clang-tidy" --quiet ${CLANG_TIDY_ARGS:-} $files 2>/dev/null | grep -E "warning:|error:" && status=1
+    clang-tidy -p "$(dirname "$DB")" --config-file="$PKG/clang_tidy.yaml" --quiet ${CLANG_TIDY_ARGS:-} $files 2>/dev/null | grep -E "warning:|error:" && status=1
 else
     echo "clang-tidy is not installed" >&2
 fi

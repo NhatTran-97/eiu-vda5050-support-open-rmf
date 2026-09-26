@@ -39,7 +39,7 @@ public:
         std::string runtime_path;
         FleetLimits limits;
         GraphFacts graph;
-        // Whether a robot added without saying so waits in place responsively; the fleet's own default.
+        // responsive_wait of a robot added without one: the fleet's default.
         bool default_responsive_wait = false;
         // Seconds after startup before unknown robots are reported.
         double discovery_grace_s = 0.0;

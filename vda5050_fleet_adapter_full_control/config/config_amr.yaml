@@ -42,6 +42,8 @@ vda5050:
   honor_waypoint_timing: true
   stitch_on_replan: true
   strict_validation: true
+  cap_edge_speed_to_fleet: false
+  charge_at_chargers: false
   stale_state_streak: 3              # 0 = off
   cancel_confirm_timeout_s: 5        # 0 = off
   cancel_attempts: 3
@@ -60,6 +62,7 @@ vda5050:
   usable_speed_mps: 0.05
   early_arrival_warn_s: 2.0
   metrics_period_s: 60               # 0 = off
+  dock_actions: {}                   # dock: {action, parameters}
   registration:
     discovery_grace_s: 8.0
     discovery_period_s: 2.0
@@ -82,6 +85,7 @@ vda5050:
     reconnect_min_s: 1
     reconnect_max_s: 30
     max_payload_bytes: 1048576
+    qos: 1                           # connection: always 1
 
   robots:
     amr_1:

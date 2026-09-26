@@ -7,6 +7,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include "vda5050_fleet_adapter_full_control/mqtt/mqtt_options.hpp"
+#include "vda5050_fleet_adapter_full_control/rmf/action_policy.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/link_policy.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/route_policy.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/transform.hpp"
@@ -71,6 +72,7 @@ public:
     const rmf::LinkPolicy &link_policy() const { return _link_policy; }
     const rmf::RoutePolicy &route_policy() const { return _route_policy; }
     const vda5050::NodeDeviation &node_deviation() const { return _node_deviation; }
+    const rmf::ActionPolicy &action_policy() const { return _action_policy; }
     double init_position_timeout_s() const { return _init_position_timeout_s; }
     double metrics_period_s() const { return _metrics_period_s; }
     const RegistrationConfig &registration() const { return _registration; }
@@ -88,6 +90,7 @@ private:
     rmf::LinkPolicy _link_policy;
     rmf::RoutePolicy _route_policy;
     vda5050::NodeDeviation _node_deviation;
+    rmf::ActionPolicy _action_policy;
     double _init_position_timeout_s = 10.0;
     double _metrics_period_s = 60.0;
     RegistrationConfig _registration;

@@ -52,8 +52,7 @@ nlohmann::json build_route_order(
 
         if (i + 1 >= first)
         {
-            nodes.push_back(make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, map_id, released,
-                                      deviation.xy_m, deviation.theta_rad));
+            nodes.push_back(make_node(wp.node_id, node_sequence, wp.pose.x, wp.pose.y, wp.pose.theta, wp.map_id.empty() ? map_id : wp.map_id, released, deviation.xy_m, deviation.theta_rad, wp.actions));
         }
 
         previous_node_id = wp.node_id;

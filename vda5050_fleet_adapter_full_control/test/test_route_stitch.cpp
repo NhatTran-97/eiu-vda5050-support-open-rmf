@@ -196,3 +196,9 @@ TEST(StitchedReleasedCountTest, CountsFromTheStartOfTheNewRoute) {
   plan.leading = 1;
   EXPECT_EQ(stitched_released_count(plan, 2, 4), 4u);
 }
+
+TEST(RouteStitchTest, RejectsReleasedPointOnAnotherMap) {
+  auto moved = wp("B", 2);
+  moved.map_id = "floor_2";
+  EXPECT_FALSE(plan_stitch(kOld, 2, 0, {wp("A", 1), moved, wp("X", 9)}).has_value());
+}

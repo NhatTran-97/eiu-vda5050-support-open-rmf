@@ -13,7 +13,7 @@ OrderShape shape(std::size_t nodes, std::size_t edges) {
   OrderShape s;
   s.node_count = nodes;
   s.edge_count = edges;
-  s.map_id = "m";
+  s.map_ids = {"m"};
   s.poses = {{0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}};
   return s;
 }

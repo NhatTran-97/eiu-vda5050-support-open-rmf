@@ -130,6 +130,78 @@ std::string expand_environment(const std::string &text, const std::string &path)
     return expanded;
 }
 
+// YAML scalar to JSON bool, integer, number or string.
+nlohmann::json scalar_json(const YAML::Node &node)
+{
+    const std::string text = node.as<std::string>();
+    if (text == "true" || text == "false")
+    {
+        return text == "true";
+    }
+    try
+    {
+        std::size_t used = 0;
+        const long long whole = std::stoll(text, &used);
+        if (used == text.size())
+        {
+            return whole;
+        }
+        const double number = std::stod(text, &used);
+        if (used == text.size())
+        {
+            return number;
+        }
+    }
+    catch (const std::exception &)
+    {
+    }
+    return text;
+}
+
+// Parse vda5050.dock_actions.
+std::map<std::string, rmf::DockAction> read_dock_actions(const YAML::Node &node)
+{
+    std::map<std::string, rmf::DockAction> actions;
+    if (!node || node.IsNull())
+    {
+        return actions;
+    }
+    if (!node.IsMap())
+    {
+        throw std::runtime_error("vda5050.dock_actions must be a map of dock name to {action, parameters}");
+    }
+    for (const auto &entry : node)
+    {
+        const std::string dock = entry.first.as<std::string>();
+        const std::string path = "vda5050.dock_actions." + dock;
+        const YAML::Node &spec = entry.second;
+        rmf::DockAction action;
+        action.action_type = spec.IsMap() ? optional_string(spec, "action", path) : std::string{};
+        if (action.action_type.empty())
+        {
+            throw std::runtime_error(path + ".action must name a VDA5050 action type");
+        }
+        const YAML::Node parameters = spec["parameters"];
+        if (parameters && !parameters.IsNull())
+        {
+            if (!parameters.IsMap())
+            {
+                throw std::runtime_error(path + ".parameters must be a map of key to value");
+            }
+            for (const auto &parameter : parameters)
+            {
+                if (!parameter.second.IsScalar())
+                {
+                    throw std::runtime_error(path + ".parameters." + parameter.first.as<std::string>() + " must be a single value");
+                }
+                action.parameters[parameter.first.as<std::string>()] = scalar_json(parameter.second);
+            }
+        }
+        actions[dock] = std::move(action);
+    }
+    return actions;
+}
+
 }  // namespace
 
 Args parse_args(int argc, char **argv)
@@ -219,6 +291,9 @@ Config::Config(const std::string &config_file)
     read_number("node_deviation_xy_m", _node_deviation.xy_m, 0.01, 100.0);
     read_number("node_deviation_theta_rad", _node_deviation.theta_rad, 0.001, 3.1416);
     read_number("init_position_timeout_s", _init_position_timeout_s, 1.0, 600.0);
+    _route_policy.cap_speed_to_fleet = optional_bool(vda, "cap_edge_speed_to_fleet", "vda5050", false);
+    _action_policy.dock_actions = read_dock_actions(vda["dock_actions"]);
+    _action_policy.charge_at_chargers = optional_bool(vda, "charge_at_chargers", "vda5050", false);
     read_number("metrics_period_s", _metrics_period_s, 0.0, 3600.0);
 
     const YAML::Node registration_node = vda["registration"];
@@ -330,6 +405,10 @@ Config::Config(const std::string &config_file)
     {
         _mqtt.options.max_payload_bytes = static_cast<std::size_t>(*value);
     }
+    if (const auto value = read_whole("qos", 0, 2))
+    {
+        _mqtt.options.qos = *value;
+    }
     if (_mqtt.options.retry_max < _mqtt.options.retry_min)
     {
         throw std::runtime_error("vda5050.mqtt.reconnect_max_s must not be below reconnect_min_s");
@@ -343,7 +422,7 @@ Config::Config(const std::string &config_file)
         _mqtt.password = expand_environment(mqtt_node["password"].as<std::string>(), "vda5050.mqtt.password");
     }
 
-    // Assigning an absent node throws; without the block, robot_config() names the missing robot instead.
+    // Leave the robots unset when the key is absent, so robot_config() can name the missing robot.
     if (vda["robots"])
     {
         _robots_cfg = vda["robots"];

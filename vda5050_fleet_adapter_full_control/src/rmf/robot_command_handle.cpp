@@ -65,7 +65,7 @@ std::string VdaRobotCommandHandle::node_id_for(
     std::string name;
     if (_graph && wp.graph_index().has_value())
     {
-        // Handle unnamed graph waypoints.
+        // Take the waypoint's name from the nav graph; an unnamed waypoint keeps an empty name.
         const auto *n = _graph->get_waypoint(*wp.graph_index()).name();
         if (n)
         {
@@ -167,6 +167,7 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
         {
             std::lock_guard<std::mutex> lock(_mutex);
             _path.reset();
+            _pending_order.reset();
         }
         if (_connector.order_in_progress(_name) && _connector.stop(_name) == CommandStatus::transport_failed)
         {
@@ -195,6 +196,7 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
         {
             std::lock_guard<std::mutex> lock(_mutex);
             _path.reset();
+            _pending_order.reset();
             _replan_at.reset();
         }
         if (_connector.order_in_progress(_name) && _connector.stop(_name) == CommandStatus::transport_failed)
@@ -235,6 +237,7 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
     active.targets.reserve(route_size);
 
     std::string map_name;
+    std::string level;
     for (std::size_t i = start_index; i < waypoints.size(); ++i)
     {
         const auto &wp = waypoints[i];
@@ -244,12 +247,15 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
         if (_graph && wp.graph_index().has_value())
         {
             const auto &wp_map = _graph->get_waypoint(*wp.graph_index()).get_map_name();
-            if (!map_name.empty() && map_name != wp_map)
+            if (!level.empty() && level != wp_map)
             {
-                // Use one map ID for the entire VDA5050 order.
-                RCLCPP_WARN(_logger,"[%s] path spans maps '%s' and '%s'; sending it as one " "order on '%s', which the AGV may reject", _name.c_str(), map_name.c_str(), wp_map.c_str(), wp_map.c_str());
+                RCLCPP_WARN(_logger, "[%s] path changes level from '%s' to '%s' at '%s'", _name.c_str(), level.c_str(), wp_map.c_str(), node_id.c_str());
             }
-            map_name = wp_map;
+            level = wp_map;
+            if (map_name.empty())
+            {
+                map_name = wp_map;
+            }
 
             // Warn when RMF gives no approach lane and no lane links the two waypoints directly.
             if (i > start_index && waypoints[i - 1].graph_index().has_value() && waypoints[i - 1].graph_index() != wp.graph_index() &&
@@ -259,7 +265,7 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
             }
         }
 
-        route.push_back(Connector::RoutePoint{node_id, p.x(), p.y(), p.z(), lane_speed_limit(wp)});
+        route.push_back(Connector::RoutePoint{node_id, p.x(), p.y(), p.z(), edge_speed_limit(wp), level});
         active.node_ids.push_back(node_id);
         active.positions.push_back(p);
         active.times.push_back(wp.time());
@@ -285,6 +291,7 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
         std::lock_guard<std::mutex> lock(_mutex);
         had_active_path = _path.has_value();
         _path.reset();
+        _pending_order.reset();
         holding = _hold == Hold::held;
     }
     std::optional<std::size_t> initial_release;
@@ -333,6 +340,21 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
         }
     }
 
+    bool stop_charging = false;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        stop_charging = _action_policy.charge_at_chargers && current->charging;
+    }
+    std::string stop_charging_id;
+    if (stop_charging)
+    {
+        stop_charging_id = _connector.execute_instant_action(_name, "stopCharging");
+        if (stop_charging_id.empty())
+        {
+            RCLCPP_WARN(_logger, "[%s] follow_new_path: stopCharging was not sent", _name.c_str());
+        }
+    }
+
     // Cancel the order this one replaces before sending a new orderId.
     if (_connector.order_in_progress(_name))
     {
@@ -345,10 +367,30 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
         }
     }
 
-    const auto result = _connector.navigate_route(_name, route, map_name, initial_release);
+    _connector.cancel_foreign_order(_name);
+    if (_connector.cancel_pending(_name) || !charging_stopped(stop_charging_id))
+    {
+        RCLCPP_INFO(_logger, "[%s] follow_new_path: the new order waits for the AGV to answer cancelOrder / stopCharging", _name.c_str());
+        std::lock_guard<std::mutex> lock(_mutex);
+        _pending_order = PendingOrder{std::move(route), map_name, std::move(active), stop_charging_id};
+        _replan_at.reset();
+        return;
+    }
+    send_order(route, map_name, std::move(active));
+}
+
+void VdaRobotCommandHandle::send_order(const std::vector<Connector::RoutePoint> &route, const std::string &level, ActivePath active)
+{
+    std::optional<std::size_t> release;
+    if (_honor_waypoint_timing && _clock)
+    {
+        active.released_count = releasable_count(active.times, rmf_traffic_ros2::convert(_clock->now()));
+        release = active.released_count;
+    }
+    const auto result = _connector.navigate_route(_name, route, level, release);
     if (result.status != CommandStatus::queued)
     {
-        RCLCPP_ERROR(_logger, "[%s] follow_new_path: order was not published (%s) -- replanning in %.0f s", _name.c_str(),  result.status == CommandStatus::rejected ? "rejected by validation" : "transport failure",
+        RCLCPP_ERROR(_logger, "[%s] order was not published (%s) -- replanning in %.0f s", _name.c_str(),  result.status == CommandStatus::rejected ? "rejected by validation" : "transport failure",
                      _route_policy.replan_after_s);
         schedule_replan();
         return;
@@ -362,6 +404,54 @@ void VdaRobotCommandHandle::follow_new_path(const std::vector<rmf_traffic::agv::
     end_traffic_hold();
 }
 
+bool VdaRobotCommandHandle::charging_stopped(const std::string &action_id)
+{
+    if (action_id.empty())
+    {
+        return true;
+    }
+    const auto status = _connector.get_action_state(_name, action_id);
+    if (status.has_value())
+    {
+        return vda5050::is_terminal_action_status(*status);
+    }
+    const auto data = _connector.get_data(_name);
+    return data.has_value() && !data->charging;
+}
+
+void VdaRobotCommandHandle::send_pending_order()
+{
+    std::string stop_charging;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        if (!_pending_order.has_value())
+        {
+            return;
+        }
+        stop_charging = _pending_order->stop_charging;
+    }
+    if (_connector.cancel_pending(_name) || !charging_stopped(stop_charging))
+    {
+        return;
+    }
+    std::unique_lock<std::mutex> command(_command_mutex, std::try_to_lock);
+    if (!command.owns_lock())
+    {
+        return;
+    }
+    std::optional<PendingOrder> pending;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        pending = std::exchange(_pending_order, std::nullopt);
+    }
+    if (!pending.has_value())
+    {
+        return;
+    }
+    RCLCPP_INFO(_logger, "[%s] cancelOrder / stopCharging settled -- sending the new order", _name.c_str());
+    send_order(pending->route, pending->level, std::move(pending->path));
+}
+
 void VdaRobotCommandHandle::stop()
 {
     std::lock_guard<std::mutex> command(_command_mutex);
@@ -370,6 +460,11 @@ void VdaRobotCommandHandle::stop()
         if (_retired)
         {
             return;
+        }
+        if (_pending_order.has_value())
+        {
+            _pending_order.reset();
+            RCLCPP_INFO(_logger, "[%s] stop: dropping the order that waited for cancelOrder", _name.c_str());
         }
     }
     // Hold only an order that may still run on the AGV.
@@ -380,7 +475,11 @@ void VdaRobotCommandHandle::stop()
     }
 
     // Pause on stop and cancel only if no replacement path arrives.
-    if (_connector.pause(_name) == CommandStatus::transport_failed)
+    if (_connector.paused_or_pausing(_name))
+    {
+        RCLCPP_DEBUG(_logger, "[%s] stop: the AGV is paused or pausing -- no second startPause", _name.c_str());
+    }
+    else if (_connector.pause(_name) == CommandStatus::transport_failed)
     {
         RCLCPP_ERROR(_logger,"[%s] stop: startPause did not reach the AGV (transport failure) -- ""the AGV may still be moving",_name.c_str());
         return;
@@ -392,11 +491,12 @@ void VdaRobotCommandHandle::stop()
         _hold = Hold::held;
         _hold_deadline = std::chrono::steady_clock::now() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(_route_policy.traffic_pause_timeout_s));
     }
-    RCLCPP_INFO(_logger, "[%s] stop (startPause, awaiting resume or cancel)", _name.c_str());
+    RCLCPP_INFO(_logger, "[%s] stop: held, awaiting a new path or the hold deadline", _name.c_str());
 }
 
 void VdaRobotCommandHandle::dock(const std::string &dock_name, RequestCompleted docking_finished_callback)
 {
+    DockAction action{dock_name, nlohmann::json::object()};
     {
         std::lock_guard<std::mutex> lock(_mutex);
         if (_retired)
@@ -404,8 +504,14 @@ void VdaRobotCommandHandle::dock(const std::string &dock_name, RequestCompleted 
             RCLCPP_WARN(_logger, "[%s] dock '%s': the robot was removed from the fleet -- ignoring it", _name.c_str(), dock_name.c_str());
             return;
         }
+        _pending_order.reset();
+        const auto mapped = _action_policy.dock_actions.find(dock_name);
+        if (mapped != _action_policy.dock_actions.end())
+        {
+            action = mapped->second;
+        }
     }
-    const std::string action_id = _connector.execute_instant_action(_name, dock_name);
+    const std::string action_id = _connector.execute_instant_action(_name, action.action_type, action.parameters);
 
     if (action_id.empty())
     {
@@ -416,7 +522,7 @@ void VdaRobotCommandHandle::dock(const std::string &dock_name, RequestCompleted 
     }
 
     std::lock_guard<std::mutex> lock(_mutex);
-    RCLCPP_INFO(_logger, "[%s] dock '%s' (action %s)", _name.c_str(), dock_name.c_str(), action_id.c_str());
+    RCLCPP_INFO(_logger, "[%s] dock '%s' as '%s' (action %s)", _name.c_str(), dock_name.c_str(), action.action_type.c_str(), action_id.c_str());
     _dock_action_id = action_id;
     _dock_finished = std::move(docking_finished_callback);
 }
@@ -460,6 +566,12 @@ void VdaRobotCommandHandle::on_perform_action(const std::string &category, const
     {
         superseded->error("Superseded by another action before finishing");
     }
+}
+
+void VdaRobotCommandHandle::report_position_again()
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _idle_position.reset();
 }
 
 void VdaRobotCommandHandle::report_position(RobotUpdateHandle &handle, const RobotData &data)
@@ -565,6 +677,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
     }
 
     expire_traffic_hold();
+    send_pending_order();
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -573,7 +686,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
             _hold = Hold::none;
         }
         // A traffic-hold pause does not make the AGV unavailable.
-        const bool traffic_hold = _hold != Hold::none;
+        const bool traffic_hold = _hold != Hold::none && !_operator_paused;
         _ready_for_orders = data.ready_for_orders(traffic_hold);
         if (!data.operable)
         {
@@ -601,6 +714,7 @@ void VdaRobotCommandHandle::update(const RobotData &data)
         }
     }
     apply_commission();
+    report_agv_errors(*handle, data);
 
     RequestCompleted path_done;
     RequestCompleted dock_done;
@@ -615,6 +729,10 @@ void VdaRobotCommandHandle::update(const RobotData &data)
     bool action_failed = false;
     bool trigger_replan = false;
     bool retry_replan = false;
+    bool start_charging = false;
+    std::string refused_order;
+    std::string refused_reason;
+    std::optional<RobotUpdateHandle::IssueTicket> accepted_issue;
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -664,6 +782,20 @@ void VdaRobotCommandHandle::update(const RobotData &data)
                     action_exec = std::exchange(_action_exec, std::nullopt);
                     _action_id.clear();
                 }
+            }
+        }
+
+        if (_path.has_value())
+        {
+            if (const auto refusal = _connector.refusal_of(_name, _path->order_id))
+            {
+                refused_order = _path->order_id;
+                refused_reason = *refusal;
+                _path.reset();
+            }
+            else if (_order_issue.has_value() && data.order_id == _path->order_id)
+            {
+                accepted_issue = std::exchange(_order_issue, std::nullopt);
             }
         }
 
@@ -732,6 +864,11 @@ void VdaRobotCommandHandle::update(const RobotData &data)
             if (_connector.is_command_completed(_name))
             {
                 RCLCPP_INFO(_logger, "[%s] path completed", _name.c_str());
+                if (_action_policy.charge_at_chargers && !data.charging && _graph && !path.targets.empty())
+                {
+                    const auto &end = path.targets.back().waypoint;
+                    start_charging = end.has_value() && *end < _graph->num_waypoints() && _graph->get_waypoint(*end).is_charger();
+                }
                 path_done = std::move(path.finished);
                 _path.reset();
             }
@@ -763,6 +900,36 @@ void VdaRobotCommandHandle::update(const RobotData &data)
     }
 
     // Invoke RMF callbacks outside the command lock.
+    if (accepted_issue.has_value())
+    {
+        accepted_issue->resolve({{"message", "the AGV accepted order " + data.order_id}});
+    }
+    if (!refused_order.empty())
+    {
+        RCLCPP_ERROR(_logger, "[%s] order '%s' refused by the AGV (%s) -- dropped, replanning in %.0f s", _name.c_str(),
+                     refused_order.c_str(), refused_reason.c_str(), _route_policy.replan_after_s);
+        bool raised = false;
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            raised = _order_issue.has_value();
+        }
+        if (!raised)
+        {
+            auto ticket = handle->create_issue(RobotUpdateHandle::Tier::Error, "vda5050_order_refused",
+                                               {{"order_id", refused_order}, {"error_type", refused_reason}});
+            std::lock_guard<std::mutex> lock(_mutex);
+            _order_issue.emplace(std::move(ticket));
+        }
+        schedule_replan();
+    }
+    if (start_charging)
+    {
+        RCLCPP_INFO(_logger, "[%s] at its charger -- startCharging", _name.c_str());
+        if (_connector.execute_instant_action(_name, "startCharging").empty())
+        {
+            RCLCPP_WARN(_logger, "[%s] startCharging was not sent", _name.c_str());
+        }
+    }
     if (retry_replan)
     {
         RCLCPP_WARN(_logger, "[%s] the last command could not be sent -- asking RMF to replan", _name.c_str());
@@ -831,6 +998,22 @@ void VdaRobotCommandHandle::set_update_handle(const std::shared_ptr<RobotUpdateH
                 self->on_perform_action(category, description, std::move(execution));
             }
         });
+}
+
+void VdaRobotCommandHandle::set_action_policy(const ActionPolicy &policy)
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    _action_policy = policy;
+}
+
+std::optional<double> VdaRobotCommandHandle::edge_speed_limit(const rmf_traffic::agv::Plan::Waypoint &wp) const
+{
+    const auto limit = lane_speed_limit(wp);
+    if (!_route_policy.cap_speed_to_fleet)
+    {
+        return limit;
+    }
+    return limit.has_value() ? std::min(*limit, _nominal_speed) : _nominal_speed;
 }
 
 bool VdaRobotCommandHandle::added() const
@@ -968,7 +1151,7 @@ void VdaRobotCommandHandle::expire_traffic_hold()
 {
     const auto due = [this]()
     {
-        return _hold == Hold::releasing || (_hold == Hold::held && std::chrono::steady_clock::now() >= _hold_deadline);
+        return _hold == Hold::releasing || (_hold == Hold::held && !_pending_order.has_value() && std::chrono::steady_clock::now() >= _hold_deadline);
     };
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -1027,7 +1210,13 @@ void VdaRobotCommandHandle::release_traffic_hold()
         std::lock_guard<std::mutex> lock(_mutex);
         operator_paused = _operator_paused;
     }
-    const bool failed = !operator_paused && _connector.resume(_name) == CommandStatus::transport_failed;
+    if (!operator_paused && !_connector.pause_settled(_name))
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _hold = Hold::releasing;
+        return;
+    }
+    const bool failed = !operator_paused && _connector.stop_pause_needed(_name) && _connector.resume(_name) == CommandStatus::transport_failed;
     std::lock_guard<std::mutex> lock(_mutex);
     if (operator_paused)
     {
@@ -1060,6 +1249,7 @@ void VdaRobotCommandHandle::retire()
         action = std::exchange(_action_exec, std::nullopt);
         _action_id.clear();
         held = _hold == Hold::held || _hold == Hold::releasing;
+        _pending_order.reset();
         _hold = Hold::none;
         _ready_for_orders = false;
         _not_ready_reason = "removed by the operator";
@@ -1093,10 +1283,61 @@ void VdaRobotCommandHandle::restore()
         _retired = false;
         handle = _update_handle;
     }
-    // Readiness is judged again from the next state; RMF sends a path for the task it may still hold.
+    // Ask RMF for a new plan; readiness is checked again with the next state.
     if (handle)
     {
         handle->replan();
+    }
+}
+
+void VdaRobotCommandHandle::report_agv_errors(RobotUpdateHandle &handle, const RobotData &data)
+{
+    std::map<std::string, const vda5050::AgvError *> reported;
+    for (const auto &error : data.errors)
+    {
+        reported.emplace(error.level + "/" + error.type, &error);
+    }
+
+    std::vector<const vda5050::AgvError *> raised;
+    std::vector<std::pair<std::string, RobotUpdateHandle::IssueTicket>> cleared;
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (auto it = _agv_error_issues.begin(); it != _agv_error_issues.end();)
+        {
+            if (reported.count(it->first) == 0)
+            {
+                cleared.emplace_back(it->first, std::move(it->second));
+                it = _agv_error_issues.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
+        }
+        for (const auto &[key, error] : reported)
+        {
+            if (_agv_error_issues.count(key) == 0)
+            {
+                raised.push_back(error);
+            }
+        }
+    }
+
+    // Create and resolve issues outside the command lock.
+    for (auto &[key, ticket] : cleared)
+    {
+        RCLCPP_INFO(_logger, "[%s] AGV error '%s' cleared", _name.c_str(), key.c_str());
+        ticket.resolve({{"message", "the AGV no longer reports this error"}});
+    }
+    for (const auto *error : raised)
+    {
+        const auto tier = error->level == "FATAL" ? RobotUpdateHandle::Tier::Error : RobotUpdateHandle::Tier::Warning;
+        RCLCPP_WARN(_logger, "[%s] AGV reports %s error '%s': %s", _name.c_str(), error->level.c_str(), error->type.c_str(),
+                    error->description.c_str());
+        auto ticket = handle.create_issue(tier, "vda5050_agv_error",
+                                          {{"error_type", error->type}, {"error_level", error->level}, {"description", error->description}});
+        std::lock_guard<std::mutex> lock(_mutex);
+        _agv_error_issues.emplace(error->level + "/" + error->type, std::move(ticket));
     }
 }
 

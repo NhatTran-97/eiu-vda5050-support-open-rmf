@@ -37,6 +37,7 @@ std::shared_ptr<RobotManager::Entry> RobotManager::add(const RobotSpec &spec)
 
     _connector.add_robot(spec.name, spec.manufacturer, spec.serial, rmf::Transform(spec.rotation, spec.scale, spec.tx, spec.ty));
     entry->command = std::make_shared<rmf::VdaRobotCommandHandle>( _logger, spec.name, _connector, _graph, _options.nominal_speed, _clock, _options.honor_waypoint_timing, _options.stitch_on_replan, _options.route_policy);
+    entry->command->set_action_policy(_options.action_policy);
 
     std::lock_guard<std::mutex> lock(_mutex);
     _entries.push_back(entry);

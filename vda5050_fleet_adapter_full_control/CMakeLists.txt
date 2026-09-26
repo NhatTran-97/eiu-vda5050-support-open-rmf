@@ -112,8 +112,6 @@ install(PROGRAMS
         scripts/mock_mqtt_robot.py
         scripts/mock_dispenser.py
         scripts/mock_ingestor.py
-        scripts/test_dispatch_e2e.py
-        scripts/test_pause_resume.py
         DESTINATION lib/${PROJECT_NAME})
 
 
@@ -169,6 +167,19 @@ if(BUILD_TESTING)
   target_link_libraries(test_command_handle_broker ${PROJECT_NAME}_core)
   ament_add_gtest(test_order_recovery test/test_order_recovery.cpp)
   target_link_libraries(test_order_recovery ${PROJECT_NAME}_core)
+  # Needs VDA5050_TEST_BROKER and a running test/third_party/virtual_agv.js (VDA5050_THIRD_PARTY_AGV); skips without them.
+  ament_add_gtest(test_third_party_agv test/test_third_party_agv.cpp TIMEOUT 120)
+  target_link_libraries(test_third_party_agv ${PROJECT_NAME}_core)
+  # Published messages checked against the official VDA5050 2.1 JSON schemas (needs python3-jsonschema).
+  set(_schema_samples ${CMAKE_CURRENT_BINARY_DIR}/schema_samples)
+  ament_add_gtest(test_schema_samples test/test_schema_samples.cpp ENV VDA5050_SCHEMA_SAMPLES=${_schema_samples})
+  target_link_libraries(test_schema_samples ${PROJECT_NAME}_core)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME test_vda5050_schemas
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test/validate_schemas.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/schemas/vda5050_2.1 ${_schema_samples})
+  set_tests_properties(test_schema_samples PROPERTIES FIXTURES_SETUP vda5050_schema_samples)
+  set_tests_properties(test_vda5050_schemas PROPERTIES FIXTURES_REQUIRED vda5050_schema_samples SKIP_RETURN_CODE 77)
   # Benchmarks: built with the tests, run by hand.
   ament_add_gtest_executable(test_performance test/test_performance.cpp)
   target_link_libraries(test_performance ${PROJECT_NAME}_core)

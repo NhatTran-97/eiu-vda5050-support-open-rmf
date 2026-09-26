@@ -33,8 +33,11 @@ class OperatorInterface
 {
 public:
     // The node and connector must outlive this interface; `init_action_timeout` bounds the wait for an initPosition verdict.
+    // Node ID at (map, x, y) in the RMF frame, or empty.
+    using NodeLocator = std::function<std::string(const std::string &map, double x, double y)>;
+
     OperatorInterface(rclcpp::Node &node, rmf::Connector &connector, const std::map<std::string, RobotHooks> &hooks,
-                      std::chrono::duration<double> init_action_timeout);
+                      std::chrono::duration<double> init_action_timeout, NodeLocator node_at = {});
 
     // Create the controls of one more robot while the adapter runs, or switch back on those of a removed robot;
     // the robot must already be in the connector.
@@ -78,6 +81,7 @@ private:
     rclcpp::Node &_node;
     rmf::Connector &_connector;
     std::chrono::steady_clock::duration _init_action_timeout;
+    NodeLocator _node_at;
     // Guards _hooks and _init_position_result_pubs, which grow while the adapter runs.
     mutable std::mutex _robots_mutex;
     std::map<std::string, RobotHooks> _hooks;

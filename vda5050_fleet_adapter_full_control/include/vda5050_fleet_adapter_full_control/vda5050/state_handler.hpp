@@ -38,6 +38,15 @@ struct SafetyState
     bool triggered() const;
 };
 
+// One entry of state.errors.
+struct AgvError
+{
+    std::string type;
+    // WARNING or FATAL.
+    std::string level;
+    std::string description;
+};
+
 // Parsed VDA5050 state used for pose, battery, safety, and order tracking.
 class ParsedState
 {
@@ -96,6 +105,9 @@ public:
 
     // Returns the first FATAL error type, or an empty string when none exists.
     std::string first_fatal_error() const;
+
+    // The WARNING and FATAL errors the AGV reports.
+    std::vector<AgvError> agv_errors() const;
 
     // Check whether the tracked order reached its target node.
     bool order_finished(const std::string &expected_order_id, const std::string &target_node_id = "", const std::vector<std::string> &order_action_ids = {}) const;

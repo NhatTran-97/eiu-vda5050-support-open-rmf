@@ -496,8 +496,7 @@ nlohmann::json RegistrationInterface::handle_remove(const nlohmann::json &reques
     result["persisted"] = save_runtime(&save_error);
     if (!result["persisted"].get<bool>())
     {
-        result["warnings"].push_back(
-            {{"code", "not_persisted"}, {"message", "The removal could not be saved: " + save_error}});
+        result["warnings"].push_back({{"code", "not_persisted"}, {"message", "The removal could not be saved: " + save_error}});
     }
     publish_registry_locked();
     return result;

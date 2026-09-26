@@ -22,6 +22,10 @@ struct RouteWaypoint
     std::string node_id;
     RobotPose pose;
     std::optional<double> speed_limit;
+    // Node mapId; empty uses the order's mapId.
+    std::string map_id;
+    // VDA5050 actions run at the node (make_action), e.g. pick or drop.
+    nlohmann::json actions = nlohmann::json::array();
 };
 
 // How far the AGV may stop from each node of an order and still count it as reached.

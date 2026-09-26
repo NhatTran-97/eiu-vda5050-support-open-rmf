@@ -41,6 +41,7 @@ public:
         bool honor_waypoint_timing = false;
         bool stitch_on_replan = false;
         rmf::RoutePolicy route_policy;
+        rmf::ActionPolicy action_policy;
     };
 
     // The connector, graph and clock must outlive the manager.

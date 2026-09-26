@@ -9,7 +9,7 @@ namespace {
 
 bool same_point(const RouteWaypoint &a, const RouteWaypoint &b, double tolerance)
 {
-    return a.node_id == b.node_id && std::hypot(a.pose.x - b.pose.x, a.pose.y - b.pose.y) <= tolerance;
+    return a.node_id == b.node_id && a.map_id == b.map_id && std::hypot(a.pose.x - b.pose.x, a.pose.y - b.pose.y) <= tolerance;
 }
 
 bool at_position(const RouteWaypoint &a, const RouteWaypoint &b, double tolerance)
@@ -23,9 +23,7 @@ double distance_to_segment(const RobotPose &p, const RobotPose &a, const RobotPo
     const double dx = b.x - a.x;
     const double dy = b.y - a.y;
     const double length_sq = dx * dx + dy * dy;
-    const double t = length_sq == 0.0
-                         ? 0.0
-                         : std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq, 0.0, 1.0);
+    const double t = length_sq == 0.0 ? 0.0 : std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / length_sq, 0.0, 1.0);
     return std::hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
@@ -46,8 +44,7 @@ bool leading_on_lane(const std::vector<RouteWaypoint> &current_route, std::size_
 }
 
 std::optional<StitchPlan> attach(const std::vector<RouteWaypoint> &current_route, std::size_t released_count, std::size_t traversed,
-                                 const std::vector<RouteWaypoint> &new_route, std::size_t lead,
-                                 double position_tolerance, double lane_tolerance)
+                                 const std::vector<RouteWaypoint> &new_route, std::size_t lead, double position_tolerance, double lane_tolerance)
 {
     // Match the released, unreached points against the start of the new route.
     // Repeated turns may differ in number, and a point may lie on a straight hop.

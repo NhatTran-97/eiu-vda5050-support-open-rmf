@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "description": "Third-party VDA5050 2.1 AGV for test_third_party_agv",
+  "dependencies": {
+    "vda-5050-lib": "1.7.2"
+  }
+}

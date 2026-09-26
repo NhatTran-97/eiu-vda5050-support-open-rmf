@@ -20,10 +20,12 @@ std::vector<Violation> check_order(const OrderShape &order,
         }
     }
 
-    if (!order.map_id.empty() && !known_maps.empty() &&
-        std::find(known_maps.begin(), known_maps.end(), order.map_id) == known_maps.end())
+    for (const auto &map_id : order.map_ids)
     {
-        out.push_back({Severity::hard, "mapId '" + order.map_id + "' is not among the maps the AGV reports"});
+        if (!map_id.empty() && !known_maps.empty() && std::find(known_maps.begin(), known_maps.end(), map_id) == known_maps.end())
+        {
+            out.push_back({Severity::hard, "mapId '" + map_id + "' is not among the maps the AGV reports"});
+        }
     }
 
     if (factsheet.has_value())

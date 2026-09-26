@@ -23,6 +23,7 @@
 #include "vda5050_fleet_adapter_full_control/vda5050/factsheet_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/vda5050/order_handler.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/link_policy.hpp"
+#include "vda5050_fleet_adapter_full_control/rmf/level_maps.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/transform.hpp"
 
 namespace vda5050_fleet_adapter_full_control::rmf {
@@ -38,6 +39,7 @@ enum class CommandStatus
 // Per-robot state in RMF coordinates, assembled from VDA5050 state and visualization messages.
 struct RobotData
 {
+    // RMF level of the AGV's map.
     std::string map_name;
     std::array<double, 3> position;  // x, y, theta (RMF frame)
     double battery_soc;
@@ -61,6 +63,8 @@ struct RobotData
     vda5050::SafetyState safety_state;
     // First FATAL error type reported by the AGV.
     std::string fatal_error;
+    // All WARNING and FATAL errors reported by the AGV.
+    std::vector<vda5050::AgvError> errors;
     // Whether the AGV reports a pause, regardless of who requested it.
     bool paused = false;
     // The AGV is asking for more of the order horizon to be released.
@@ -90,6 +94,8 @@ public:
 
     // Registers a robot and subscribes to its uplink topics.
     void add_robot(const std::string &name, const std::string &manufacturer,const std::string &serial, const Transform &transform);
+    // Registers a robot with a map and frame per RMF level.
+    void add_robot(const std::string &name, const std::string &manufacturer, const std::string &serial, const LevelMaps &maps);
 
     // A robot seen on this interface that is not registered.
     struct DiscoveredRobot
@@ -131,6 +137,10 @@ public:
         double y = 0.0;
         double theta = 0.0;
         std::optional<double> speed_limit;
+        // RMF level; empty uses the order's level.
+        std::string level;
+        // VDA5050 actions run at this point (vda5050::make_action); the order completes once they end.
+        nlohmann::json actions = nlohmann::json::array();
     };
 
     // Outcome of navigate_route.
@@ -140,10 +150,10 @@ public:
         std::string order_id;
     };
 
-    // Publishes a multi-node order and tracks completion at its final waypoint; `released_count` limits the released points (nullopt releases all).
+    // Publishes a multi-node order on RMF level `level` and tracks completion at its final waypoint; `released_count` limits the released points (nullopt releases all).
     NavigateResult navigate_route(const std::string &name,
                                   const std::vector<RoutePoint> &route,
-                                  const std::string &map_id,
+                                  const std::string &level,
                                   std::optional<std::size_t> released_count = std::nullopt);
 
     // Result of continuing the active order along a replanned route.
@@ -163,14 +173,23 @@ public:
     // Attach a replanned route to the active order; stitched=false leaves the order untouched.
     ReplanResult replan_route(const std::string &name,
                               const std::vector<RoutePoint> &route,
-                              const std::string &map_id,
+                              const std::string &level,
                               std::optional<std::size_t> released_count = std::nullopt);
 
     // Extend order `expected_order_id` with a larger released horizon; rejected when it is no longer the tracked order or cannot grow.
     CommandStatus release_more(const std::string &name, const std::string &expected_order_id, std::size_t released_count);
 
-    // Whether the tracked order may still run on the AGV: sent and not yet reported finished.
+    // Whether the tracked order may still run on the AGV: sent, not reported finished, and not refused while the AGV runs nothing.
     bool order_in_progress(const std::string &name) const;
+
+    // Whether a cancelOrder sent to `name` still waits for the AGV's answer.
+    bool cancel_pending(const std::string &name) const;
+
+    // Cancel an order the AGV runs that this adapter did not send.
+    void cancel_foreign_order(const std::string &name);
+
+    // Error type the AGV refused `order_id` with.
+    std::optional<std::string> refusal_of(const std::string &name, const std::string &order_id) const;
 
     // Set or clear the operator speed cap applied to subsequent route edges.
     bool set_speed_limit(const std::string &name, std::optional<double> limit);
@@ -186,6 +205,15 @@ public:
 
     // Publishes stopPause to continue a paused order.
     CommandStatus resume(const std::string &name);
+
+    // Whether the AGV has answered the last startPause: the action ended, the AGV reports paused, or cancel_confirm_timeout_s passed.
+    bool pause_settled(const std::string &name) const;
+
+    // Whether the AGV is paused or pausing: it reports paused with no stopPause pending, or a startPause sent within cancel_confirm_timeout_s is unanswered.
+    bool paused_or_pausing(const std::string &name) const;
+
+    // Whether the AGV still needs a stopPause: it reports paused, or it has not answered the last startPause.
+    bool stop_pause_needed(const std::string &name) const;
 
     // Publish an instant action and return its ID, or an empty string if dispatch fails.
     std::string execute_instant_action(const std::string &name, const std::string &action_type,
@@ -212,8 +240,9 @@ public:
     // How far an AGV may stop from each node of the orders it gets.
     void set_node_deviation(const vda5050::NodeDeviation &deviation);
 
-    // Send initPosition in the robot frame and return its action ID, or an empty string on failure.
-    std::string init_position(const std::string &name, double x, double y, double theta, const std::string &map_id);
+    // Send initPosition on RMF level `level` in the robot frame and return its action ID, or an empty string on failure.
+    std::string init_position(const std::string &name, double x, double y, double theta, const std::string &level,
+                              const std::string &last_node_id = "");
 
     // State received from the AGV.
     std::optional<RobotData> get_data(const std::string &name);
@@ -226,7 +255,7 @@ public:
     std::optional<std::string> get_action_state(const std::string &name, const std::string &action_id);
     // Status and resultDescription of `action_id` as last reported by the AGV.
     std::optional<std::pair<std::string, std::string>> get_action_result(const std::string &name, const std::string &action_id);
-    // Best-known map for `name`, without requiring the AGV to be localized.
+    // Best-known RMF level for `name`, without requiring the AGV to be localized.
     std::optional<std::string> get_known_map(const std::string &name);
     // Whether the robot is connected and has state newer than the link policy's state timeout.
     bool is_online(const std::string &name);
@@ -252,7 +281,7 @@ private:
         std::string interface_name;
         // Serializes order, order update and cancel commands for this robot.
         std::mutex order_mutex;
-        Transform transform;
+        LevelMaps maps;
         // VDA5050 header counters are maintained independently per topic.
         int order_header_id = 0;
         int instant_actions_header_id = 0;
@@ -274,7 +303,10 @@ private:
         std::vector<vda5050::RouteWaypoint> current_route;
         std::string current_base_id;
         vda5050::RobotPose current_base;
-        std::string current_map_id;
+        // mapId of the base node.
+        std::string current_base_map_id;
+        // RMF level of the tracked order.
+        std::string current_level;
         // Number of route points released in the last published order.
         std::size_t current_released_count = 0;
         std::optional<vda5050::ParsedState> last_state;
@@ -288,6 +320,14 @@ private:
         std::string replaced_order_id;
         // Order of unknown origin a cancelOrder was sent for.
         std::string unknown_order_cancelled;
+        // Last refused order and its error type.
+        std::string refused_order_id;
+        std::string refusal;
+        // Last startPause sent that the AGV has not answered yet, and when it was sent.
+        std::string pause_action_id;
+        std::chrono::steady_clock::time_point pause_sent_at{};
+        // A stopPause was sent and the AGV has not reported running since.
+        bool resume_pending = false;
         // Visualization data is used only to refine pose and velocity.
         std::optional<vda5050::ParsedVisualization> last_visualization;
         std::chrono::steady_clock::time_point last_visualization_time{};
@@ -318,7 +358,7 @@ private:
     // Subscribes to a robot's uplink topics.
     void subscribe_robot(const RobotContext &ctx);
 
-    // Offline limit for one AGV, longer than the configured one when its factsheet declares a slower state interval; the caller holds _mutex.
+    // Offline limit for one AGV: state_timeout_s, or offline_state_intervals of its state interval (declared, else 30 s) when longer; the caller holds _mutex.
     double state_timeout_for(const RobotContext &ctx) const;
 
     // The levels of an uplink topic "<interface>/v2/<manufacturer>/<serial>/<leaf>".
@@ -371,15 +411,15 @@ private:
     // Report action conflicts; the caller holds _mutex.
     void warn_if_action_conflicts(const RobotContext &ctx, const std::string &action_type, const std::string &blocking_type) const;
 
-    // Convert RMF route points to robot-frame waypoints; caller holds _mutex.
-    std::vector<vda5050::RouteWaypoint> to_waypoints(const RobotContext &ctx,  const std::vector<RoutePoint> &route,  const std::string &map_id) const;
+    // Convert RMF route points to robot-frame waypoints with their mapIds; caller holds _mutex.
+    std::vector<vda5050::RouteWaypoint> to_waypoints(const RobotContext &ctx,  const std::vector<RoutePoint> &route,  const std::string &level) const;
 
     // Log violations; false means do not send. The caller holds _mutex.
     bool order_allowed(RobotContext &ctx, const vda5050::RobotPose &base, const std::vector<vda5050::RouteWaypoint> &route,
-                       const std::string &map_id, std::size_t node_count, std::size_t edge_count);
+                       const std::string &base_map_id, std::size_t node_count, std::size_t edge_count);
 
     // Report a map ID mismatch with the AGV; the caller holds _mutex.
-    void warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_map_id) const;
+    void warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_level) const;
 
     // Keys that change when a state's errors, safety, information, loads or maps change.
     struct StateKeys
@@ -429,6 +469,7 @@ private:
     rclcpp::Logger _logger;
     std::string _interface_name;
     mqtt::TlsOptions _tls;
+    int _qos;
     bool _has_credentials;
     mqtt::MqttClient _mqtt_client;
 

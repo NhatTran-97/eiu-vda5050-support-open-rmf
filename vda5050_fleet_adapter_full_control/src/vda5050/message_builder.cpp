@@ -54,15 +54,13 @@ std::string make_uuid()
     return buf;
 }
 
-std::string topic(const std::string &interface_name, const std::string &manufacturer,
-                  const std::string &serial, const std::string &leaf)
+std::string topic(const std::string &interface_name, const std::string &manufacturer, const std::string &serial, const std::string &leaf)
 {
     return interface_name + "/" + TOPIC_VERSION + "/" + manufacturer + "/" + serial + "/" + leaf;
 }
 
-nlohmann::json make_node(const std::string &node_id, int sequence_id,
-                        double x, double y, double theta, const std::string &map_id,
-                        bool released, double allowed_deviation_xy, double allowed_deviation_theta)
+nlohmann::json make_node(const std::string &node_id, int sequence_id, double x, double y, double theta, const std::string &map_id,
+                        bool released, double allowed_deviation_xy, double allowed_deviation_theta, const nlohmann::json &actions)
 {
     return {
         {"nodeId", node_id},
@@ -73,7 +71,7 @@ nlohmann::json make_node(const std::string &node_id, int sequence_id,
             {"allowedDeviationXY", allowed_deviation_xy},
             {"allowedDeviationTheta", allowed_deviation_theta},
         }},
-        {"actions", nlohmann::json::array()},
+        {"actions", actions},
     };
 }
 

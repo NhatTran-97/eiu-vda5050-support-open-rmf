@@ -29,7 +29,8 @@ struct OrderShape
 {
     std::size_t node_count = 0;
     std::size_t edge_count = 0;
-    std::string map_id;
+    // Distinct mapIds of the order's nodes.
+    std::vector<std::string> map_ids;
     // Every pose in the order, in the robot frame.
     std::vector<std::array<double, 3>> poses;
     std::optional<double> seconds_since_last_order;

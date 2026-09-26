@@ -1,9 +1,9 @@
-# TB3 fleet on tb3_simulation (Gazebo), local broker. Real robots: config_tb3.yaml.
+# Fleet of vda-5050-lib virtual AGVs (virtual_agv.js) on a private local broker.
 
 rmf_fleet:
-  name: "tb3_fleet"
+  name: "virtual_fleet"
   limits:
-    linear: [0.22, 1.0]        # v_max m/s, a_max m/s^2
+    linear: [0.5, 1.0]         # v_max m/s, a_max m/s^2
     angular: [1.0, 3.2]        # w_max rad/s, alpha_max rad/s^2
   profile:
     footprint: 0.15            # m
@@ -32,13 +32,13 @@ rmf_fleet:
   finishing_request: "park"    # park | charge | nothing
 
   robots:
-    tb3_1:
+    virtual_1:
       charger: "charger_1"
       responsive_wait: false
-    tb3_2:
+    virtual_2:
       charger: "charger_2"
       responsive_wait: false
-    tb3_3:
+    virtual_3:
       charger: "charger_3"
       responsive_wait: false
 
@@ -75,8 +75,8 @@ vda5050:
     timeout_s: 30
     limit_tolerance: 0.05
   mqtt:
-    host: "localhost"
-    port: 1883
+    host: "127.0.0.1"
+    port: 18830
     username: null
     password: null
     tls:
@@ -89,15 +89,15 @@ vda5050:
     qos: 1                           # connection: always 1
 
   robots:
-    tb3_1:
-      manufacturer: "ROBOTIS"
+    virtual_1:
+      manufacturer: "THIRDPARTY"
       serial: "0001"
       transform: {rotation: 0.0, scale: 1.0, translation: [0.0, 0.0]}
-    tb3_2:
-      manufacturer: "ROBOTIS"
+    virtual_2:
+      manufacturer: "THIRDPARTY"
       serial: "0002"
       transform: {rotation: 0.0, scale: 1.0, translation: [0.0, 0.0]}
-    tb3_3:
-      manufacturer: "ROBOTIS"
+    virtual_3:
+      manufacturer: "THIRDPARTY"
       serial: "0003"
       transform: {rotation: 0.0, scale: 1.0, translation: [0.0, 0.0]}

@@ -27,7 +27,7 @@ std::vector<vda::RouteWaypoint> random_route(std::mt19937 &rng, std::size_t poin
     while (route.size() < points)
     {
         x += 1.0;
-        const vda::RouteWaypoint wp{"wp" + std::to_string(id++), {x, jitter(rng), heading(rng)}, std::nullopt};
+        const vda::RouteWaypoint wp{"wp" + std::to_string(id++), {x, jitter(rng), heading(rng)}, std::nullopt, ""};
         route.push_back(wp);
         if (route.size() < points && turn(rng))
         {

@@ -2,6 +2,7 @@
 #define ROBOT_COMMAND_HANDLE_HPP
 
 #include <chrono>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -17,6 +18,7 @@
 #include <rmf_traffic/agv/Planner.hpp>
 
 #include "vda5050_fleet_adapter_full_control/rmf/connector.hpp"
+#include "vda5050_fleet_adapter_full_control/rmf/action_policy.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/position_update.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/route_policy.hpp"
 
@@ -51,6 +53,9 @@ public:
     void update(const RobotData &data);
 
     void set_update_handle(const std::shared_ptr<RobotUpdateHandle> &handle);
+
+    // Set dock and charging actions.
+    void set_action_policy(const ActionPolicy &policy);
     bool added() const;
 
     // Updates RMF commission state from VDA5050 connectivity and readiness.
@@ -61,6 +66,12 @@ public:
 
     // Ends a traffic hold that got no new path in time: cancels the held order and releases the pause, retrying a stopPause that failed.
     void expire_traffic_hold();
+
+    // Sends the order held back for a cancelOrder once the AGV has answered it.
+    void send_pending_order();
+
+    // Reports the position to RMF on the next update even if the robot has not moved, e.g. after lane closures change.
+    void report_position_again();
 
     // Stops managing the robot: drops its command, cancels its order and decommissions it.
     void retire();
@@ -108,20 +119,32 @@ private:
     // Returns the most restrictive approach-lane speed limit for a waypoint.
     std::optional<double> lane_speed_limit(const rmf_traffic::agv::Plan::Waypoint &wp) const;
 
+    // maxSpeed of the edge into a waypoint.
+    std::optional<double> edge_speed_limit(const rmf_traffic::agv::Plan::Waypoint &wp) const;
+
     // Estimates travel time from the measured or nominal linear speed.
     double estimate_seconds(const Eigen::Vector3d &from, const Eigen::Vector3d &to, const std::optional<vda5050::Velocity> &velocity) const;
     
     // Applies the current commission decision to RMF when it changes.
     void apply_commission();
 
-    // Sends stopPause after a traffic hold unless the operator paused the AGV, and moves the hold on accordingly.
+    // Opens an RMF issue for each error the AGV reports, and resolves it once the AGV clears the error.
+    void report_agv_errors(RobotUpdateHandle &handle, const RobotData &data);
+
+    // Sends the stopPause that ends a traffic hold, once the AGV has answered the startPause and unless the operator paused it.
     void release_traffic_hold();
 
-    // Moves a traffic hold to its release once the robot has a new order, and releases it.
+    // Ends a traffic hold once the robot has a new order, then releases the pause.
     void end_traffic_hold();
 
     // Asks RMF for a new plan after replan_after_s, for a command that could not be sent.
     void schedule_replan();
+
+    // Whether the stopCharging `action_id` has ended, or the AGV no longer reports charging without reporting the action.
+    bool charging_stopped(const std::string &action_id);
+
+    // Publishes a new order for `active` and makes it the active path.
+    void send_order(const std::vector<Connector::RoutePoint> &route, const std::string &level, ActivePath active);
 
     // Reports the position to RMF with the waypoint or lanes of the active path when the robot is on them.
     void report_position(RobotUpdateHandle &handle, const RobotData &data);
@@ -138,12 +161,24 @@ private:
     bool _honor_waypoint_timing;
     bool _stitch_on_replan;
     RoutePolicy _route_policy;
+    ActionPolicy _action_policy;
 
     // Serializes the commands that change the robot's order: new paths, stops, hold expiry, retire and restore.
     std::mutex _command_mutex;
     // Protects command state shared by RMF and the update loop; taken after _command_mutex.
     mutable std::mutex _mutex;
     std::optional<ActivePath> _path;
+
+    // A new order waiting for the AGV to answer the cancelOrder of the order it replaces, and its stopCharging.
+    struct PendingOrder
+    {
+        std::vector<Connector::RoutePoint> route;
+        std::string level;
+        ActivePath path;
+        // actionId of the stopCharging sent before it; empty when none.
+        std::string stop_charging;
+    };
+    std::optional<PendingOrder> _pending_order;
     std::string _dock_action_id;
     RequestCompleted _dock_finished;
 
@@ -178,12 +213,16 @@ private:
         released,
     };
     Hold _hold = Hold::none;
-    // When a held order is cancelled, or when a released AGV counts as unpaused anyway.
+    // Deadline of the hold: when a held order is cancelled, or when a released AGV counts as unpaused.
     std::chrono::steady_clock::time_point _hold_deadline{};
     // When to ask RMF for a new plan after a command could not be sent.
     std::optional<std::chrono::steady_clock::time_point> _replan_at;
     // Removed from the fleet: no commands are carried out.
     bool _retired = false;
+    // RMF issue for a refused order.
+    std::optional<RobotUpdateHandle::IssueTicket> _order_issue;
+    // Open RMF issues for AGV errors, keyed by "<level>/<errorType>".
+    std::map<std::string, RobotUpdateHandle::IssueTicket> _agv_error_issues;
     // Map and pose last reported to RMF while no path was active.
     std::optional<std::pair<std::string, Eigen::Vector3d>> _idle_position;
 };

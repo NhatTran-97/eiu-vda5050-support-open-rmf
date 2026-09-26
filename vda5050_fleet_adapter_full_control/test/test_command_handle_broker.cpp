@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -37,6 +38,7 @@
 #include "vda5050_fleet_adapter_full_control/mqtt/mqtt_client.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/connector.hpp"
 #include "vda5050_fleet_adapter_full_control/rmf/robot_command_handle.hpp"
+#include "vda5050_fleet_adapter_full_control/vda5050/message_builder.hpp"
 
 extern char **environ;
 
@@ -45,6 +47,7 @@ namespace {
 using namespace std::chrono_literals;
 using vda5050_fleet_adapter_full_control::rmf::CommandStatus;
 using vda5050_fleet_adapter_full_control::rmf::Connector;
+using vda5050_fleet_adapter_full_control::rmf::LevelMaps;
 using vda5050_fleet_adapter_full_control::rmf::RoutePolicy;
 using vda5050_fleet_adapter_full_control::rmf::Transform;
 using vda5050_fleet_adapter_full_control::rmf::VdaRobotCommandHandle;
@@ -108,6 +111,7 @@ public:
         std::lock_guard<std::mutex> lock(_mutex);
         _messages.push_back(payload);
         _kinds.push_back(kind);
+        _qos.push_back(msg->get_qos());
         _cv.notify_all();
     }
 
@@ -130,12 +134,19 @@ public:
         return _messages.at(index);
     }
 
+    int qos(std::size_t index)
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        return _qos.at(index);
+    }
+
 private:
     mqtt::async_client _client;
     std::mutex _mutex;
     std::condition_variable _cv;
     std::vector<nlohmann::json> _messages;
     std::vector<std::string> _kinds;
+    std::vector<int> _qos;
 };
 
 std::string join(const std::vector<std::string> &items)
@@ -148,7 +159,7 @@ std::string join(const std::vector<std::string> &items)
     return "[" + out + "]";
 }
 
-// A(0,0) - B(2,0) - C(4,0), with D(2,2) off B; every lane runs both ways and A is a charger.
+// A(0,0) - B(2,0) - C(4,0), with D(2,2) off B; lanes run both ways, A and C are chargers.
 std::shared_ptr<rmf_traffic::agv::Graph> make_graph()
 {
     auto graph = std::make_shared<rmf_traffic::agv::Graph>();
@@ -160,6 +171,7 @@ std::shared_ptr<rmf_traffic::agv::Graph> make_graph()
         graph->add_key(points[i].first, i);
     }
     graph->get_waypoint(0).set_charger(true);
+    graph->get_waypoint(2).set_charger(true);
     for (const auto &[a, b] : std::vector<std::pair<std::size_t, std::size_t>>{{0, 1}, {1, 2}, {1, 3}})
     {
         graph->add_lane(a, b);
@@ -218,7 +230,7 @@ protected:
         }
         graph = make_graph();
         connector = std::make_unique<Connector>(rclcpp::get_logger("test"), *url, kInterface);
-        connector->add_robot("r1", "M", "S1", Transform());
+        register_robot();
         connector->start();
         capture = std::make_unique<Capture>(*url);
         ASSERT_TRUE(capture->start());
@@ -231,6 +243,11 @@ protected:
         feed(agv_state(1, "", "", std::nullopt, nlohmann::json::array(), false));
     }
 
+    virtual void register_robot()
+    {
+        connector->add_robot("r1", "M", "S1", Transform());
+    }
+
     void TearDown() override
     {
         handle.reset();
@@ -241,10 +258,11 @@ protected:
         }
     }
 
-    std::shared_ptr<VdaRobotCommandHandle> make_handle(bool stitch, double traffic_pause_timeout_s = 10.0)
+    std::shared_ptr<VdaRobotCommandHandle> make_handle(bool stitch, double traffic_pause_timeout_s = 10.0, bool cap_speed = false)
     {
         RoutePolicy policy;
         policy.traffic_pause_timeout_s = traffic_pause_timeout_s;
+        policy.cap_speed_to_fleet = cap_speed;
         return std::make_shared<VdaRobotCommandHandle>(rclcpp::get_logger("test"), "r1", *connector, graph, 0.5,
                                                        std::make_shared<rclcpp::Clock>(RCL_STEADY_TIME), false, stitch, policy);
     }
@@ -276,10 +294,21 @@ protected:
         feed(agv_state(header, order["orderId"], last["nodeId"], last["sequenceId"].get<int>(), nlohmann::json::array(), false));
     }
 
+    // Report the cancelOrder at `index` as finished with no order left, and let the connector judge it.
+    void answer_cancel(std::size_t index, int header, bool paused = false)
+    {
+        const auto cancel = capture->message(index)["actions"][0];
+        auto state = agv_state(header, "", "", std::nullopt, nlohmann::json::array(), false);
+        state["paused"] = paused;
+        state["actionStates"] = nlohmann::json::array({{{"actionId", cancel["actionId"]}, {"actionType", "cancelOrder"}, {"actionStatus", "FINISHED"}}});
+        feed(state);
+        connector->poll("r1");
+    }
+
     // B and C of the graph as connector route points.
     static std::vector<Connector::RoutePoint> route_to_c()
     {
-        return {{"B", 2.0, 0.0, 0.0, std::nullopt}, {"C", 4.0, 0.0, 0.0, std::nullopt}};
+        return {{"B", 2.0, 0.0, 0.0, std::nullopt, ""}, {"C", 4.0, 0.0, 0.0, std::nullopt, ""}};
     }
 
     std::shared_ptr<rmf_traffic::agv::Graph> graph;
@@ -315,9 +344,14 @@ TEST_F(CommandHandleBrokerTest, TheSameRouteAfterATrafficHoldOnlyUnpauses)
     acknowledge(0, 2);
     handle->stop();
     handle->follow_new_path(to_c, kNoEstimate, kNoCallback);
+    std::this_thread::sleep_for(300ms);
+    handle->expire_traffic_hold();
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause"})) << "stopPause waits for the AGV to answer the startPause";
+    acknowledge(0, 3, true);
+    handle->expire_traffic_hold();
     capture->wait_for(3, 1s);
     std::this_thread::sleep_for(300ms);
-    EXPECT_EQ(capture->kinds(), (std::vector<std::string>{"order", "startPause", "stopPause"}));
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "stopPause"}));
 }
 
 TEST_F(CommandHandleBrokerTest, NoOrderGoesToAnAgvWithoutAPose)
@@ -354,6 +388,29 @@ TEST_F(CommandHandleBrokerTest, AStopAfterTheOrderFinishedSendsNothing)
     EXPECT_EQ(capture->kinds(), Kinds{"order"});
 }
 
+TEST_F(CommandHandleBrokerTest, RepeatedStopsSendOneStartPause)
+{
+    handle = make_handle(true);
+    const auto to_c = plan(*graph, 2);
+    handle->follow_new_path(to_c, kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    acknowledge(0, 2);
+    handle->stop();
+    handle->stop();
+    ASSERT_TRUE(capture->wait_for(2, 3s));
+    acknowledge(0, 3, true);
+    handle->stop();
+    std::this_thread::sleep_for(200ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause"})) << "the AGV is already paused or pausing";
+
+    handle->follow_new_path(to_c, kNoEstimate, kNoCallback);
+    handle->stop();
+    capture->wait_for(4, 2s);
+    std::this_thread::sleep_for(200ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "stopPause", "startPause"}))
+        << "after a stopPause the stale paused state does not suppress the next startPause";
+}
+
 TEST_F(CommandHandleBrokerTest, AHeldOrderIsCancelledBeforeADifferentRouteReplacesIt)
 {
     handle = make_handle(true);
@@ -362,10 +419,36 @@ TEST_F(CommandHandleBrokerTest, AHeldOrderIsCancelledBeforeADifferentRouteReplac
     acknowledge(0, 2);
     handle->stop();
     ASSERT_TRUE(capture->wait_for(2, 3s));
+    acknowledge(0, 3, true);
     handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(3, 2s));
+    std::this_thread::sleep_for(300ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "cancelOrder"}));
+    answer_cancel(2, 4, true);
+    handle->send_pending_order();
     capture->wait_for(5, 2s);
     std::this_thread::sleep_for(300ms);
     EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "cancelOrder", "order", "stopPause"}));
+}
+
+TEST_F(CommandHandleBrokerTest, NoStopPauseForAnAgvThatLeftThePauseWithTheCancel)
+{
+    handle = make_handle(true);
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    acknowledge(0, 2);
+    handle->stop();
+    ASSERT_TRUE(capture->wait_for(2, 3s));
+    acknowledge(0, 3, true);
+    handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(3, 2s));
+    answer_cancel(2, 4, false);
+    handle->send_pending_order();
+    capture->wait_for(4, 2s);
+    std::this_thread::sleep_for(300ms);
+    handle->expire_traffic_hold();
+    std::this_thread::sleep_for(200ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "cancelOrder", "order"}));
 }
 
 TEST_F(CommandHandleBrokerTest, ASupersededOrderIsCancelledBeforeItsReplacement)
@@ -375,6 +458,9 @@ TEST_F(CommandHandleBrokerTest, ASupersededOrderIsCancelledBeforeItsReplacement)
     ASSERT_TRUE(capture->wait_for(1, 3s));
     acknowledge(0, 2);
     handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(2, 2s));
+    answer_cancel(1, 3);
+    handle->send_pending_order();
     capture->wait_for(3, 2s);
     std::this_thread::sleep_for(300ms);
     EXPECT_EQ(capture->kinds(), (Kinds{"order", "cancelOrder", "order"}));
@@ -391,14 +477,35 @@ TEST_F(CommandHandleBrokerTest, ATrafficHoldEndsEvenWhenItsReplacementIsRefused)
     acknowledge(0, 2);
     handle->stop();
     ASSERT_TRUE(capture->wait_for(2, 3s));
+    acknowledge(0, 3, true);
     // Four nodes, over the AGV's limit of three.
     handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(3, 2s));
+    answer_cancel(2, 4, true);
+    handle->send_pending_order();
     std::this_thread::sleep_for(500ms);
     handle->expire_traffic_hold();
     std::this_thread::sleep_for(300ms);
     handle->expire_traffic_hold();
     std::this_thread::sleep_for(300ms);
     EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "cancelOrder", "stopPause"}));
+}
+
+TEST_F(CommandHandleBrokerTest, ARefusedOrderIsNotTreatedAsRunningOnAnIdleAgv)
+{
+    handle = make_handle(true);
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    auto refused = agv_state(2, "", "", std::nullopt, nlohmann::json::array(), false);
+    refused["errors"] = nlohmann::json::array({{{"errorType", "orderError"}, {"errorLevel", "WARNING"},
+                                                {"errorReferences", {{{"referenceKey", "orderId"}, {"referenceValue", capture->message(0)["orderId"]}}}}}});
+    feed(refused);
+    EXPECT_FALSE(connector->order_in_progress("r1"));
+    handle->stop();
+    handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    capture->wait_for(2, 2s);
+    std::this_thread::sleep_for(300ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "order"})) << "no startPause or cancelOrder for an order the AGV never took";
 }
 
 TEST_F(CommandHandleBrokerTest, ANewPathWithoutAPoseCancelsTheOrderItReplaces)
@@ -466,16 +573,173 @@ TEST_F(CommandHandleBrokerTest, OrderNodesCarryTheConfiguredDeviation)
     }
 }
 
-// Replacing an order sends the new one only once the AGV has answered the cancelOrder.
-TEST_F(CommandHandleBrokerTest, DISABLED_ANewOrderWaitsForTheCancelToBeConfirmed)
+TEST_F(CommandHandleBrokerTest, EdgeSpeedIsCappedAtTheFleetSpeedOnlyWhenConfigured)
+{
+    handle = make_handle(true);
+    handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    const auto uncapped = capture->message(0);
+    for (const auto &edge : uncapped["edges"])
+    {
+        EXPECT_FALSE(edge.contains("maxSpeed"));
+    }
+
+    handle = make_handle(true, 10.0, true);
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(2, 3s));
+    answer_cancel(1, 2);
+    handle->send_pending_order();
+    ASSERT_TRUE(capture->wait_for(3, 3s));
+    const auto capped = capture->message(capture->kinds().size() - 1);
+    ASSERT_FALSE(capped["edges"].empty());
+    for (const auto &edge : capped["edges"])
+    {
+        EXPECT_DOUBLE_EQ(edge["maxSpeed"].get<double>(), 0.5);
+    }
+}
+
+TEST_F(CommandHandleBrokerTest, NodeActionsTravelWithTheirNodeAndHoldTheOrderUntilTheyEnd)
+{
+    auto route = route_to_c();
+    route.back().actions.push_back(vda5050_fleet_adapter_full_control::vda5050::make_action("pick", "HARD", "pick-1", {{"stationType", "floor"}}));
+    ASSERT_EQ(connector->navigate_route("r1", route, kMap).status, CommandStatus::queued);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    const auto order = capture->message(0);
+    EXPECT_TRUE(order["nodes"][1]["actions"].empty());
+    ASSERT_EQ(order["nodes"][2]["actions"].size(), 1u);
+    EXPECT_EQ(order["nodes"][2]["actions"][0]["actionType"], "pick");
+
+    auto picking = agv_state(2, order["orderId"], "C", 4, nlohmann::json::array(), false);
+    picking["actionStates"] = nlohmann::json::array({{{"actionId", "pick-1"}, {"actionType", "pick"}, {"actionStatus", "RUNNING"}}});
+    feed(picking);
+    EXPECT_FALSE(connector->is_command_completed("r1")) << "the pick has not ended";
+    auto picked = picking;
+    picked["headerId"] = 3;
+    picked["actionStates"][0]["actionStatus"] = "FINISHED";
+    feed(picked);
+    EXPECT_TRUE(connector->is_command_completed("r1"));
+}
+
+TEST_F(CommandHandleBrokerTest, OrdersUseTheConfiguredQos)
+{
+    ASSERT_EQ(connector->navigate_route("r1", route_to_c(), kMap).status, CommandStatus::queued);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    EXPECT_EQ(capture->qos(0), 1);
+
+    vda5050_fleet_adapter_full_control::mqtt::MqttOptions options;
+    options.qos = 0;
+    Connector best_effort(rclcpp::get_logger("test"), *broker_url(), kInterface, std::nullopt, std::nullopt, options);
+    best_effort.add_robot("r1", "M", "S1", Transform());
+    best_effort.start();
+    for (int i = 0; i < 100 && !best_effort.metrics()["mqtt"]["connected"].get<bool>(); ++i)
+    {
+        std::this_thread::sleep_for(50ms);
+    }
+    best_effort.handle_message(std::string(kInterface) + "/v2/M/S1/state", agv_state(1, "", "", std::nullopt, nlohmann::json::array(), false).dump());
+    ASSERT_EQ(best_effort.navigate_route("r1", route_to_c(), kMap).status, CommandStatus::queued);
+    ASSERT_TRUE(capture->wait_for(2, 3s));
+    EXPECT_EQ(capture->qos(1), 0);
+    best_effort.shutdown();
+}
+
+TEST_F(CommandHandleBrokerTest, InitPositionCarriesTheLastNodeId)
+{
+    ASSERT_FALSE(connector->init_position("r1", 2.0, 0.0, 0.0, kMap, "B").empty());
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    const auto message = capture->message(0);
+    std::map<std::string, nlohmann::json> parameters;
+    for (const auto &p : message["actions"][0]["actionParameters"])
+    {
+        parameters[p["key"].get<std::string>()] = p["value"];
+    }
+    EXPECT_EQ(message["actions"][0]["actionType"], "initPosition");
+    EXPECT_EQ(parameters["lastNodeId"], "B");
+    EXPECT_EQ(parameters["mapId"], kMap);
+}
+
+TEST_F(CommandHandleBrokerTest, DocksAreSentAsTheirConfiguredActions)
+{
+    handle = make_handle(true);
+    vda5050_fleet_adapter_full_control::rmf::ActionPolicy policy;
+    policy.dock_actions["parking"] = {"finePositioning", nlohmann::json::object()};
+    policy.dock_actions["station_dock"] = {"finePositioning", {{"stationName", "station_1"}}};
+    handle->set_action_policy(policy);
+    handle->dock("parking", kNoCallback);
+    handle->dock("station_dock", kNoCallback);
+    handle->dock("other_dock", kNoCallback);
+    ASSERT_TRUE(capture->wait_for(3, 3s));
+    EXPECT_EQ(capture->kinds(), (Kinds{"finePositioning", "finePositioning", "other_dock"}));
+    const auto fine = capture->message(1)["actions"][0];
+    ASSERT_TRUE(fine.contains("actionParameters"));
+    EXPECT_EQ(fine["actionParameters"][0]["key"], "stationName");
+    EXPECT_EQ(fine["actionParameters"][0]["value"], "station_1");
+}
+
+TEST_F(CommandHandleBrokerTest, ANewOrderWaitsForTheCancelToBeConfirmed)
 {
     handle = make_handle(true);
     handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
     ASSERT_TRUE(capture->wait_for(1, 3s));
     acknowledge(0, 2);
     handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
-    std::this_thread::sleep_for(500ms);
-    EXPECT_EQ(capture->kinds(), (std::vector<std::string>{"order", "cancelOrder"}));
+    std::this_thread::sleep_for(300ms);
+    handle->send_pending_order();
+    std::this_thread::sleep_for(200ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "cancelOrder"}));
+
+    handle->follow_new_path(plan(*graph, 1), kNoEstimate, kNoCallback);
+    std::this_thread::sleep_for(200ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "cancelOrder"})) << "a newer path replaces the waiting order without a second cancelOrder";
+
+    answer_cancel(1, 3);
+    handle->send_pending_order();
+    ASSERT_TRUE(capture->wait_for(3, 2s));
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "cancelOrder", "order"}));
+    EXPECT_EQ(capture->message(2)["nodes"].back()["nodeId"], "B");
+}
+
+TEST_F(CommandHandleBrokerTest, AStopDropsTheOrderWaitingForTheCancel)
+{
+    handle = make_handle(true);
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    acknowledge(0, 2);
+    handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(2, 2s));
+    handle->stop();
+    answer_cancel(1, 3);
+    handle->send_pending_order();
+    std::this_thread::sleep_for(300ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "cancelOrder"}));
+}
+
+TEST_F(CommandHandleBrokerTest, AnUnansweredCancelStillLetsTheNewOrderGo)
+{
+    connector->set_cancel_policy({std::chrono::seconds(1), 1});
+    handle = make_handle(true);
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    acknowledge(0, 2);
+    handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(2, 2s));
+    std::this_thread::sleep_for(1200ms);
+    acknowledge(0, 3);
+    connector->poll("r1");
+    handle->send_pending_order();
+    ASSERT_TRUE(capture->wait_for(3, 2s));
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "cancelOrder", "order"}));
+}
+
+TEST_F(CommandHandleBrokerTest, WithoutCancelTrackingTheNewOrderFollowsAtOnce)
+{
+    connector->set_cancel_policy({std::chrono::seconds(0), 3});
+    handle = make_handle(true);
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    acknowledge(0, 2);
+    handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(3, 2s));
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "cancelOrder", "order"}));
 }
 
 // The command handle registered with a mock RMF adapter, so operator controls and removal have an update handle.
@@ -572,7 +836,7 @@ TEST_F(RmfCommandHandleTest, AnOperatorPauseOutlastsATrafficHold)
     handle->stop();
     handle->follow_new_path(to_c, kNoEstimate, kNoCallback);
     std::this_thread::sleep_for(500ms);
-    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "startPause"}));
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause"})) << "the hold finds the AGV paused by the operator";
 }
 
 TEST_F(RmfCommandHandleTest, AResumeDuringATrafficHoldWaitsForTheNewPath)
@@ -585,10 +849,11 @@ TEST_F(RmfCommandHandleTest, AResumeDuringATrafficHoldWaitsForTheNewPath)
     handle->stop();
     EXPECT_EQ(handle->resume(), "");
     std::this_thread::sleep_for(300ms);
-    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "startPause"}));
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause"}));
+    acknowledge(0, 3, true);
     handle->follow_new_path(to_c, kNoEstimate, kNoCallback);
     std::this_thread::sleep_for(300ms);
-    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "startPause", "stopPause"}));
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startPause", "stopPause"}));
 }
 
 TEST_F(RmfCommandHandleTest, TheAgvStaysAvailableWhileItUnpausesAfterATrafficHold)
@@ -630,6 +895,23 @@ TEST_F(RmfCommandHandleTest, AnAgvPausedByOthersIsDecommissioned)
     EXPECT_TRUE(accepting_tasks());
 }
 
+TEST_F(RmfCommandHandleTest, AnOperatorPauseKeepsTheRobotUnavailableThroughATrafficHold)
+{
+    handle->set_online(true);
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    acknowledge(0, 2);
+    handle->update(*connector->get_data("r1"));
+    ASSERT_TRUE(accepting_tasks());
+    EXPECT_EQ(handle->pause(), "");
+    acknowledge(0, 3, true);
+    handle->update(*connector->get_data("r1"));
+    EXPECT_FALSE(accepting_tasks());
+    handle->stop();
+    handle->update(*connector->get_data("r1"));
+    EXPECT_FALSE(accepting_tasks()) << "a traffic hold does not hide the operator's pause";
+}
+
 TEST_F(RmfCommandHandleTest, ARetiredRobotTakesNoCommandsUntilItIsRestored)
 {
     handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
@@ -644,6 +926,8 @@ TEST_F(RmfCommandHandleTest, ARetiredRobotTakesNoCommandsUntilItIsRestored)
 
     handle->restore();
     handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    answer_cancel(1, 3);
+    handle->update(*connector->get_data("r1"));
     capture->wait_for(3, 2s);
     std::this_thread::sleep_for(200ms);
     EXPECT_EQ(capture->kinds(), (Kinds{"order", "cancelOrder", "order"}));
@@ -718,6 +1002,233 @@ TEST_F(RmfCommandHandleTest, CommandsUpdatesAndOperatorControlsRunTogetherWithou
     operator_controls.join();
     EXPECT_GT(updates.load(), 100);
     EXPECT_GT(commands.load(), 30);
+}
+
+TEST_F(RmfCommandHandleTest, ARefusedOrderIsDroppedAndNotSentAgain)
+{
+    bool finished = false;
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, [&finished]() { finished = true; });
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    const std::string order_id = capture->message(0)["orderId"];
+    auto refused = agv_state(2, "", "", std::nullopt, nlohmann::json::array(), false);
+    refused["errors"] = nlohmann::json::array({{{"errorType", "orderError"}, {"errorLevel", "WARNING"},
+                                                {"errorReferences", {{{"referenceKey", "orderId"}, {"referenceValue", order_id}}}}}});
+    feed(refused);
+    EXPECT_EQ(connector->refusal_of("r1", order_id), std::optional<std::string>("orderError"));
+    handle->update(*connector->get_data("r1"));
+
+    feed(agv_state(3, order_id, "C", 2, nlohmann::json::array(), false));
+    handle->update(*connector->get_data("r1"));
+    std::this_thread::sleep_for(300ms);
+    EXPECT_FALSE(finished);
+    EXPECT_EQ(capture->kinds(), Kinds{"order"});
+}
+
+TEST_F(RmfCommandHandleTest, ChargingStartsAtAChargerAndStopsBeforeTheNextOrder)
+{
+    vda5050_fleet_adapter_full_control::rmf::ActionPolicy policy;
+    policy.charge_at_chargers = true;
+    handle->set_action_policy(policy);
+
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    finish(0, 2);
+    handle->update(*connector->get_data("r1"));
+    ASSERT_TRUE(capture->wait_for(2, 3s));
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startCharging"}));
+
+    auto charging = agv_state(3, capture->message(0)["orderId"], "C", 2, nlohmann::json::array(), false);
+    charging["batteryState"]["charging"] = true;
+    feed(charging);
+    handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(3, 2s));
+    handle->update(*connector->get_data("r1"));
+    std::this_thread::sleep_for(200ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startCharging", "stopCharging"})) << "the order waits for the AGV to stop charging";
+
+    auto stopped = agv_state(4, capture->message(0)["orderId"], "C", 2, nlohmann::json::array(), false);
+    stopped["actionStates"] = nlohmann::json::array({{{"actionId", capture->message(2)["actions"][0]["actionId"]},
+                                                      {"actionType", "stopCharging"}, {"actionStatus", "FINISHED"}}});
+    feed(stopped);
+    handle->update(*connector->get_data("r1"));
+    capture->wait_for(4, 2s);
+    std::this_thread::sleep_for(200ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "startCharging", "stopCharging", "order"}));
+}
+
+TEST_F(RmfCommandHandleTest, NoChargingActionsWithoutTheSetting)
+{
+    handle->follow_new_path(plan(*graph, 2), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    finish(0, 2);
+    handle->update(*connector->get_data("r1"));
+    std::this_thread::sleep_for(300ms);
+    EXPECT_EQ(capture->kinds(), Kinds{"order"});
+}
+
+TEST_F(RmfCommandHandleTest, NoStopChargingForAnAgvThatIsNotCharging)
+{
+    vda5050_fleet_adapter_full_control::rmf::ActionPolicy policy;
+    policy.charge_at_chargers = true;
+    handle->set_action_policy(policy);
+
+    handle->follow_new_path(plan(*graph, 1), kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    finish(0, 2);
+    handle->update(*connector->get_data("r1"));
+    handle->follow_new_path(plan(*graph, 3), kNoEstimate, kNoCallback);
+    capture->wait_for(2, 2s);
+    std::this_thread::sleep_for(300ms);
+    EXPECT_EQ(capture->kinds(), (Kinds{"order", "order"})) << "B is not a charger and the AGV reports no charging";
+}
+
+// r1 maps level L1 to floor_1 and level L2 to floor_2, whose frame is shifted 10 m along x.
+class MultiLevelTest : public CommandHandleBrokerTest
+{
+protected:
+    void register_robot() override
+    {
+        LevelMaps maps;
+        maps.set(kMap, {"floor_1", Transform()});
+        maps.set("L2", {"floor_2", Transform(0.0, 1.0, 10.0, 0.0)});
+        connector->add_robot("r1", "M", "S1", maps);
+    }
+
+    // State at x on `map_id`, with both floors reported.
+    static nlohmann::json state_on(int header, const std::string &map_id, double x)
+    {
+        auto s = agv_state(header, "", "", std::nullopt, nlohmann::json::array(), false);
+        s["maps"] = nlohmann::json::array({{{"mapId", "floor_1"}, {"mapStatus", "ENABLED"}}, {{"mapId", "floor_2"}, {"mapStatus", "DISABLED"}}});
+        s["agvPosition"]["mapId"] = map_id;
+        s["agvPosition"]["x"] = x;
+        return s;
+    }
+
+    static std::map<std::string, nlohmann::json> parameters_of(const nlohmann::json &message)
+    {
+        std::map<std::string, nlohmann::json> out;
+        for (const auto &p : message["actions"][0]["actionParameters"])
+        {
+            out[p["key"].get<std::string>()] = p["value"];
+        }
+        return out;
+    }
+};
+
+TEST_F(MultiLevelTest, TheAgvMapIsReportedAsItsLevelInTheLevelFrame)
+{
+    feed(state_on(2, "floor_2", 12.0));
+    const auto data = connector->get_data("r1");
+    ASSERT_TRUE(data.has_value());
+    EXPECT_EQ(data->map_name, "L2");
+    EXPECT_NEAR(data->position[0], 2.0, 1e-9);
+    EXPECT_EQ(connector->get_known_map("r1"), std::optional<std::string>("L2"));
+}
+
+TEST_F(MultiLevelTest, OrderNodesCarryTheMapIdAndFrameOfTheirLevel)
+{
+    feed(state_on(2, "floor_1", 0.0));
+    const std::vector<Connector::RoutePoint> route = {{"C", 4.0, 0.0, 0.0, std::nullopt, kMap},
+                                                      {"C2", 4.0, 0.0, 0.0, std::nullopt, "L2"},
+                                                      {"E2", 6.0, 0.0, 0.0, std::nullopt, "L2"}};
+    ASSERT_EQ(connector->navigate_route("r1", route, kMap).status, CommandStatus::queued);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    const auto nodes = capture->message(0)["nodes"];
+    ASSERT_EQ(nodes.size(), 4u);
+    const std::vector<std::string> maps = {"floor_1", "floor_1", "floor_2", "floor_2"};
+    const std::vector<double> xs = {0.0, 4.0, 14.0, 16.0};
+    for (std::size_t i = 0; i < nodes.size(); ++i)
+    {
+        EXPECT_EQ(nodes[i]["nodePosition"]["mapId"], maps[i]) << i;
+        EXPECT_NEAR(nodes[i]["nodePosition"]["x"].get<double>(), xs[i], 1e-9) << i;
+    }
+}
+
+TEST_F(MultiLevelTest, InitPositionUsesTheMapIdAndFrameOfTheLevel)
+{
+    ASSERT_FALSE(connector->init_position("r1", 2.0, 0.0, 0.0, "L2", "C2").empty());
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    auto parameters = parameters_of(capture->message(0));
+    EXPECT_EQ(parameters["mapId"], "floor_2");
+    EXPECT_NEAR(parameters["x"].get<double>(), 12.0, 1e-9);
+}
+
+TEST_F(MultiLevelTest, APathAcrossLevelsKeepsEachNodeOnItsLevel)
+{
+    const auto c2 = graph->add_waypoint("L2", {4.0, 0.0}).index();
+    graph->add_key("C2", c2);
+    const auto e2 = graph->add_waypoint("L2", {4.0, 2.0}).index();
+    graph->add_key("E2", e2);
+    for (const auto &[a, b] : std::vector<std::pair<std::size_t, std::size_t>>{{2, c2}, {c2, e2}})
+    {
+        graph->add_lane(a, b);
+        graph->add_lane(b, a);
+    }
+    feed(state_on(2, "floor_1", 0.0));
+    handle = make_handle(true);
+    const auto path = plan(*graph, e2);
+    ASSERT_FALSE(path.empty());
+    handle->follow_new_path(path, kNoEstimate, kNoCallback);
+    ASSERT_TRUE(capture->wait_for(1, 3s));
+    const auto nodes = capture->message(0)["nodes"];
+    ASSERT_GE(nodes.size(), 2u);
+    EXPECT_EQ(nodes.front()["nodePosition"]["mapId"], "floor_1") << "the base node is where the AGV is";
+    EXPECT_EQ(nodes.back()["nodeId"], "E2");
+    for (std::size_t i = 1; i < nodes.size(); ++i)
+    {
+        const auto *wp = graph->find_waypoint(nodes[i]["nodeId"].get<std::string>());
+        ASSERT_NE(wp, nullptr) << nodes[i]["nodeId"];
+        const bool upper = wp->get_map_name() == "L2";
+        EXPECT_EQ(nodes[i]["nodePosition"]["mapId"], upper ? "floor_2" : "floor_1") << nodes[i]["nodeId"];
+        EXPECT_NEAR(nodes[i]["nodePosition"]["x"].get<double>(), wp->get_location().x() + (upper ? 10.0 : 0.0), 1e-9) << nodes[i]["nodeId"];
+    }
+}
+
+// Needs a broker from fleet_bringup/broker/setup_broker.py with ROBOTIS/0001 on interface AMR.
+TEST(MqttTls, MasterAndAgvExchangeMessagesOverTlsWithTheirOwnAccounts)
+{
+    const char *broker = std::getenv("VDA5050_TEST_TLS_BROKER");
+    const char *ca = std::getenv("VDA5050_TEST_TLS_CA");
+    const char *master_password = std::getenv("VDA5050_TEST_TLS_MASTER_PASSWORD");
+    const char *agv_password = std::getenv("VDA5050_TEST_TLS_AGV_PASSWORD");
+    if (!broker || !ca || !master_password || !agv_password)
+    {
+        GTEST_SKIP() << "set VDA5050_TEST_TLS_BROKER, _CA, _MASTER_PASSWORD and _AGV_PASSWORD to run this test";
+    }
+    using vda5050_fleet_adapter_full_control::mqtt::MqttClient;
+    vda5050_fleet_adapter_full_control::mqtt::MqttOptions options;
+    options.tls.enabled = true;
+    options.tls.ca_file = ca;
+    MqttClient master(broker, "tls_master_check", std::string("fleet_master"), std::string(master_password), options);
+    MqttClient agv(broker, "tls_agv_check", std::string("ROBOTIS_0001"), std::string(agv_password), options);
+    std::mutex mutex;
+    std::vector<std::string> received;
+    const auto record = [&](const std::string &topic, const std::string &) {
+        std::lock_guard<std::mutex> lock(mutex);
+        received.push_back(topic);
+    };
+    master.set_on_message(record);
+    agv.set_on_message(record);
+    master.set_on_connected([&master]() { master.subscribe("AMR/v2/ROBOTIS/0001/state", 0); });
+    agv.set_on_connected([&agv]() { agv.subscribe("AMR/v2/ROBOTIS/0001/order", 0); });
+    master.connect();
+    agv.connect();
+    for (int i = 0; i < 100 && !(master.is_connected() && agv.is_connected()); ++i)
+    {
+        std::this_thread::sleep_for(50ms);
+    }
+    ASSERT_TRUE(master.is_connected() && agv.is_connected());
+    std::this_thread::sleep_for(300ms);
+
+    EXPECT_TRUE(master.publish("AMR/v2/ROBOTIS/0001/order", "{}", 0));
+    EXPECT_TRUE(agv.publish("AMR/v2/ROBOTIS/0001/state", "{}", 0));
+    EXPECT_TRUE(agv.publish("AMR/v2/ROBOTIS/0001/order", "{}", 0)) << "queued; the broker drops it";
+    std::this_thread::sleep_for(800ms);
+    master.shutdown();
+    agv.shutdown();
+    std::lock_guard<std::mutex> lock(mutex);
+    std::sort(received.begin(), received.end());
+    EXPECT_EQ(received, (std::vector<std::string>{"AMR/v2/ROBOTIS/0001/order", "AMR/v2/ROBOTIS/0001/state"}));
 }
 
 TEST(MqttReconnect, ConnectsWhenTheBrokerStartsAfterTheAdapter)

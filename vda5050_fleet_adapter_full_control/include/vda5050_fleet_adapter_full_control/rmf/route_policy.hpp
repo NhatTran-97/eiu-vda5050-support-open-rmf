@@ -24,6 +24,8 @@ struct RoutePolicy
     // Distances within which a robot counts as on a waypoint or on a lane when its position goes to RMF.
     double merge_waypoint_m = 1e-3;
     double merge_lane_m = 0.3;
+    // Cap edge maxSpeed at the fleet speed.
+    bool cap_speed_to_fleet = false;
 };
 
 }  // namespace vda5050_fleet_adapter_full_control::rmf

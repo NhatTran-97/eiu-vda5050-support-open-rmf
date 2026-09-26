@@ -154,6 +154,27 @@ TEST_F(InputRobustnessTest, BatteryChargeOutsideZeroToHundredIsClamped)
     EXPECT_DOUBLE_EQ(connector.get_data("r1")->battery_soc, 1.0);
 }
 
+TEST_F(InputRobustnessTest, WarningAndFatalErrorsReachTheRobotData)
+{
+    auto s = state();
+    s["errors"] = nlohmann::json::array({{{"errorType", "lowBattery"}, {"errorLevel", "WARNING"}, {"errorDescription", "12 %"}},
+                                         {{"errorType", "motorFault"}, {"errorLevel", "FATAL"}},
+                                         {{"errorType", 5}, {"errorLevel", "WARNING"}},
+                                         {{"errorType", "unknownLevel"}, {"errorLevel", "INFO"}},
+                                         "not an object"});
+    feed(s);
+    ASSERT_TRUE(connector.get_data("r1").has_value());
+    const auto errors = connector.get_data("r1")->errors;
+    ASSERT_EQ(errors.size(), 3u);
+    EXPECT_EQ(errors[0].type, "lowBattery");
+    EXPECT_EQ(errors[0].level, "WARNING");
+    EXPECT_EQ(errors[0].description, "12 %");
+    EXPECT_EQ(errors[1].type, "motorFault");
+    EXPECT_EQ(errors[1].level, "FATAL");
+    EXPECT_EQ(errors[2].type, "(unnamed error)");
+    EXPECT_EQ(connector.get_data("r1")->fatal_error, "motorFault");
+}
+
 TEST(JsonRead, AFieldOfAnotherTypeReadsAsAbsent)
 {
     namespace vda = vda5050_fleet_adapter_full_control::vda5050;

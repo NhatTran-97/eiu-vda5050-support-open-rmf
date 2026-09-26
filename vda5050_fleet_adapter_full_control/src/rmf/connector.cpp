@@ -23,10 +23,23 @@ namespace {
 // Shortest time between two log lines about the same problem that repeats with every message.
 constexpr std::chrono::seconds kRepeatedLogInterval{30};
 
-// Suffix that says how many similar messages a log line stands for.
 std::string suppressed_note(std::size_t held)
 {
     return held == 0 ? std::string{} : " (" + std::to_string(held) + " similar message(s) suppressed)";
+}
+
+// actionIds of the node actions along a route.
+std::vector<std::string> node_action_ids(const std::vector<vda5050::RouteWaypoint> &route)
+{
+    std::vector<std::string> ids;
+    for (const auto &wp : route)
+    {
+        for (const auto &action : wp.actions)
+        {
+            ids.push_back(action.value("actionId", std::string{}));
+        }
+    }
+    return ids;
 }
 
 // Error type of an order rejection the state reports for `order_id` (and `update_id` when referenced), or empty.
@@ -126,6 +139,7 @@ Connector::Connector(const rclcpp::Logger &logger, const std::string &broker_url
                             : _logger(logger),
                                 _interface_name(std::move(interface_name)),
                                 _tls(mqtt_options.tls),
+                                _qos(mqtt_options.qos),
                                 _has_credentials(username.has_value() || password.has_value()),
                                 _mqtt_client(broker_url, make_mqtt_client_id(_interface_name), std::move(username), std::move(password), mqtt_options),
                                 _repeat_log(kRepeatedLogInterval)
@@ -133,10 +147,8 @@ Connector::Connector(const rclcpp::Logger &logger, const std::string &broker_url
     _mqtt_client.set_on_connected([this]() { on_connected(); });
     _mqtt_client.set_on_connection_lost(
         [this](const std::string &cause) { on_connection_lost(cause); });
-    _mqtt_client.set_on_error(
-        [this](const std::string &context, const std::string &what) { on_error(context, what); });
-    _mqtt_client.set_on_message(
-        [this](const std::string &topic, const std::string &payload) { handle_message(topic, payload); });
+    _mqtt_client.set_on_error([this](const std::string &context, const std::string &what) { on_error(context, what); });
+    _mqtt_client.set_on_message([this](const std::string &topic, const std::string &payload) { handle_message(topic, payload); });
 }
 
 Connector::~Connector()
@@ -182,6 +194,12 @@ void Connector::shutdown()
 void Connector::add_robot(const std::string &name, const std::string &manufacturer,
                           const std::string &serial, const Transform &transform)
 {
+    add_robot(name, manufacturer, serial, LevelMaps(transform));
+}
+
+void Connector::add_robot(const std::string &name, const std::string &manufacturer,
+                          const std::string &serial, const LevelMaps &maps)
+{
     for (const std::string *part : {&manufacturer, &serial})
     {
         if (part->empty() || part->find_first_of("/+#") != std::string::npos)
@@ -195,7 +213,7 @@ void Connector::add_robot(const std::string &name, const std::string &manufactur
     ctx->manufacturer = manufacturer;
     ctx->serial = serial;
     ctx->interface_name = _interface_name;
-    ctx->transform = transform;
+    ctx->maps = maps;
 
     const RobotContext *ctx_ptr = nullptr;
     {
@@ -217,10 +235,8 @@ void Connector::add_robot(const std::string &name, const std::string &manufactur
     }
 }
 
-Connector::NavigateResult Connector::navigate_route(const std::string &name,
-                                                     const std::vector<RoutePoint> &route,
-                                                     const std::string &map_id,
-                                                     std::optional<std::size_t> released_count)
+Connector::NavigateResult Connector::navigate_route(const std::string &name, const std::vector<RoutePoint> &route,
+                                                     const std::string &level, std::optional<std::size_t> released_count)
 {
     if (route.empty())
     {
@@ -233,7 +249,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
 
     const std::string order_id = vda5050::make_uuid();
     std::string base_id;
-    std::string manufacturer, serial, interface_name;
+    std::string manufacturer, serial, interface_name, map_id;
     std::vector<vda5050::RouteWaypoint> waypoints;
     vda5050::RobotPose base{};
     vda5050::NodeDeviation deviation;
@@ -250,20 +266,25 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
         deviation = _node_deviation;
         RobotContext &ctx = *it->second;
 
-        waypoints = to_waypoints(ctx, route, map_id);
+        waypoints = to_waypoints(ctx, route, level);
 
         // Build the base node from the latest reported AGV state.
         base = waypoints.front().pose;
+        map_id = waypoints.front().map_id;
         base_id = ctx.last_node_id.empty() ? (ctx.serial + "_start") : ctx.last_node_id;
         if (ctx.last_state.has_value() && ctx.last_state->has_position())
         {
             base = {*ctx.last_state->x, *ctx.last_state->y, *ctx.last_state->theta};
+            if (!ctx.last_state->map_id.empty())
+            {
+                map_id = ctx.last_state->map_id;
+            }
         }
 
         header_id = ctx.next_order_header();
 
         // The order contains one base node and one edge per route point.
-        warn_if_map_mismatch(ctx, map_id);
+        warn_if_map_mismatch(ctx, level);
         if (!order_allowed(ctx, base, waypoints, map_id, route.size() + 1, route.size()))
         {
             RCLCPP_ERROR(_logger, "[VDA5050] %s: order '%s' NOT sent -- it violates the AGV's declared limits", name.c_str(), order_id.c_str());
@@ -304,14 +325,15 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
             ctx.cancel.clear();
             // Track completion against the final route node.
             ctx.target_node_id = route.back().node_id;
-            ctx.order_action_ids.clear();
+            ctx.order_action_ids = node_action_ids(waypoints);
             // A fresh orderId restarts its own update sequence.
             ctx.order_update_id = 0;
             ctx.route_offset = 0;
             ctx.current_route = waypoints;
             ctx.current_base_id = base_id;
             ctx.current_base = base;
-            ctx.current_map_id = map_id;
+            ctx.current_base_map_id = map_id;
+            ctx.current_level = level;
             ctx.current_released_count = std::min(released_count.value_or(route.size()), route.size());
         }
     }
@@ -322,7 +344,7 @@ Connector::NavigateResult Connector::navigate_route(const std::string &name,
 }
 
 std::vector<vda5050::RouteWaypoint> Connector::to_waypoints(
-    const RobotContext &ctx, const std::vector<RoutePoint> &route, const std::string &map_id) const
+    const RobotContext &ctx, const std::vector<RoutePoint> &route, const std::string &level) const
 {
     std::vector<vda5050::RouteWaypoint> waypoints;
     waypoints.reserve(route.size());
@@ -335,23 +357,28 @@ std::vector<vda5050::RouteWaypoint> Connector::to_waypoints(
             limit = limit.has_value() ? std::min(*limit, *ctx.operator_speed_limit): ctx.operator_speed_limit;
         }
 
-        warn_if_unroutable(ctx, p.node_id, p.x, p.y, p.theta, map_id, limit);
-        const auto robot_pose = ctx.transform.to_robot(p.x, p.y, p.theta);
-        waypoints.push_back(vda5050::RouteWaypoint{p.node_id, {robot_pose[0], robot_pose[1], robot_pose[2]}, limit});
+        const std::string &point_level = p.level.empty() ? level : p.level;
+        warn_if_unroutable(ctx, p.node_id, p.x, p.y, p.theta, point_level, limit);
+        const auto robot_pose = ctx.maps.transform(point_level).to_robot(p.x, p.y, p.theta);
+        waypoints.push_back(vda5050::RouteWaypoint{p.node_id, {robot_pose[0], robot_pose[1], robot_pose[2]}, limit, ctx.maps.map_id(point_level), p.actions});
     }
     return waypoints;
 }
 
-bool Connector::order_allowed(RobotContext &ctx, const vda5050::RobotPose &base,  const std::vector<vda5050::RouteWaypoint> &route,  const std::string &map_id, std::size_t node_count,  std::size_t edge_count)
+bool Connector::order_allowed(RobotContext &ctx, const vda5050::RobotPose &base,  const std::vector<vda5050::RouteWaypoint> &route,  const std::string &base_map_id, std::size_t node_count,  std::size_t edge_count)
 {
     vda5050::OrderShape shape;
     shape.node_count = node_count;
     shape.edge_count = edge_count;
-    shape.map_id = map_id;
+    shape.map_ids.push_back(base_map_id);
     shape.poses.push_back({base.x, base.y, base.theta});
     for (const auto &w : route)
     {
         shape.poses.push_back({w.pose.x, w.pose.y, w.pose.theta});
+        if (!w.map_id.empty() && std::find(shape.map_ids.begin(), shape.map_ids.end(), w.map_id) == shape.map_ids.end())
+        {
+            shape.map_ids.push_back(w.map_id);
+        }
     }
     const auto now = std::chrono::steady_clock::now();
     if (ctx.last_order_time != std::chrono::steady_clock::time_point{})
@@ -395,7 +422,7 @@ bool Connector::order_allowed(RobotContext &ctx, const vda5050::RobotPose &base,
 
 Connector::ReplanResult Connector::replan_route(const std::string &name,
                                                 const std::vector<RoutePoint> &route,
-                                                const std::string &map_id,
+                                                const std::string &level,
                                                 std::optional<std::size_t> released_count)
 {
     ReplanResult result;
@@ -444,9 +471,9 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         {
             return declined("the AGV has no valid pose");
         }
-        if (!map_id.empty() && map_id != ctx.current_map_id)
+        if (!level.empty() && level != ctx.current_level)
         {
-            return declined("map changed");
+            return declined("level changed");
         }
         const std::size_t traversed = static_cast<std::size_t>(*ctx.last_state->last_node_sequence_id) / 2;
         if (traversed >= ctx.current_route.size())
@@ -454,7 +481,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
             return declined("the AGV is at the last node");
         }
 
-        const auto new_route = to_waypoints(ctx, route, ctx.current_map_id);
+        const auto new_route = to_waypoints(ctx, route, ctx.current_level);
         const auto plan = vda5050::plan_stitch(ctx.current_route, ctx.current_released_count, traversed, new_route);
         if (!plan.has_value())
         {
@@ -480,7 +507,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         combined = plan->route;
         new_released = vda5050::stitched_released_count(*plan, ctx.current_released_count, released_count.value_or(route.size()));
         order_id = ctx.current_order_id;
-        order_map = ctx.current_map_id;
+        order_map = ctx.current_base_map_id;
         base_id = ctx.current_base_id;
         base = ctx.current_base;
         manufacturer = ctx.manufacturer;
@@ -522,6 +549,7 @@ Connector::ReplanResult Connector::replan_route(const std::string &name,
         {
             RobotContext &ctx = *it->second;
             ctx.current_route = combined;
+            ctx.order_action_ids = node_action_ids(combined);
             ctx.order_done = false;
             ctx.current_released_count = new_released;
             if (!unchanged)
@@ -582,7 +610,7 @@ CommandStatus Connector::release_more(const std::string &name, const std::string
         waypoints = ctx.current_route;
         base_id = ctx.current_base_id;
         base = ctx.current_base;
-        map_id = ctx.current_map_id;
+        map_id = ctx.current_base_map_id;
         deviation = _node_deviation;
         header_id = ctx.next_order_header();
         manufacturer = ctx.manufacturer;
@@ -590,8 +618,7 @@ CommandStatus Connector::release_more(const std::string &name, const std::string
         interface_name = ctx.interface_name;
     }
 
-    const auto order = vda5050::build_route_order(
-        header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id,    order_update_id, clamped, stitch_index, deviation);
+    const auto order = vda5050::build_route_order(header_id, order_id, manufacturer, serial, base_id, base, waypoints, map_id,    order_update_id, clamped, stitch_index, deviation);
 
     const std::string order_topic =    vda5050::topic(interface_name, manufacturer, serial, vda5050::TOPIC_ORDER);
     const CommandStatus status = publish_raw(order_topic, order.dump());
@@ -622,7 +649,81 @@ bool Connector::order_in_progress(const std::string &name) const
 {
     std::lock_guard<std::mutex> lock(_mutex);
     const auto it = _robots.find(name);
-    return it != _robots.end() && !it->second->current_order_id.empty() && !it->second->order_done;
+    if (it == _robots.end() || it->second->current_order_id.empty() || it->second->order_done)
+    {
+        return false;
+    }
+    const RobotContext &ctx = *it->second;
+    if (ctx.refused_order_id != ctx.current_order_id || !ctx.last_state.has_value())
+    {
+        return true;
+    }
+    const auto &s = *ctx.last_state;
+    return !s.node_states.empty() || !s.edge_states.empty() || s.driving;
+}
+
+bool Connector::paused_or_pausing(const std::string &name) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _robots.find(name);
+    if (it == _robots.end())
+    {
+        return false;
+    }
+    const RobotContext &ctx = *it->second;
+    if (!ctx.resume_pending && ctx.last_state.has_value() && ctx.last_state->paused)
+    {
+        return true;
+    }
+    return !ctx.pause_action_id.empty() && _cancel_policy.confirm_timeout > std::chrono::seconds::zero() &&
+           std::chrono::steady_clock::now() - ctx.pause_sent_at < _cancel_policy.confirm_timeout;
+}
+
+bool Connector::stop_pause_needed(const std::string &name) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _robots.find(name);
+    if (it == _robots.end())
+    {
+        return false;
+    }
+    const RobotContext &ctx = *it->second;
+    return !ctx.pause_action_id.empty() || !ctx.last_state.has_value() || ctx.last_state->paused;
+}
+
+bool Connector::pause_settled(const std::string &name) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _robots.find(name);
+    if (it == _robots.end() || it->second->pause_action_id.empty())
+    {
+        return true;
+    }
+    return _cancel_policy.confirm_timeout == std::chrono::seconds::zero() || std::chrono::steady_clock::now() - it->second->pause_sent_at >= _cancel_policy.confirm_timeout;
+}
+
+bool Connector::cancel_pending(const std::string &name) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _robots.find(name);
+    return it != _robots.end() && it->second->cancel.pending();
+}
+
+void Connector::cancel_foreign_order(const std::string &name)
+{
+    const auto order_lock = lock_orders(name);
+    cancel_unknown_order(name);
+}
+
+std::optional<std::string> Connector::refusal_of(const std::string &name, const std::string &order_id) const
+{
+    std::lock_guard<std::mutex> lock(_mutex);
+    const auto it = _robots.find(name);
+    if (it == _robots.end() || order_id.empty() || it->second->refused_order_id != order_id)
+    {
+        return std::nullopt;
+    }
+    return it->second->refusal;
 }
 
 bool Connector::set_speed_limit(const std::string &name, std::optional<double> limit)
@@ -726,9 +827,10 @@ CommandStatus Connector::stop(const std::string &name)
     return status;
 }
 
-std::string Connector::init_position(const std::string &name, double x, double y,     double theta, const std::string &map_id)
+std::string Connector::init_position(const std::string &name, double x, double y,     double theta, const std::string &level, const std::string &last_node_id)
 {
     std::string topic;
+    std::string map_id;
     vda5050::InstantActionRequest request;
     {
         std::lock_guard<std::mutex> lock(_mutex);
@@ -740,13 +842,15 @@ std::string Connector::init_position(const std::string &name, double x, double y
         }
         RobotContext &ctx = *it->second;
 
-        const auto robot_pose = ctx.transform.to_robot(x, y, theta);
+        const auto robot_pose = ctx.maps.transform(level).to_robot(x, y, theta);
+        map_id = ctx.maps.map_id(level);
 
         const nlohmann::json params{
             {"x", robot_pose[0]},
             {"y", robot_pose[1]},
             {"theta", robot_pose[2]},
             {"mapId", map_id},
+            {"lastNodeId", last_node_id},
         };
 
         request = vda5050::build_instant_action(ctx.next_instant_actions_header(), ctx.manufacturer, ctx.serial, "initPosition", params, blocking_type_for(ctx, "initPosition", "NONE"));
@@ -786,6 +890,16 @@ CommandStatus Connector::pause(const std::string &name)
     const CommandStatus status = publish_raw(topic, msg.dump());
     if (status == CommandStatus::queued)
     {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            const auto it = _robots.find(name);
+            if (it != _robots.end())
+            {
+                it->second->pause_action_id = msg["actions"][0].value("actionId", std::string{});
+                it->second->pause_sent_at = std::chrono::steady_clock::now();
+                it->second->resume_pending = false;
+            }
+        }
         RCLCPP_INFO(_logger, "[VDA5050] %s -> startPause", name.c_str());
     }
     else
@@ -814,6 +928,14 @@ CommandStatus Connector::resume(const std::string &name)
     const CommandStatus status = publish_raw(topic, msg.dump());
     if (status == CommandStatus::queued)
     {
+        {
+            std::lock_guard<std::mutex> lock(_mutex);
+            const auto it = _robots.find(name);
+            if (it != _robots.end())
+            {
+                it->second->resume_pending = true;
+            }
+        }
         RCLCPP_INFO(_logger, "[VDA5050] %s -> stopPause", name.c_str());
     }
     else
@@ -901,12 +1023,9 @@ void Connector::set_node_deviation(const vda5050::NodeDeviation &deviation)
 
 double Connector::state_timeout_for(const RobotContext &ctx) const
 {
-    double timeout = _link_policy.state_timeout_s;
-    if (ctx.factsheet.has_value() && ctx.factsheet->default_state_interval.has_value())
-    {
-        timeout = std::max(timeout, *ctx.factsheet->default_state_interval * _link_policy.offline_state_intervals);
-    }
-    return timeout;
+    const double interval = ctx.factsheet.has_value() && ctx.factsheet->default_state_interval.has_value()
+                                ? *ctx.factsheet->default_state_interval : vda5050::DEFAULT_STATE_INTERVAL_S;
+    return std::max(_link_policy.state_timeout_s, interval * _link_policy.offline_state_intervals);
 }
 
 void Connector::resolve_pending_cancel(const std::string &name)
@@ -1034,8 +1153,7 @@ void Connector::resend_unacked_order(const std::string &name)
         sent.sent_at = now;
         note = "[VDA5050] " + name + ": order '" + sent.order_id + "' update " + std::to_string(sent.update_id) +
                " not reported by the AGV within " + std::to_string(_link_policy.order_ack_timeout_s) +
-               " s -- sending it again (" + std::to_string(sent.sends) + "/" +
-               std::to_string(_link_policy.order_resend_attempts + 1) + ")";
+               " s -- sending it again (" + std::to_string(sent.sends) + "/" + std::to_string(_link_policy.order_resend_attempts + 1) + ")";
     }
     if (publish_raw(topic, message.dump()) == CommandStatus::queued)
     {
@@ -1056,8 +1174,7 @@ bool Connector::runs_unknown_order(const RobotContext &ctx) const
         return false;
     }
     const bool ours = state.order_id == ctx.current_order_id || state.order_id == ctx.replaced_order_id ||
-                      state.order_id == ctx.unknown_order_cancelled ||
-                      (ctx.cancel.pending() && ctx.cancel.order_id() == state.order_id);
+                      state.order_id == ctx.unknown_order_cancelled || (ctx.cancel.pending() && ctx.cancel.order_id() == state.order_id);
     return !ours;
 }
 
@@ -1085,8 +1202,7 @@ void Connector::cancel_unknown_order(const std::string &name)
 
     if (publish_raw(topic, message.dump()) == CommandStatus::transport_failed)
     {
-        RCLCPP_ERROR(_logger, "[VDA5050] %s: cancelOrder for unknown order '%s' NOT published (transport failure)",
-                     name.c_str(), order_id.c_str());
+        RCLCPP_ERROR(_logger, "[VDA5050] %s: cancelOrder for unknown order '%s' NOT published (transport failure)",name.c_str(), order_id.c_str());
         return;
     }
     {
@@ -1108,7 +1224,7 @@ void Connector::cancel_unknown_order(const std::string &name)
 void Connector::poll(const std::string &name)
 {
     resolve_pending_cancel(name);
-    {
+    { 
         const auto order_lock = lock_orders(name);
         resend_unacked_order(name);
         cancel_unknown_order(name);
@@ -1159,7 +1275,7 @@ void Connector::subscribe_robot(const RobotContext &ctx)
             vda5050::TOPIC_STATE, vda5050::TOPIC_CONNECTION, vda5050::TOPIC_VISUALIZATION, vda5050::TOPIC_FACTSHEET
         })
     {
-        _mqtt_client.subscribe(vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, leaf), 1);
+        _mqtt_client.subscribe(vda5050::topic(ctx.interface_name, ctx.manufacturer, ctx.serial, leaf), leaf == vda5050::TOPIC_CONNECTION ? 1 : _qos);
     }
 }
 
@@ -1201,8 +1317,7 @@ void Connector::warn_if_unroutable(const RobotContext &ctx, const std::string &d
 {
     if (dest_node_id.empty())
     {
-        RCLCPP_WARN(_logger,"[VDA5050] %s: navigating to an empty nodeId -- the AGV cannot "
-                    "echo it back as lastNodeId, so this order can never complete", ctx.name.c_str());
+        RCLCPP_WARN(_logger,"[VDA5050] %s: navigating to an empty nodeId -- the AGV cannot " "echo it back as lastNodeId, so this order can never complete", ctx.name.c_str());
     }
     if (map_id.empty())
     {
@@ -1237,8 +1352,7 @@ void Connector::warn_if_action_conflicts(const RobotContext &ctx,  const std::st
     // Enforce the motion rules for NONE, SOFT, and HARD actions.
     if (s.driving && blocking_type != "NONE")
     {
-        RCLCPP_WARN(_logger,"[VDA5050] %s: sending '%s' (blockingType %s) while the AGV is still "
-                    "driving -- %s actions expect it stationary and may be queued or " "rejected",
+        RCLCPP_WARN(_logger,"[VDA5050] %s: sending '%s' (blockingType %s) while the AGV is still " "driving -- %s actions expect it stationary and may be queued or " "rejected",
                     ctx.name.c_str(), action_type.c_str(), blocking_type.c_str(), blocking_type.c_str());
     }
 
@@ -1271,12 +1385,13 @@ void Connector::warn_if_action_conflicts(const RobotContext &ctx,  const std::st
     }
 }
 
-void Connector::warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_map_id) const
+void Connector::warn_if_map_mismatch(const RobotContext &ctx, const std::string &order_level) const
 {
-    if (order_map_id.empty() || !ctx.last_state.has_value() || ctx.last_state->map_id.empty())
+    if (order_level.empty() || !ctx.last_state.has_value() || ctx.last_state->map_id.empty())
     {
         return;
     }
+    const std::string order_map_id = ctx.maps.map_id(order_level);
     if (ctx.last_state->map_id != order_map_id)
     {
         RCLCPP_WARN(_logger,  "[VDA5050] %s: order mapId '%s' does not match the AGV's own "
@@ -1295,7 +1410,7 @@ std::string Connector::blocking_type_for(const RobotContext &ctx,const std::stri
 
 CommandStatus Connector::publish_raw(const std::string &topic, const std::string &payload)
 {
-    if (!_mqtt_client.publish(topic, payload))
+    if (!_mqtt_client.publish(topic, payload, _qos))
     {
         _metrics.publish_failed.add();
         RCLCPP_WARN(_logger, "[VDA5050] publish failed, dropping message to %s", topic.c_str());
@@ -1519,6 +1634,18 @@ void Connector::update_state(RobotContext &ctx, const nlohmann::json &raw)
         {
             ctx.last_state = std::move(state);
             ctx.last_state_time = std::chrono::steady_clock::now();
+            if (ctx.resume_pending && !ctx.last_state->paused)
+            {
+                ctx.resume_pending = false;
+            }
+            if (!ctx.pause_action_id.empty())
+            {
+                const auto pause_status = ctx.last_state->action_status(ctx.pause_action_id);
+                if (ctx.last_state->paused || (pause_status.has_value() && vda5050::is_terminal_action_status(*pause_status)))
+                {
+                    ctx.pause_action_id.clear();
+                }
+            }
             if (!ctx.last_state->last_node_id.empty())
             {
                 ctx.last_node_id = ctx.last_state->last_node_id;
@@ -1541,8 +1668,9 @@ void Connector::update_state(RobotContext &ctx, const nlohmann::json &raw)
                 else if (!refusal.empty())
                 {
                     log.push_back({LogLine::Level::warn, "[VDA5050] " + ctx.name + ": order '" + sent.order_id + "' update " +
-                                                             std::to_string(sent.update_id) + " refused by the AGV (" + refusal +
-                                                             ") -- not sending it again"});
+                                                             std::to_string(sent.update_id) + " refused by the AGV (" + refusal + ") -- not sending it again"});
+                    ctx.refused_order_id = sent.order_id;
+                    ctx.refusal = refusal;
                     ctx.unacked_order.reset();
                 }
             }
@@ -1559,8 +1687,7 @@ void Connector::report_stale_state(const RobotContext &ctx, const vda5050::Parse
     {
         return;
     }
-    log.push_back({LogLine::Level::warn, "[VDA5050] " + ctx.name + ": dropped " + std::to_string(*held + 1) +
-                                             " stale state message(s) -- headerId " +
+    log.push_back({LogLine::Level::warn, "[VDA5050] " + ctx.name + ": dropped " + std::to_string(*held + 1) + " stale state message(s) -- headerId " +
                                              std::to_string(state.header_id.value_or(0)) + " after " +
                                              std::to_string(ctx.state_sequence.last_header_id().value_or(0))});
 }
@@ -1632,9 +1759,7 @@ void Connector::report_state_changes(RobotContext &ctx, const StateKeys &keys, s
             if (ctx.current_released_count >= total)
             {
                 log.push_back({Level::warn, prefix + " requests a new base but order '" + order +
-                                                "' has no more route points to release (" + counts +
-                                                " already released) -- the AGV's own base tracking may have diverged "
-                                                "from this adapter's"});
+                                                "' has no more route points to release (" + counts + " already released) -- the AGV's own base tracking may have diverged " "from this adapter's"});
             }
             else
             {
@@ -1790,8 +1915,8 @@ void Connector::handle_message(const std::string &topic, const std::string &payl
         const double offline_after = state_timeout_for(*ctx);
         if (offline_after > _link_policy.state_timeout_s)
         {
-            RCLCPP_INFO(_logger, "[VDA5050] %s sends a state every %.1f s -- counts as offline after %.1f s without one",
-                        ctx->name.c_str(), *ctx->factsheet->default_state_interval, offline_after);
+            RCLCPP_INFO(_logger, "[VDA5050] %s sends a state at least every %.1f s -- counts as offline after %.1f s without one",
+                        ctx->name.c_str(), offline_after / _link_policy.offline_state_intervals, offline_after);
         }
     }
 }
@@ -1813,8 +1938,9 @@ std::optional<RobotData> Connector::get_data(const std::string &name)
     const auto &s = *ctx.last_state;
 
     RobotData data;
-    data.map_name = s.map_id;
-    data.position = ctx.transform.to_rmf(*s.x, *s.y, *s.theta);
+    data.map_name = ctx.maps.level(s.map_id);
+    const Transform &frame = ctx.maps.transform(data.map_name);
+    data.position = frame.to_rmf(*s.x, *s.y, *s.theta);
     data.battery_soc = std::clamp(s.battery_soc.value_or(1.0), 0.0, 1.0);
     data.charging = s.charging;
     data.order_id = s.order_id;
@@ -1826,6 +1952,7 @@ std::optional<RobotData> Connector::get_data(const std::string &name)
     data.operable = s.operable();
     data.safety_state = s.safety_state;
     data.fatal_error = s.first_fatal_error();
+    data.errors = s.agv_errors();
     data.paused = s.paused;
     data.new_base_request = s.new_base_request;
     data.localization_score = s.localization_score;
@@ -1837,7 +1964,7 @@ std::optional<RobotData> Connector::get_data(const std::string &name)
         // Keep pose and velocity from the same map frame.
         if (v.map_id.empty() || v.map_id == s.map_id)
         {
-            data.position = ctx.transform.to_rmf(*v.x, *v.y, *v.theta);
+            data.position = frame.to_rmf(*v.x, *v.y, *v.theta);
             if (v.velocity.has_value())
             {
                 data.velocity = v.velocity;
@@ -1992,9 +2119,9 @@ std::optional<std::string> Connector::get_known_map(const std::string &name)
     const RobotContext &ctx = *it->second;
     if (!ctx.last_state->map_id.empty())
     {
-        return ctx.last_state->map_id;
+        return ctx.maps.level(ctx.last_state->map_id);
     }
-    return ctx.current_map_id;
+    return ctx.current_level;
 }
 
 bool Connector::is_online(const std::string &name)
@@ -2128,7 +2255,7 @@ void Connector::watch_discovered()
     }
     for (const auto &topic : topics)
     {
-        _mqtt_client.subscribe(topic, 1);
+        _mqtt_client.subscribe(topic, _qos);
     }
 }
 

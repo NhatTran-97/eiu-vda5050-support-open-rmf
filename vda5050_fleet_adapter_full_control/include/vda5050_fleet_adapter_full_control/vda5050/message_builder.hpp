@@ -11,6 +11,9 @@ namespace vda5050_fleet_adapter_full_control::vda5050 {
 
 inline constexpr const char *VERSION = "2.1.0";
 
+// Longest state interval VDA5050 2.1 allows an AGV that declares no defaultStateInterval, in seconds.
+inline constexpr double DEFAULT_STATE_INTERVAL_S = 30.0;
+
 // Topic level that carries the protocol major version.
 inline constexpr const char *TOPIC_VERSION = "v2";
 
@@ -32,7 +35,8 @@ std::string topic(const std::string &interface_name,
 nlohmann::json make_node(const std::string &node_id, int sequence_id,
                         double x, double y, double theta,
                         const std::string &map_id, bool released,
-                        double allowed_deviation_xy, double allowed_deviation_theta);
+                        double allowed_deviation_xy, double allowed_deviation_theta,
+                        const nlohmann::json &actions = nlohmann::json::array());
 
 nlohmann::json make_edge(const std::string &edge_id, int sequence_id,
                         const std::string &start_node_id, const std::string &end_node_id,

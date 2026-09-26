@@ -178,3 +178,46 @@ TEST(ThresholdConfigTest, TheMetricsPeriodDefaultsToAMinuteAndCanBeTurnedOff)
         EXPECT_TRUE(rejected_naming(std::string("  ") + line + "\n", "vda5050.metrics_period_s")) << line;
     }
 }
+
+TEST(ThresholdConfigTest, ActionSpeedAndQosSettingsAreRead)
+{
+    const Config defaults(write_config(""));
+    EXPECT_FALSE(defaults.route_policy().cap_speed_to_fleet);
+    EXPECT_FALSE(defaults.action_policy().charge_at_chargers);
+    EXPECT_TRUE(defaults.action_policy().dock_actions.empty());
+    EXPECT_EQ(defaults.mqtt().options.qos, 1);
+
+    const Config config(write_config(
+        "  cap_edge_speed_to_fleet: true\n  charge_at_chargers: true\n  mqtt:\n    qos: 0\n"
+        "  dock_actions:\n    parking: {action: finePositioning}\n"
+        "    station_dock:\n      action: finePositioning\n      parameters: {stationName: station_1, height: 1.5, count: 2, exact: true}\n"));
+    EXPECT_TRUE(config.route_policy().cap_speed_to_fleet);
+    EXPECT_TRUE(config.action_policy().charge_at_chargers);
+    EXPECT_EQ(config.mqtt().options.qos, 0);
+    const auto &docks = config.action_policy().dock_actions;
+    ASSERT_EQ(docks.size(), 2u);
+    EXPECT_EQ(docks.at("parking").action_type, "finePositioning");
+    EXPECT_TRUE(docks.at("parking").parameters.empty());
+    const auto &station = docks.at("station_dock");
+    EXPECT_EQ(station.action_type, "finePositioning");
+    EXPECT_EQ(station.parameters["stationName"], "station_1");
+    EXPECT_DOUBLE_EQ(station.parameters["height"].get<double>(), 1.5);
+    EXPECT_EQ(station.parameters["count"], 2);
+    EXPECT_EQ(station.parameters["exact"], true);
+}
+
+TEST(ThresholdConfigTest, BadActionSpeedAndQosSettingsAreRejected)
+{
+    const std::vector<std::pair<std::string, std::string>> bad = {
+        {"  mqtt:\n    qos: 3\n", "vda5050.mqtt.qos"},
+        {"  cap_edge_speed_to_fleet: maybe\n", "vda5050.cap_edge_speed_to_fleet"},
+        {"  charge_at_chargers: 2\n", "vda5050.charge_at_chargers"},
+        {"  dock_actions: [a]\n", "vda5050.dock_actions"},
+        {"  dock_actions:\n    d: {parameters: {a: 1}}\n", "vda5050.dock_actions.d.action"},
+        {"  dock_actions:\n    d: {action: x, parameters: {a: [1]}}\n", "vda5050.dock_actions.d.parameters.a"},
+    };
+    for (const auto &[extra, text] : bad)
+    {
+        EXPECT_TRUE(rejected_naming(extra, text)) << extra;
+    }
+}

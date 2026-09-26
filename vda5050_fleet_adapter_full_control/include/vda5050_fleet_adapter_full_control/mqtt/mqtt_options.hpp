@@ -32,6 +32,8 @@ struct MqttOptions
     std::chrono::seconds retry_max{30};
     // Largest message payload handled, in bytes; a larger message is dropped unread.
     std::size_t max_payload_bytes = std::size_t{1024} * 1024;
+    // QoS of all topics except connection (always 1).
+    int qos = 1;
     TlsOptions tls;
 };
 
