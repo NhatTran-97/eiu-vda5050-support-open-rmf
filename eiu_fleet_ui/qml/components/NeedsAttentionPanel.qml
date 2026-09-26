@@ -168,7 +168,7 @@ Rectangle {
                             onClicked: registry.dismiss(attnRow.row.pending.key)
                         }
                     }
-                    // Separate hit target: opens diagnostics instead of just focusing.
+                    // Separate click target that opens the diagnostics.
                     Item {
                         visible: attnRow.clickable
                         Layout.preferredWidth: 26

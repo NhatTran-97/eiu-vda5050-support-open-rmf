@@ -205,7 +205,7 @@ Rectangle {
                                   : "—%"
                             color: !robotRow.row.hasBattery ? Theme.textDim
                                    : (Number(robotRow.row.battery) < uiConfig.lowBatteryPercent ? Theme.err : Theme.success)
-                            // Last-known value, not live -- dim it while disconnected.
+                            // Dim the last known value while the robot is disconnected.
                             opacity: robotRow.online ? 1.0 : 0.5
                             font.family: fontMono
                             font.pixelSize: 20 * panel.contentScale
@@ -233,7 +233,7 @@ Rectangle {
                                 Layout.preferredHeight: 40 * panel.contentScale
                                 radius: 12 * panel.contentScale
                                 color: "transparent"
-                                // A live RMF status is meaningless once the robot itself is unreachable.
+                                // Use the error colour instead of the RMF status while the robot is unreachable.
                                 border.color: robotRow.online
                                               ? Theme.statusColor(robotRow.row.status) : Theme.err
                                 border.width: 1
@@ -300,7 +300,7 @@ Rectangle {
             }
 
             Text {
-                // PENDING SYNC robots still count as rows -- gate on the filtered list.
+                // PENDING SYNC robots count as rows, so use the filtered list.
                 anchors.centerIn: parent
                 visible: dashboard.robotList.count === 0
                          && dashboard.robotFilter === ""

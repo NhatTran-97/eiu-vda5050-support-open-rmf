@@ -38,7 +38,7 @@ ApplicationWindow {
     readonly property var telemetry: dashboard.telemetry
     readonly property var speedLimits: dashboard.speedLimits
 
-    // Shared by Fleet Robots, the map, and the telemetry panel -- pick one anywhere, all follow.
+    // Selected robot, shared by Fleet Robots, the map and the telemetry panel.
     property string selectedRobotName: ""
     function selectRobot(name) {
         root.selectedRobotName = name
@@ -78,7 +78,7 @@ ApplicationWindow {
             root.selectedRobotName = mapCard.analytics.selectedRobotName
     }
 
-    // A cancel is only done once RMF has said so; say when it did not.
+    // Report a cancel that RMF refused or did not answer.
     Connections {
         target: ros
         function onDispatchResult(id, kind, ok, message) {

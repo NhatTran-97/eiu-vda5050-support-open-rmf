@@ -20,8 +20,14 @@ LEAF_STATE = "state"
 # Published by the fleet adapter to the robot; the dashboard only listens in.
 LEAF_ORDER = "order"
 LEAF_INSTANT = "instantActions"
+LEAF_FACTSHEET = "factsheet"
+LEAVES = (LEAF_CONNECTION, LEAF_STATE, LEAF_ORDER, LEAF_INSTANT, LEAF_FACTSHEET)
+
+# Longest state interval VDA5050 2.1 allows an AGV that declares no defaultStateInterval, in seconds.
+DEFAULT_STATE_INTERVAL_S = 30.0
 # Mark robot telemetry stale after this many seconds without a state message.
 STATE_STALE_AFTER_SEC = ui_settings.get("vda5050.state_stale_after_s")
+STALE_STATE_INTERVALS = ui_settings.get("vda5050.stale_state_intervals")
 TRAFFIC_LOG_SIZE = ui_settings.get("vda5050.traffic_log_size")
 _FINAL_ACTION_STATUSES = ("FINISHED", "FAILED")
 
@@ -55,6 +61,8 @@ class MqttClient(QObject):
         self._telemetry = {}
         self._last_state_rx: dict[str, float] = {}
         self._last_state_epoch: dict[str, float] = {}
+        # robot -> defaultStateInterval from its factsheet, in seconds.
+        self._state_interval: dict[str, float] = {}
         # Exported telemetry per robot and the robots whose export is out of date.
         self._exports: dict[str, dict] = {}
         self._dirty: set[str] = set()
@@ -131,7 +139,7 @@ class MqttClient(QObject):
         self.stateChanged.emit()
 
     def _subscribe(self, robot):
-        for leaf in (LEAF_CONNECTION, LEAF_STATE, LEAF_ORDER, LEAF_INSTANT):
+        for leaf in LEAVES:
             self._client.subscribe(robot.topic(leaf))
 
     def _robot_for_topic(self, topic: str):
@@ -157,12 +165,12 @@ class MqttClient(QObject):
                 return
             self._robots.remove(robot)
             for table in (self._online, self._telemetry, self._last_state_rx, self._last_state_epoch,
-                          self._exports, self._stale_reported, self._state_sig, self._blocking,
+                          self._state_interval, self._exports, self._stale_reported, self._state_sig, self._blocking,
                           self._off_graph_state, self._orders, self._open_instant):
                 table.pop(name, None)
             self._dirty.discard(name)
         if self._connected:
-            for leaf in (LEAF_CONNECTION, LEAF_STATE, LEAF_ORDER, LEAF_INSTANT):
+            for leaf in LEAVES:
                 self._client.unsubscribe(robot.topic(leaf))
         print(f"[MQTT] no longer following {name}")
 
@@ -207,6 +215,13 @@ class MqttClient(QObject):
                     if self._state_sig.get(robot.name) != sig:
                         self._state_sig[robot.name] = sig
                         self._log(robot.name, "in", "state", traffic.state_summary(state), msg.payload)
+            elif msg.topic == robot.topic(LEAF_FACTSHEET):
+                interval = ((data.get("protocolLimits") or {}).get("timing") or {}).get("defaultStateInterval")
+                with self._lock:
+                    if isinstance(interval, (int, float)) and not isinstance(interval, bool) and interval > 0:
+                        self._state_interval[robot.name] = float(interval)
+                    else:
+                        self._state_interval.pop(robot.name, None)
             elif msg.topic == robot.topic(LEAF_ORDER):
                 with self._lock:
                     self._blocking.setdefault(robot.name, {}).update(traffic.order_actions(data))
@@ -228,12 +243,17 @@ class MqttClient(QObject):
 
     # Read on the GUI thread.
 
+    def _stale_after(self, name: str) -> float:
+        """Seconds without a state before a robot's telemetry is stale; the caller holds the lock."""
+        interval = self._state_interval.get(name, DEFAULT_STATE_INTERVAL_S)
+        return max(STATE_STALE_AFTER_SEC, STALE_STATE_INTERVALS * interval)
+
     def snapshot(self, now: float | None = None) -> MqttSnapshot:
-        """Connection, telemetry and message log as of now; telemetry goes stale after STATE_STALE_AFTER_SEC."""
+        """Connection, telemetry and message log as of now; telemetry goes stale after stale_after(robot)."""
         now = time.monotonic() if now is None else now
         with self._lock:
             for name in self._telemetry:
-                stale = (now - self._last_state_rx.get(name, 0.0)) > STATE_STALE_AFTER_SEC
+                stale = (now - self._last_state_rx.get(name, 0.0)) > self._stale_after(name)
                 if self._stale_reported.get(name) != stale:
                     self._stale_reported[name] = stale
                     self._dirty.add(name)
@@ -242,8 +262,7 @@ class MqttClient(QObject):
                 if state is not None:
                     self._exports[name] = self._export(name, state, self._stale_reported.get(name, False))
             self._dirty.clear()
-            # A robot reads offline once its telemetry goes stale, even if its connection
-            # topic never got a final OFFLINE (dead process, no broker LWT to catch it).
+            # A robot is shown offline once its telemetry is stale, also without an OFFLINE message on its connection topic.
             online = {name: v and not self._stale_reported.get(name, False) for name, v in self._online.items()}
             if self._traffic_rows_version != self._traffic_version:
                 self._traffic_rows = [{k: v for k, v in e.items() if k != "raw"} for e in reversed(self._traffic)]
@@ -253,8 +272,7 @@ class MqttClient(QObject):
 
     def set_graph(self, graph: NavGraph):
         """Enable off-graph detection against the given navigation graph."""
-        self._off_graph = OffGraphTracker(graph, limit=ui_settings.get("vda5050.off_graph_limit_m"),
-                                          hold=ui_settings.get("vda5050.off_graph_hold_s"))
+        self._off_graph = OffGraphTracker(graph, limit=ui_settings.get("vda5050.off_graph_limit_m"), hold=ui_settings.get("vda5050.off_graph_hold_s"))
 
     def _export(self, name, state, stale):
         """Telemetry dict for QML; action states gain the blockingType the order declared."""

@@ -50,6 +50,24 @@ class DisplayRobotsTest(unittest.TestCase):
                                    {}, {}, [{"rmf_id": "t2", "destination": "x", "rounds": 1}], "f")[0]
         self.assertEqual((single["rounds_total"], single["rounds_current"]), (0, 0))
 
+    def test_an_idle_robot_that_charges_reads_charging(self):
+        charging = tele(charging=True, action_states=[
+            {"actionType": "startCharging", "actionStatus": "FINISHED"},
+            {"actionType": "startPause", "actionStatus": "FINISHED"}])
+        idle, moving = dm.display_robots([("a", "f"), ("b", "f")], [rmf_row("a", status="IDLE"), rmf_row("b", status="MOVING")],
+                                         {"a": charging, "b": charging}, {}, [], "f")
+        self.assertEqual(idle["status"], "CHARGING")
+        self.assertEqual(moving["status"], "MOVING")
+        self.assertEqual(idle["tele"]["charging_action"], "startCharging FINISHED")
+
+    def test_the_newest_charging_action_is_shown(self):
+        states = [{"actionType": "startCharging", "actionStatus": "FINISHED"},
+                  {"actionType": "stopCharging", "actionStatus": "RUNNING"},
+                  {"actionType": "pick", "actionStatus": "WAITING"}]
+        self.assertEqual(dm.charging_action(tele(action_states=states)), "stopCharging RUNNING")
+        self.assertEqual(dm.charging_action(tele()), "")
+        self.assertEqual(dm.charging_action(None), "")
+
     def test_telemetry_summary_names_the_worst_safety_state(self):
         self.assertIsNone(dm.telemetry_summary(None))
         self.assertEqual(dm.telemetry_summary(tele(fatal_error="motor"))["safety_label"], "motor")
@@ -141,6 +159,20 @@ class AttentionTest(unittest.TestCase):
         self.assertEqual(items[0]["detail"], "AUTOACK")
         self.assertIn("2.3 m", items[5]["detail"])
         self.assertTrue(all(i["robot"] == "a" for i in items))
+
+    def test_agv_warnings_are_listed_one_per_error_type(self):
+        robots = [{"name": "a", "online": True, "battery": 80}]
+        errors = [{"errorType": "lowBattery", "errorLevel": "WARNING", "errorDescription": "12 %"},
+                  {"errorType": "obstacle", "errorLevel": "WARNING"},
+                  {"errorType": "motor", "errorLevel": "FATAL"},
+                  {"errorType": 5, "errorLevel": "WARNING"},
+                  "not an object"]
+        items = self.items(robots=robots, telemetry={"a": tele(errors=errors)})
+        self.assertEqual([i["key"] for i in items],
+                         ["robot:a:warning:lowBattery", "robot:a:warning:obstacle", "robot:a:warning:(unnamed error)"])
+        self.assertEqual(items[0]["detail"], "12 %")
+        self.assertEqual(items[1]["detail"], "Reported by the AGV")
+        self.assertTrue(all(i["severity"] == "warning" for i in items))
 
     def test_low_battery_follows_the_limit(self):
         robots = [{"name": "a", "online": True, "battery": 25}]

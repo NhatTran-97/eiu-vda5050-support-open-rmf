@@ -13,7 +13,7 @@ Popup {
     readonly property var tele: root.telemetryFor(robotName)
     readonly property bool robotPaused: !!(tele && tele.paused)
     readonly property bool online: !!root.robotsOnline[robotName]
-    // VDA5050 offline means every command below would silently go nowhere.
+    // Commands need a VDA5050 connection to the robot.
     readonly property bool controlsEnabled: online
     property real currentSpeedLimit: 0
 
@@ -132,7 +132,7 @@ Popup {
         speedField.text = currentSpeedLimit > 0 ? currentSpeedLimit.toFixed(2) : ""
     }
 
-    // Re-localizing overrides the robot's believed pose -- confirm before sending it.
+    // Re-localizing replaces the robot's pose, so it asks for confirmation first.
     Popup {
         id: confirmPopup
         modal: true
@@ -218,7 +218,7 @@ Popup {
             }
         }
 
-        // Status first -- controls below would silently no-op if unreachable.
+        // Status first; the controls below need a reachable robot.
         ColumnLayout {
             Layout.fillWidth: true
             Layout.leftMargin: 18; Layout.rightMargin: 18
@@ -513,7 +513,7 @@ Popup {
                                          border.width: 1 }
                 onClicked: dlg.beginPick("waypoint")
             }
-            // Names the destination on the button so a stale combo value is obvious.
+            // Show the destination on the button.
             Button {
                 Layout.fillWidth: true
                 text: goToCombo.currentText !== "" ? "GO → " + goToCombo.currentText : "GO"

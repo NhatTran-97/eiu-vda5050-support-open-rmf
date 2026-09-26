@@ -93,15 +93,13 @@ def _default_adapter_sources() -> list[tuple[Path, str, str]]:
     out: list[tuple[Path, str, str]] = []
     src_root = Path(__file__).resolve().parents[2]
     for filename in _DEFAULT_CONFIG_FILENAMES:
-        out.append((src_root / ADAPTER_PACKAGE / "config" / filename, node_name,
-                    f"{ADAPTER_PACKAGE} source tree"))
+        out.append((src_root / ADAPTER_PACKAGE / "config" / filename, node_name, f"{ADAPTER_PACKAGE} source tree"))
 
     try:
         from ament_index_python.packages import get_package_share_directory
         share = Path(get_package_share_directory(ADAPTER_PACKAGE))
         for filename in _DEFAULT_CONFIG_FILENAMES:
-            out.append((share / "config" / filename, node_name,
-                        f"{ADAPTER_PACKAGE} share directory"))
+            out.append((share / "config" / filename, node_name, f"{ADAPTER_PACKAGE} share directory"))
     except Exception:
         pass
 
@@ -121,8 +119,7 @@ def _adapter_fleets() -> list[list[tuple[Path, str, str]]]:
             continue
         path_str, sep, node_name = entry.partition("=")
         if not sep or not path_str.strip() or not node_name.strip():
-            print(f"[CFG] skipping malformed EIU_FLEET_ADAPTERS entry {entry!r} "
-                  f"(expected path=node_name)", file=sys.stderr)
+            print(f"[CFG] skipping malformed EIU_FLEET_ADAPTERS entry {entry!r} " f"(expected path=node_name)", file=sys.stderr)
             continue
         fleets.append([(Path(path_str.strip()), node_name.strip(), "$EIU_FLEET_ADAPTERS")])
     return fleets

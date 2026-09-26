@@ -92,9 +92,7 @@ class AdapterMetrics(QObject):
                 node_name = self._to_subscribe.get_nowait()
             except queue.Empty:
                 return
-            self._node.create_subscription(
-                String, METRICS_TOPIC.format(node=node_name),
-                lambda msg, name=node_name: self._incoming.emit(name, msg.data), 10)
+            self._node.create_subscription(String, METRICS_TOPIC.format(node=node_name),lambda msg, name=node_name: self._incoming.emit(name, msg.data), 10)
 
     # Reports, on the GUI thread.
 

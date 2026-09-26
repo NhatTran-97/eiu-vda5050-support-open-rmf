@@ -1,37 +1,22 @@
 # EIU Fleet UI — Architecture
 
-A PySide6 + QML desktop dashboard for an Open-RMF fleet running the VDA5050
-protocol. It watches RMF's own topics for fleet-level truth (position, task
-state, traffic) and the robot's MQTT `state` topic for everything RMF doesn't
-carry (speed, safety, battery detail, order progress) — then dispatches,
-cancels, and directly controls robots through the same channels.
+EIU Fleet UI is a PySide6 and QML desktop dashboard for Open-RMF fleets that use VDA5050. It supports the operation and the development of the VDA5050 fleet adapter.
 
-## Features
-
-| Area | What it does |
-|:---:|---|
-| Live navigation map | Occupancy grid + nav-graph overlay, lane direction arrows, blocked-lane highlighting from live RMF traffic state, multi-robot markers with heading/pulse that glide between updates, each robot's route and task destination, click-to-pick a pose or waypoint |
-| Fleet Command dashboard | KPI cards (system health: Healthy/Degraded/Critical/Offline, fleet + VDA5050-connected count, traffic status, tasks), RMF/MQTT online indicators, a Needs Attention panel listing every active issue |
-| Active Robots panel | Search/filter, battery, round progress, live telemetry badges (not-localized, no-recent-data, safety/eStop/fatal-error) |
-| Robot Control dialog | Pause/resume, speed-limit override, re-localize (click-on-map or typed pose), direct "go to waypoint" pinned to that one robot; a command shows as waiting until the adapter answers and fails after `commands.timeout_s` |
-| Recent Tasks table | Search/filter, underway-first sort, cancel button, dispatch confirmed synchronously with error feedback and a server-side timeout for a dispatcher that never responds |
-| New Task dialog | Fleet-wide patrol or delivery dispatch (destinations, handlers, loop count) — RMF bids it to whichever robot it picks; draggable |
-| Fleet Analytics | Battery/task-distribution gauges, current task progress, live distance-since-last-node, eStop/safety status per robot, delivery pickup/dropoff wait countdown, AGV-reported load while a delivery is underway |
-| System view | Per fleet adapter: robots online, oldest state age against the adapter's own offline limit, messages per second, drops, MQTT link, update-loop time, and charts of the last reports; the problems an adapter reports about itself also join Needs Attention |
-| Traffic awareness | Blocked lanes and active negotiation/conflict counts, read from real RMF topics, not inferred |
-| No-go zones | Drag a rectangle on the map; every lane it crosses is closed via RMF's own lane-closure mechanism. Multiple zones at once, click to select, delete to reopen |
-| Robot registration | Unregistered broker robots raise a Needs Attention entry; Register dialog shows the adapter's live checks; a removed-but-still-online robot is offered again to be restored |
-| Nav graph editor | Add/move waypoints and lanes on the map, *Save as* writes an `nav_graph.yaml`; nothing written until saved |
-| VDA5050 order & traffic | Selected robot's live order as route tiles + per-action blocking; filterable log of order/instantAction/state/connection messages with raw JSON |
-| Resilience | VDA5050 telemetry staleness detection, malformed-MQTT-payload hardening, dispatch/cancel confirmation with timeout |
+The dashboard reads fleet data from two sources. RMF topics give the position of each robot, the task states and the traffic. The VDA5050 `state` messages on MQTT give what RMF does not carry: speed, safety, battery details and order progress. The dashboard sends tasks and cancels to RMF, and robot commands to the fleet adapters.
 
 ## System architecture
 
-Two machines, three ROS graphs meeting at one MQTT broker:
+This section shows where the dashboard sits in the system and which parts it talks to.
+
+The system runs on two machines:
+- The ground station runs the dashboard, Open-RMF and the fleet adapter in one container, on one ROS domain.
+- Each robot runs its VDA5050 client, the TurtleBot3 bridge and Nav2.
+
+The MQTT broker connects them. The dashboard talks to Open-RMF and the fleet adapter over ROS 2, reads the VDA5050 messages from the broker, and receives task events from the fleet adapter over an optional WebSocket. The dashboard merges two views of each robot: RMF's view from `/fleet_states`, and the robot's own view from its VDA5050 `state`. It combines them field by field, so neither view replaces the other (`display_robots` in `dashboard_model.py`).
 
 ```mermaid
 flowchart LR
-    subgraph GS ["🖥️ Ground station — rmf_jazzy_vda_dev container, ROS_DOMAIN_ID=42"]
+    subgraph GS ["🖥️ Ground station — rmf_jazzy_vda_dev container, one ROS_DOMAIN_ID"]
         direction TB
         subgraph UI ["eiu_fleet_ui"]
             direction LR
@@ -60,15 +45,14 @@ flowchart LR
     FA <--> MQ
     MQ <--> CA
     FA -.->|"websocket task events\n(optional, if configured)"| PY
-    PY -->|MQTT subscribe: state, connection| MQ
+    PY -.->|"MQTT, read only: state, connection,\nfactsheet, order, instantActions"| MQ
 ```
 
-RMF's own frame (`/fleet_states`) and the robot's VDA5050 frame (MQTT
-`state`) are two independent sources of truth about the same robot; the UI
-never lets one silently overwrite the other — it merges them per field (see
-`display_robots` in `dashboard_model.py`).
-
 ## Component view
+
+This section shows the source files of the dashboard and which file uses which.
+
+The code has two layers. The QML frontend renders the panels, dialogs and the map, and reads its data from context properties exposed by the backend. The Python backend connects to ROS and MQTT, and turns the raw fleet, task and VDA5050 data into what the panels show; `dashboard_model.py` and `task_state.py` do this without Qt, so they have plain unit tests. An arrow points from a file to a file it uses.
 
 ```mermaid
 flowchart TB
@@ -115,29 +99,26 @@ flowchart TB
 
 ### Refresh pipeline
 
-The ROS executor thread and the paho thread only record what arrives: `RosBridge` keeps
-the robots of each fleet and the task records, `MqttClient` the parsed state per robot and
-the message log. Nothing is serialised per message.
+This section explains how the dashboard updates its panels without blocking on ROS or MQTT.
 
-On the GUI thread, `Dashboard.refresh()` runs every `dashboard.refresh_period_s` (0.2 s by
-default). It takes one snapshot of every backend, derives what the panels show with the pure
-functions of `dashboard_model.py`, and hands it over as
+Three threads are involved. The ROS thread and the MQTT thread only store the latest data: `RosBridge` stores the robots and tasks of each fleet, `MqttClient` stores the state of each robot and the message log. They do not process this data further.
 
-- `KeyedListModel`s for every list (robots, map markers, Needs Attention, tasks, traffic log):
-  a row that changed emits `dataChanged` for itself only, new rows are inserted, gone rows
-  removed, reordered rows moved — the model is never reset, so delegates, scroll position,
-  hover and running animations survive every update;
-- values (`robotRows`, `telemetry`, `routes`, the KPI summary, …) that notify only when they
-  actually changed.
+The GUI thread does the processing. Every `dashboard.refresh_period_s` (0.2 s by default), `Dashboard.refresh()` takes a snapshot of both threads' data and builds what the panels show, using the pure functions of `dashboard_model.py`.
 
-Needs Attention items carry a stable key (`robot:tb3_1:offline`) and the time an issue
-started; the "last seen … ago" text ticks in the delegate itself. Robot markers glide to each
-new pose over one refresh period. The map draws the graph (lanes, arrows, zones, editor)
-and the routes on two canvases, so only the route layer is repainted as robots move.
+The panels then update in one of two ways. A list, such as robots or tasks, uses a `KeyedListModel`: only the rows that changed are updated, added, removed or moved. A single value, such as the KPI summary, updates only when it changes. Neither way rebuilds the whole panel, so scroll position, hover state and running animations stay as they were.
 
 ## Key flows
 
+The key flows show, step by step, how the dashboard handles its main situations:
+- [Dispatch a task](#dispatch-a-task): sending a patrol or delivery task to RMF, for the fleet or for one robot.
+- [Register a robot found on the broker](#register-a-robot-found-on-the-broker): adding an unregistered robot to a fleet.
+- [Task cancellation](#task-cancellation): cancelling a task and showing RMF's confirmation.
+- [Live telemetry](#live-telemetry-two-independent-sources): merging RMF's view of a robot with its VDA5050 state.
+- [Task state from several sources](#task-state-from-several-sources): keeping one task state from several RMF sources that answer in any order.
+
 ### Dispatch a task
+
+The operator creates a patrol or delivery task from the New Task dialog, for the whole fleet or for one robot. The dialog calls `dispatch()` or `dispatchToRobot()`; `RosBridge` sends the request to RMF and tracks its state until RMF answers.
 
 ```mermaid
 sequenceDiagram
@@ -156,19 +137,18 @@ sequenceDiagram
         alt response arrives in time
             RMF-->>RB: dispatch_task_response (rmf_id, success)
             RB->>RB: task.state = accepted ? underway-track : "failed"
-        else 15s pass, nothing
+        else DISPATCH_TIMEOUT_SEC pass, nothing
             RB->>RB: task.state = "failed" ("No response from dispatcher")
         end
         RMF-)AD: order over MQTT (via fleet adapter)
     end
 ```
 
-`loops > 1` builds a round-trip route instead of a single leg: `dispatch()`
-finds the robot's nearest waypoint via `/fleet_states` and requests
-`[current_wp, destination]` with `rounds = loops`, so each round is real
-travel rather than a no-op at the destination.
+A multi-round patrol (`loops > 1`) adds the robot's current waypoint, read from `/fleet_states`, as the first stop. Without it, every round after the first would end where it started, so the robot would not move.
 
 ### Register a robot found on the broker
+
+A robot online on the broker but registered with no fleet appears in Needs Attention. The operator opens the Register dialog, which checks the request against the fleet adapters as the operator fills it in, and only allows registering once a check passes.
 
 ```mermaid
 sequenceDiagram
@@ -195,17 +175,13 @@ sequenceDiagram
     RR->>RR: robotAdded -> FleetSettings, MqttClient, RosControl, RosBridge
 ```
 
-The dashboard holds no registration rules: it shows the adapter's verdict, so
-a rule changed in the adapter is changed everywhere at once. Suggestions
-(fleet by matching type, a name continuing the fleet's numbering, the first
-free charger) only prefill the form. A request that gets no answer within
-`REPLY_TIMEOUT_SEC` ends in a failure the dialog shows.
+The dashboard holds no registration rules: it shows the adapter's verdict, so a rule changed in the adapter is changed everywhere at once. Suggestions (fleet by matching type, a name continuing the fleet's numbering, the first free charger) only prefill the form. A request that gets no answer within `REPLY_TIMEOUT_SEC` ends in a failure the dialog shows.
 
-A robot removed from a fleet but still online is offered again. `removed_as`
-tells the dialog its old fleet, name and charger, so it can prefill them —
-registering it unchanged restores it instead of creating a new one.
+A robot removed from a fleet but still online is offered again. `removed_as` tells the dialog its old fleet, name and charger, so it can prefill them. Registering it unchanged restores it instead of creating a new one.
 
 ### Task cancellation
+
+The dashboard does not cancel a task by itself: it asks RMF to cancel it, and shows the task as cancelling until RMF answers.
 
 ```mermaid
 sequenceDiagram
@@ -214,12 +190,14 @@ sequenceDiagram
     participant RMF as RMF dispatcher
 
     Q->>RB: cancel_task(rmf_id)
-    RB->>RB: task.state = "cancelled" (optimistic)
+    RB->>RB: task.cancel = "requested" (row shows CANCELLING)
     RB->>RMF: ApiRequest (cancel_task_request)
     RMF-->>RB: task_state_update (confirms cancelled)
 ```
 
 ### Live telemetry (two independent sources)
+
+RMF and the robot each report only part of a robot's state, on their own schedule. RMF gives the position, the planning battery and the task path from `/fleet_states`; the robot gives its real telemetry over MQTT. On every refresh, the dashboard merges the two into one row per robot, and marks a robot stale once its VDA5050 state is older than its offline limit.
 
 ```mermaid
 sequenceDiagram
@@ -234,7 +212,7 @@ sequenceDiagram
     Robot->>MC: speed, real battery_soc, safety, errors
     loop every dashboard.refresh_period_s
         D->>RB: robots_snapshot(), tasks_snapshot(), stale_fleets()
-        D->>MC: snapshot() (+ stale flag after vda5050.state_stale_after_s)
+        D->>MC: snapshot() (+ stale flag after max(state_stale_after_s, stale_state_intervals × state interval))
         D->>D: display_robots: merge per field, prefer the real battery_soc
         D->>UI: changed rows only (KeyedListModel), changed values only
     end
@@ -242,28 +220,58 @@ sequenceDiagram
 
 ### Task state from several sources
 
-`/task_api_responses`, the websocket task events, `/dispatch_states` and the robots' task ids
-in `/fleet_states` all say something about a task, in any order. `task_state.set_state` ranks
-them — task events and API answers, then the dispatcher, then a robot picking up or dropping a
-task id, then the dashboard's own timeouts. A better-informed source may change the state
-either way; an equal or weaker one only moves it forward (queued, underway, finished). So a
-late `/dispatch_states` "queued" cannot undo "underway", and "completed because the robot
-dropped the task id" is replaced by RMF's "failed" when that is what happened. A finished
-task gets its real end time; while it runs, the end RMF expects is shown with `~`.
+RMF reports the state of a task through four sources: task API responses, the websocket task events, `/dispatch_states`, and the robot's task id in `/fleet_states`. These sources answer in any order, and a message can arrive late. `task_state.set_state` ranks the sources by how well informed they are: events and API responses first, then the dispatcher, then a robot picking up or dropping a task id, then the dashboard's own timeouts.
 
-## Process boundaries, at a glance
+A higher-ranked source can change the task's state in either direction. An equal or lower-ranked source can only move it forward, from queued to underway to finished. A late `/dispatch_states` message reporting "queued" cannot undo "underway" for the same reason. If the dashboard marks a task "completed" because the robot dropped its task id, and RMF later reports "failed" for it, RMF's report replaces the dashboard's guess.
 
-| Boundary | Crossed by | Protocol |
-|:---:|---|:---:|
-| UI ↔ RMF core | `/fleet_states`, `/task_api_requests`, `/task_api_responses`, `/dispatch_states`, `/lane_states`, `/lane_closure_requests`, `/rmf_traffic/negotiation_statuses`, `/dispenser_states`, `/ingestor_states` | ROS 2, domain 42 |
-| UI ↔ fleet adapter | `<robot>/pause`, `<robot>/resume` (services), `speed_limit.<robot>` (param), `<robot>/init_position` (+ `_result`) | ROS 2, domain 42 |
-| UI ↔ fleet adapter (metrics) | `/<adapter node>/metrics` (JSON in `std_msgs/String`, one report per `vda5050.metrics_period_s`) | ROS 2, domain 42 |
-| UI ↔ fleet adapter (registration) | `/robot_registry`, `/robot_discovery`, `/robot_registration_requests`, `/robot_registration_results` (JSON in `std_msgs/String`) | ROS 2, domain 42 |
-| UI ↔ robot | `<interface>/v2/<mfr>/<serial>/state`, `.../connection` | MQTT (Mosquitto) |
-| Fleet adapter ↔ robot | VDA5050 `order`, `state`, `connection`, `instantActions` | MQTT (Mosquitto) |
-| Fleet adapter → UI | `task_state_update`, `task_log_update` | WebSocket, optional |
-| Bridge ↔ Nav2 | `NavigateToPose` action, `/odom` | ROS 2, on-robot |
+A finished task shows its real end time. A task still running shows the end time RMF expects, marked with `~`.
 
-Everything under "UI ↔ RMF core" and "UI ↔ fleet adapter" only works because
-the UI and the fleet adapter share `ROS_DOMAIN_ID=42` — the UI process is
-just another node on that graph, not a separate integration layer.
+## Interfaces
+
+The dashboard reads the AGVs over MQTT and talks to Open-RMF and the fleet adapters over ROS 2. An optional WebSocket receives task events from the fleet adapter (`task_state_update`, `task_log_update`).
+
+#### MQTT topics (VDA5050)
+
+The dashboard reads the VDA5050 messages of every robot directly from the broker and never publishes to it. The topic prefix of a robot is `<interface_name>/v2/<manufacturer>/<serial>/`; the dashboard takes it from the fleet adapter configs and, for robots added at runtime, from `/robot_registry`.
+
+| Topic | Sent by | Used for |
+|:---:|:---:|---|
+| `connection` | Robot | Online state of the robot (`ONLINE`, `OFFLINE`, `CONNECTIONBROKEN`) |
+| `state` | Robot | Telemetry: position, battery, speed, safety, errors, order progress and action states (parsed by `vda5050/state.py`) |
+| `factsheet` | Robot | `defaultStateInterval`, for the offline limit of the robot |
+| `order` | Fleet adapter | Active order of the robot and the VDA5050 traffic log |
+| `instantActions` | Fleet adapter | Blocking type of each action and the VDA5050 traffic log |
+
+The dashboard does not subscribe to `visualization`; the robot positions on the map come from `/fleet_states`.
+
+#### ROS 2 topics
+
+The dashboard talks to Open-RMF and to the fleet adapters over ROS 2, in the same `ROS_DOMAIN_ID`. It reads the state of the robots, tasks and traffic from RMF, sends tasks and lane closures to RMF, and sends robot commands and registration requests to the fleet adapters.
+
+Open-RMF:
+
+| Topic | Type | Direction | Purpose |
+|:---:|:---:|:---:|---|
+| `/fleet_states` | `rmf_fleet_msgs/FleetState` | RMF → UI | Position, battery, mode and path of each robot |
+| `/task_api_requests` | `rmf_task_msgs/ApiRequest` | UI → RMF | Dispatch and cancel tasks |
+| `/task_api_responses` | `rmf_task_msgs/ApiResponse` | RMF → UI | Answers to task requests and task state updates |
+| `/dispatch_states` | `rmf_task_msgs/DispatchStates` | RMF → UI | Bidding and assignment result of each task |
+| `/lane_states` | `rmf_fleet_msgs/LaneStates` | RMF → UI | Closed lanes of each fleet |
+| `/lane_closure_requests` | `rmf_fleet_msgs/LaneRequest` | UI → RMF | Close and open lanes for a no-go zone |
+| `/rmf_traffic/negotiation_statuses` | `rmf_traffic_msgs/NegotiationStatuses` | RMF → UI | Active traffic conflicts |
+| `/dispenser_states`, `/ingestor_states` | `rmf_dispenser_msgs`, `rmf_ingestor_msgs` | RMF → UI | Workcells of delivery tasks and their wait time |
+
+Fleet adapters (`<adapter node>` is the node name given in `fleet_adapters`):
+
+| Topic or service | Type | Direction | Purpose |
+|:---:|:---:|:---:|---|
+| `/<adapter node>/<robot>/pause`, `/resume` | `std_srvs/Trigger` service | UI → adapter | Pause and resume a robot |
+| `/<adapter node>/<robot>/init_position` | `geometry_msgs/PoseWithCovarianceStamped` | UI → adapter | Set the position of a robot |
+| `/<adapter node>/<robot>/init_position_result` | `std_msgs/String` | adapter → UI | Result of `init_position` |
+| `speed_limit.<robot>` | ROS parameter of `<adapter node>` | UI → adapter | Speed limit of a robot |
+| `/robot_registry` | `std_msgs/String` (JSON, latched) | adapter → UI | Robots, chargers, type and limits of each fleet |
+| `/robot_discovery` | `std_msgs/String` (JSON, latched) | adapter → UI | Robots on the broker that no fleet has registered |
+| `/robot_registration_requests` | `std_msgs/String` (JSON) | UI → adapter | Add, check and remove requests |
+| `/robot_registration_results` | `std_msgs/String` (JSON) | adapter → UI | Result of each request, with errors and warnings |
+| `/<adapter node>/metrics` | `std_msgs/String` (JSON) | adapter → UI | Metrics report of the adapter |
+

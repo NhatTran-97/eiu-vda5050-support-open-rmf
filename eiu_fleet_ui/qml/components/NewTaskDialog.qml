@@ -13,7 +13,7 @@ Dialog {
     // The robot the operator picked; kept while the list of online robots changes.
     property string chosenRobot: ""
     property string errorMessage: ""
-    // Id of the request this dialog sent; results of other requests are not ours.
+    // Id of the request this dialog sent; results of other requests are ignored.
     property string requestId: ""
     // Dispensers and ingestors RMF reports; the handler fields offer them.
     property var workcells: JSON.parse(ros.workcellsJson)

@@ -62,7 +62,7 @@ class FollowedRobotsTest(unittest.TestCase):
         mqtt._connected = True
         mqtt.add_robot(identity("tb3_3", "0003"))
         self.assertEqual(sorted(t.rsplit("/", 1)[1] for t in subscribed),
-                         ["connection", "instantActions", "order", "state"])
+                         ["connection", "factsheet", "instantActions", "order", "state"])
         self.assertIs(mqtt._robot_for_topic("AMR/v2/ROBOTIS/0003/state").name == "tb3_3", True)
 
         mqtt._telemetry["tb3_3"] = object()
@@ -82,6 +82,7 @@ class FollowedRobotsTest(unittest.TestCase):
             mqtt._on_message(None, None, msg)
 
         send("connection", {"connectionState": "ONLINE"})
+        send("factsheet", {"protocolLimits": {"timing": {"defaultStateInterval": 1.0}}})
         send("state", {})
         self.assertEqual(mqtt.snapshot().online, {"tb3_1": True})
 
@@ -97,6 +98,18 @@ class FollowedRobotsTest(unittest.TestCase):
         snapshot = mqtt.snapshot()
         self.assertEqual(snapshot.online, {"tb3_1": True})
         self.assertFalse(snapshot.telemetry["tb3_1"]["stale"])
+
+    def test_an_agv_without_a_declared_state_interval_gets_the_vda5050_30_s(self):
+        mqtt = MqttClient(config(identity("tb3_1", "0001")))
+        robot = mqtt._robots[0]
+        for leaf, payload in (("connection", {"connectionState": "ONLINE"}), ("state", {})):
+            mqtt._on_message(None, None, SimpleNamespace(topic=robot.topic(leaf), payload=json.dumps(payload).encode()))
+
+        allowed = mqtt_client_module.STALE_STATE_INTERVALS * mqtt_client_module.DEFAULT_STATE_INTERVAL_S
+        mqtt._last_state_rx["tb3_1"] -= allowed - 1
+        self.assertFalse(mqtt.snapshot().telemetry["tb3_1"]["stale"])
+        mqtt._last_state_rx["tb3_1"] -= 2
+        self.assertTrue(mqtt.snapshot().telemetry["tb3_1"]["stale"])
 
     def test_control_queues_endpoint_changes_for_the_ros_thread(self):
         control = RosControl(config(identity("tb3_1", "0001")))

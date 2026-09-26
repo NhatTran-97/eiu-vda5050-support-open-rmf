@@ -18,6 +18,30 @@ class Limits:
 
 # Robots.
 
+CHARGING_ACTIONS = ("startCharging", "stopCharging")
+
+
+def charging_action(tele: dict | None) -> str:
+    """Newest startCharging / stopCharging the AGV reports, with its status, e.g. 'stopCharging FINISHED'; '' when none."""
+    for action in reversed((tele or {}).get("action_states") or []):
+        if isinstance(action, dict) and action.get("actionType") in CHARGING_ACTIONS:
+            return f"{action['actionType']} {action.get('actionStatus', '')}".strip()
+    return ""
+
+
+def agv_warnings(tele: dict | None) -> list[dict]:
+    """The WARNING errors the AGV reports, as {'type', 'description'}."""
+    warnings = []
+    for error in (tele or {}).get("errors") or []:
+        if not isinstance(error, dict) or error.get("errorLevel") != "WARNING":
+            continue
+        error_type = error.get("errorType")
+        description = error.get("errorDescription")
+        warnings.append({"type": error_type if isinstance(error_type, str) and error_type else "(unnamed error)",
+                         "description": description if isinstance(description, str) else ""})
+    return warnings
+
+
 def telemetry_summary(tele: dict | None) -> dict | None:
     """The few VDA5050 values a robot row shows, or None without telemetry."""
     if not tele:
@@ -41,6 +65,7 @@ def telemetry_summary(tele: dict | None) -> dict | None:
         "unsafe": bool(safety.get("triggered")) or bool(fatal),
         "safety_label": label,
         "charging": bool(tele.get("charging")),
+        "charging_action": charging_action(tele),
         "paused": bool(tele.get("paused")),
         "last_rx": float(tele.get("last_rx") or 0.0),
     }
@@ -90,6 +115,8 @@ def display_robots(known: list[tuple[str, str]], rmf_rows: list[dict], telemetry
                    "x": 0.0, "y": 0.0, "yaw": 0.0, "path": [], "rmfSynced": False, "hasBattery": has_battery}
         row["online"] = bool(online.get(name))
         row["tele"] = telemetry_summary(tele)
+        if row["status"] == "IDLE" and row["tele"] and row["tele"]["charging"]:
+            row["status"] = "CHARGING"
         task = task_by_rmf_id.get(row.get("task") or "")
         row["task_destination"] = task.get("destination", "") if task else ""
         row["rounds_total"], row["rounds_remaining"], row["rounds_current"] = _rounds(task)
@@ -283,6 +310,9 @@ def attention_items(*, rmf_online: bool, mqtt_connected: bool, active_conflicts:
                                e_stop if e_stop and e_stop != "NONE" else "Field violation", robot=name))
         if tele and tele.get("fatal_error"):
             items.append(_item(f"robot:{name}:fatal", "critical", f"{name} fatal error", tele["fatal_error"], robot=name))
+        for warning in agv_warnings(tele):
+            items.append(_item(f"robot:{name}:warning:{warning['type']}", "warning", f"{name} AGV warning: {warning['type']}",
+                               warning["description"] or "Reported by the AGV", robot=name))
         battery = float(row.get("battery") or 0)
         if 0 < battery < limits.low_battery_percent:
             items.append(_item(f"robot:{name}:battery", "warning", f"{name} battery low",

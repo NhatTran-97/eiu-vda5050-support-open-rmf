@@ -67,7 +67,7 @@ Rectangle {
             else if (node.passed || (lastNodeSeq !== null && node.sequenceId <= lastNodeSeq))
                 st = "done"
             else
-                st = "pending"     // in the order but state hasn't caught up yet
+                st = "pending"     // in the order, not yet reported in the state
 
             var edge = null
             if (haveOrder) {

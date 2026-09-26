@@ -38,6 +38,7 @@ SETTINGS = {
     "commands.timeout_s":              Setting(10.0, 1.0, 600.0, env="EIU_COMMAND_TIMEOUT"),
     "registration.reply_timeout_s":    Setting(10.0, 1.0, 600.0, env="EIU_REGISTRATION_TIMEOUT"),
     "vda5050.state_stale_after_s":     Setting(5.0, 0.5, 600.0, env="EIU_STATE_STALE_AFTER"),
+    "vda5050.stale_state_intervals":   Setting(2.0, 1.0, 100.0, env="EIU_STALE_STATE_INTERVALS"),
     "vda5050.traffic_log_size":        Setting(200, 10, 100000, integer=True),
     "vda5050.off_graph_limit_m":       Setting(DEFAULT_OFF_GRAPH_LIMIT_M, 0.05, 100.0),
     "vda5050.off_graph_hold_s":        Setting(DEFAULT_OFF_GRAPH_HOLD_S, 0.0, 600.0),

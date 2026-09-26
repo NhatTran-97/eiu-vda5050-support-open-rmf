@@ -10,9 +10,8 @@ from types import SimpleNamespace
 
 # Select the Qt Quick backend before importing Qt.
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
-# Pin to physical pixels by default; the host's reported display DPI is
-# inconsistent across launches and otherwise leaves the window size to chance.
-# EIU_UI_SCALE still overrides this.
+# Use physical pixels by default so the window size is the same on every launch.
+# EIU_UI_SCALE overrides this.
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")
 os.environ.setdefault("QT_SCALE_FACTOR", "1")
 
@@ -257,7 +256,7 @@ def build_engine(app: QApplication):
     engine.load(QUrl.fromLocalFile(str(qml_file)))
     dashboard.start()
 
-    # Keep the backend objects referenced for the life of the QML engine; an unreferenced context property is garbage collected.
+    # Keep references to the backend objects for the life of the QML engine.
     backends = SimpleNamespace(settings=settings, map_prov=map_prov,
                                mqtt=mqtt, ros=ros, control=control, ws_tasks=ws_tasks,
                                graph_ed=graph_ed, registry=registry, adapter_metrics=adapter_metrics,

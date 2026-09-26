@@ -31,7 +31,7 @@ Rectangle {
     readonly property int selectedRobotIndex: robotNames.indexOf(selectedRobotName)
 
     readonly property var primaryRobot: selectedRobot()
-    // PENDING SYNC placeholders default x/y/yaw/battery to 0 -- these gate "--" display.
+    // PENDING SYNC placeholders have x, y, yaw and battery 0; these flags show "--" instead.
     readonly property bool hasTele: primaryRobot ? !!(telemetry[primaryRobot.name]) : false
     readonly property bool hasPose: !!(primaryRobot && primaryRobot.rmfSynced)
     readonly property bool hasBatteryReading: !!(primaryRobot && primaryRobot.hasBattery)
@@ -53,6 +53,8 @@ Rectangle {
     readonly property bool deliveryUnderway: !!(displayTask && displayTask.category === "delivery"
                                                  && displayTaskState === "underway")
     readonly property bool eStopActive: !!(safety && safety.triggered)
+    readonly property bool charging: !!(primaryRobot && primaryRobot.tele && primaryRobot.tele.charging)
+    readonly property string chargingAction: primaryRobot && primaryRobot.tele ? (primaryRobot.tele.charging_action || "") : ""
     readonly property string eStopLabel: {
         if (!safety) return ""
         if (safety.e_stop && safety.e_stop !== "NONE") return safety.e_stop
@@ -63,7 +65,7 @@ Rectangle {
     readonly property string robotStatus: primaryRobot ? primaryRobot.status : "OFFLINE"
     readonly property bool robotOnline: primaryRobot
                                         ? Boolean(robotsOnline[primaryRobot.name]) : false
-    // Selected but disconnected -- telemetry below is frozen at its last received value.
+    // The selected robot is disconnected; the telemetry below keeps its last received value.
     readonly property bool offline: !!primaryRobot && !robotOnline
     readonly property real lastRx: primaryRobot
                                     ? Number((telemetry[primaryRobot.name] || {}).last_rx || 0) : 0
@@ -571,7 +573,7 @@ Rectangle {
                         RowLayout {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
-                            // Last-known values, not live -- dim them while disconnected.
+                            // Dim the last known values while the robot is disconnected.
                             opacity: root.offline ? 0.5 : 1.0
                             // Limit column spacing to the panel width.
                             spacing: Math.max(10, Math.min(32 * root.uiScale, telemetryPanel.width * 0.09))
@@ -675,6 +677,14 @@ Rectangle {
                                     Layout.fillWidth: true; elide: Text.ElideRight
                                     text: root.hasTele ? root.operatingMode : "—"
                                     color: root.operatingMode === "MANUAL" ? Theme.warn : Theme.text
+                                    font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true
+                                }
+                                Text { text: "CHARGING"; color: Theme.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }
+                                Text {
+                                    Layout.fillWidth: true; elide: Text.ElideRight
+                                    text: !root.hasTele ? "—" : (root.charging ? "⚡ YES" : "NO")
+                                          + (root.hasTele && root.chargingAction ? " · " + root.chargingAction : "")
+                                    color: root.charging ? Theme.success : Theme.text
                                     font.family: fontMono; font.pixelSize: 13 * root.uiScale; font.bold: true
                                 }
                                 Text { text: "SAFETY"; color: Theme.textDim; font.pixelSize: 10 * root.uiScale; font.bold: true }

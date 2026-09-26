@@ -21,7 +21,7 @@ Rectangle {
     property string selectedRobotName: ""
     property url robotIconSource: ""
     property var robotIconUrls: ({})   // robot name -> icon url; falls back to robotIconSource
-    // Scales with the map panel like labelScale, so the marker does not keep a fixed pixel size.
+    // Marker size scales with the map panel, like labelScale.
     readonly property real robotMarkerSize: 46 * labelScale
 
     function iconForRobot(name) {
@@ -791,7 +791,7 @@ Rectangle {
                             PauseAnimation { duration: 200 }
                         }
                     }
-                    // Offline is routine, not a fault: muted blue-gray, keeping red for real emergencies.
+                    // Offline robots are drawn in muted blue-gray; red is kept for emergencies.
                     Rectangle {
                         visible: !robotMarker.online && robotMarker.selected
                         x: -width / 2; y: -height / 2
@@ -1375,10 +1375,10 @@ Rectangle {
             }
         }
         function nameFieldPrefill(n, c) {
-            // Dialog resets its own fields onOpened before this runs, so set after.
+            // Set the fields after open(), because the dialog resets them when it opens.
             Qt.callLater(function() {
                 if (contentItem && contentItem.children) {
-                    // Fields are private to GraphPromptDialog; use its own API instead.
+                    // Set the fields through the properties of GraphPromptDialog.
                 }
             })
         }

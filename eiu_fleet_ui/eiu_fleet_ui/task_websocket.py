@@ -28,7 +28,7 @@ def bind_address(uri: str, override: str | None = None) -> QHostAddress:
     address = QHostAddress(host)
     if not address.isNull():
         return address
-    # A host name says which machine the adapter reaches, not which of our interfaces to use.
+    # A host name names the machine the adapter connects to, not a local interface, so listen on all interfaces.
     return QHostAddress(QHostAddress.SpecialAddress.Any)
 
 

@@ -125,8 +125,7 @@ class RosBridge(QObject):
         self._workcell_wait: dict[str, dict] = {}
         self._workcells_json = json.dumps({"dispensers": [], "ingestors": []})
 
-        # Per-robot task id, seeded from the reloaded cache (newest first,
-        # so the first match per robot wins).
+        # Per-robot task id, seeded from the reloaded cache (newest first, so the first match per robot wins).
         self._robot_last_task_id: dict[str, str] = {}
         for t in self._tasks:
             robot = t.get("robot", "—")
@@ -672,7 +671,7 @@ class RosBridge(QObject):
                             task["robot"] = robot_name; updated = True
                         updated |= set_state(task, state_label, "api")
                         updated |= set_estimated_end(task, expected_end)
-                        # A stale bidding/planning error does not survive the task finishing.
+                        # A completed or cancelled task shows no bidding or planning error.
                         if state_label in ("completed", "cancelled") and task.get("error"):
                             task["error"] = ""
                             updated = True
@@ -734,8 +733,8 @@ class RosBridge(QObject):
                     task["robot"] = robot_name
                     updated = True
 
-                # RMF keeps every bidding/planning error task_id ever hit, for its whole
-                # lifetime -- stale once a robot has actually been assigned to run it.
+                # RMF keeps the bidding and planning errors of a task for its whole lifetime;
+                # they are cleared once a robot is assigned.
                 has_robot = bool(robot_name) or task.get("robot", "—") != "—"
                 if has_robot:
                     error_text = ""
