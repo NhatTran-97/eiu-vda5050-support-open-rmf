@@ -17,6 +17,17 @@ class async_client;
 namespace vda5050_adapter {
 
 /**
+ * @brief TLS settings of the broker connection.
+ */
+struct MqttTls {
+  bool        enabled{false};
+  std::string ca_file;              ///< PEM CA certificates of the broker; empty uses the system store
+  std::string client_cert;          ///< PEM client certificate, set together with client_key
+  std::string client_key;
+  bool        verify_hostname{true};  ///< the broker certificate must name the host
+};
+
+/**
  * @brief Configuration for the MQTT connection.
  */
 struct MqttConfig {
@@ -30,6 +41,7 @@ struct MqttConfig {
   int         reconnect_delay_max{30};  ///< seconds
   bool        clean_session{false};
   int         mqtt_version{4};          ///< 3=MQTT 3.1, 4=MQTT 3.1.1, 5=MQTT 5.0
+  MqttTls     tls;
 
   // Last Will (used for CONNECTIONBROKEN)
   std::string will_topic;

@@ -42,8 +42,7 @@ const char* status_name(vda5050::ActionStatus status)
   }
 }
 
-// Validates the ActionStatus lifecycle: WAITING -> INITIALIZING -> RUNNING
-// -> FINISHED|FAILED, with PAUSED reachable from and back to
+// Validates the ActionStatus lifecycle: WAITING -> INITIALIZING -> RUNNING -> FINISHED|FAILED, with PAUSED reachable from and back to
 // INITIALIZING/RUNNING. FINISHED/FAILED are terminal.
 bool is_valid_status_transition(vda5050::ActionStatus from, vda5050::ActionStatus to) {
   if (from == vda5050::ActionStatus::FINISHED || from == vda5050::ActionStatus::FAILED) {

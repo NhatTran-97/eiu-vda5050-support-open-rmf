@@ -380,11 +380,13 @@ struct adl_serializer<vda5050::Order> {
 
 template<>
 struct adl_serializer<vda5050::InstantActions> {
-  static void to_json(json& j, const vda5050::InstantActions& ia) {
+  static void to_json(json& j, const vda5050::InstantActions& ia) 
+  {
     j = ia.header;
     j["actions"] = ia.actions;
   }
-  static void from_json(const json& j, vda5050::InstantActions& ia) {
+  static void from_json(const json& j, vda5050::InstantActions& ia) 
+  {
     ia.header = j.get<vda5050::Header>();
     j.at("actions").get_to(ia.actions);
   }
@@ -405,7 +407,8 @@ struct adl_serializer<vda5050::NodeState> {
     if (!ns.node_description.empty())  j["nodeDescription"] = ns.node_description;
     if (ns.node_position.has_value())  j["nodePosition"]    = ns.node_position.value();
   }
-  static void from_json(const json& j, vda5050::NodeState& ns) {
+  static void from_json(const json& j, vda5050::NodeState& ns) 
+  {
     j.at("nodeId").get_to(ns.node_id);
     j.at("sequenceId").get_to(ns.sequence_id);
     j.at("released").get_to(ns.released);
@@ -825,10 +828,10 @@ struct adl_serializer<vda5050::MaxStringLens> {
   }
 };
 
-// NOTE: VDA5050 §9.4 uses dot-notation as literal JSON key names inside maxArrayLens,
-// e.g. the key is the string "order.nodes", NOT a nested object.
-// The VDA_TO_OPT / VDA_FROM_OPT macros stringify to #key, so we must use the exact
-// identifier that matches the desired JSON key — we write it manually here.
+// VDA5050 §9.4 uses dot-notation as literal JSON key names inside maxArrayLens,
+// e.g. the key is the string "order.nodes", not a nested object. The VDA_TO_OPT / VDA_FROM_OPT
+// macros stringify to #key, so each field below is written out manually with its exact
+// dotted key name instead of using the macros.
 template<>
 struct adl_serializer<vda5050::MaxArrayLens> {
   static void to_json(json& j, const vda5050::MaxArrayLens& m) {
@@ -979,6 +982,9 @@ struct adl_serializer<vda5050::Factsheet> {
     j["physicalParameters"] = f.physical_parameters;
     j["protocolLimits"]     = f.protocol_limits;
     j["protocolFeatures"]   = f.protocol_features;
+    // Required objects whose members are all optional; this AGV declares none of them.
+    j["agvGeometry"]        = json::object();
+    j["loadSpecification"]  = json::object();
   }
   static void from_json(const json& j, vda5050::Factsheet& f) {
     f.header = j.get<vda5050::Header>();

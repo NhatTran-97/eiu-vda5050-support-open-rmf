@@ -212,6 +212,21 @@ if(BUILD_TESTING)
       std_msgs
       vda5050_msgs
     )
+
+    # Published messages checked against the official VDA5050 2.1 JSON schemas (needs python3-jsonschema).
+    set(_schema_samples ${CMAKE_CURRENT_BINARY_DIR}/schema_samples)
+    ament_add_gtest(test_schema_samples test/test_schema_samples.cpp SKIP_LINKING_MAIN_LIBRARIES
+      ENV VDA5050_SCHEMA_SAMPLES=${_schema_samples})
+    target_link_libraries(test_schema_samples ${PROJECT_NAME}_core gtest)
+    target_compile_definitions(test_schema_samples PRIVATE
+      VDA5050_CLIENT_PARAMS_FILE="${CMAKE_CURRENT_SOURCE_DIR}/config/vda5050_params.yaml")
+    ament_target_dependencies(test_schema_samples rclcpp rclcpp_action std_msgs vda5050_msgs)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME test_vda5050_schemas
+      COMMAND ${Python3_EXECUTABLE} ${VDA5050_FULL_CONTROL_SOURCE_DIR}/test/validate_schemas.py
+              ${VDA5050_FULL_CONTROL_SOURCE_DIR}/test/schemas/vda5050_2.1 ${_schema_samples})
+    set_tests_properties(test_schema_samples PROPERTIES FIXTURES_SETUP vda5050_schema_samples)
+    set_tests_properties(test_vda5050_schemas PROPERTIES FIXTURES_REQUIRED vda5050_schema_samples SKIP_RETURN_CODE 77)
   else()
     message(STATUS "[vda5050_client_adapter] vda5050_fleet_adapter_full_control sources not found "
                    "in ${VDA5050_FULL_CONTROL_SOURCE_DIR} -- test_full_control_compat skipped")

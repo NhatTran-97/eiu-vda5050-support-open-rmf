@@ -83,6 +83,23 @@ public:
       conn_builder.user_name(config_.username).password(config_.password);
     }
 
+    if (config_.tls.enabled)
+    {
+      mqtt::ssl_options ssl;
+      if (!config_.tls.ca_file.empty())
+      {
+        ssl.set_trust_store(config_.tls.ca_file);
+      }
+      if (!config_.tls.client_cert.empty())
+      {
+        ssl.set_key_store(config_.tls.client_cert);
+        ssl.set_private_key(config_.tls.client_key);
+      }
+      ssl.set_enable_server_cert_auth(true);
+      ssl.set_verify(config_.tls.verify_hostname);
+      conn_builder.ssl(ssl);
+    }
+
     // Last Will (CONNECTIONBROKEN for VDA5050)
     if (!config_.will_topic.empty()) 
     {
@@ -100,8 +117,22 @@ public:
   // Stop Paho callbacks before any member they use is destroyed.
   ~Impl()
   {
-    if (client_) client_->disable_callbacks();
+    stop_callbacks();
     client_.reset();
+  }
+
+  // Stop Paho callbacks; false while Paho refuses it during a connect attempt.
+  bool stop_callbacks() noexcept
+  {
+    if (!client_) return true;
+    try
+    {
+      client_->disable_callbacks();
+      return true;
+    } catch (const mqtt::exception&)
+    {
+      return false;
+    }
   }
 
   // ─── mqtt::callback interface ──────────────────────────────────────────────
@@ -198,8 +229,7 @@ public:
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   // Check if MQTT topic filter (filter, with +/* wildcards) matches topic string (topic).
-  static bool topic_matches(const std::string& filter,
-                             const std::string& topic)
+  static bool topic_matches(const std::string& filter, const std::string& topic)
   {
     // Simple iterative matcher
     size_t fi = 0, ti = 0;
@@ -239,8 +269,12 @@ MqttClient::MqttClient(const MqttConfig& config)
 // Clean up: stop callbacks and reconnect attempts, then disconnect.
 MqttClient::~MqttClient()
 {
-  impl_->client_->disable_callbacks();
+  const bool stopped = impl_->stop_callbacks();
   disconnect(3000);
+  if (!stopped)
+  {
+    impl_->stop_callbacks();
+  }
 }
 
 // Connect to broker and register connection callback (on_connected) to be invoked on state changes.
@@ -255,8 +289,7 @@ void MqttClient::connect(ConnectionCallback on_connected)
     impl_->client_->connect(impl_->conn_opts_, nullptr, *impl_);
   } catch (const mqtt::exception& ex)
   {
-    throw std::runtime_error(
-      std::string("[MqttClient] connect() failed: ") + ex.what());
+    throw std::runtime_error(std::string("[MqttClient] connect() failed: ") + ex.what());
   }
 }
 

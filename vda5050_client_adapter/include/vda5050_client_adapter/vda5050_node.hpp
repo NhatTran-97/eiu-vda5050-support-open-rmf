@@ -109,13 +109,15 @@ public:
    */
   ~VDA5050Node() override;
 
+  // Factsheet built from the parameters, as published on the factsheet topic.
+  vda5050::Factsheet build_factsheet_from_params() const;
+
 private:
   // ── Initialization ─────────────────────────────────────────────────────────
   void declare_and_load_parameters();
   void setup_mqtt();
   void setup_ros_interfaces();
   void teardown_mqtt();
-  vda5050::Factsheet build_factsheet_from_params() const;
 
   // ── MQTT topic factory ─────────────────────────────────────────────────────
   std::string make_topic(const std::string& suffix) const;
@@ -239,6 +241,7 @@ private:
   std::string client_id_;
   std::string username_;
   std::string password_;
+  MqttTls     tls_;
   std::string interface_name_;
   std::string manufacturer_;
   std::string serial_number_;

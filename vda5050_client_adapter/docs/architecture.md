@@ -1,10 +1,12 @@
 # VDA5050 Client Adapter — Architecture
 
-Architecture documentation for the `vda5050_client_adapter` package.
+This document describes the architecture of `vda5050_client_adapter`, the ROS 2 node that connects a VDA5050 master control to the robot's driver stack. It complements the package [README](../README.md), which covers the features, configuration and how to build and run it.
 
 ---
 
-## 1. Package-Level View
+## 1. System Architecture
+
+This section shows where the adapter sits between the master control and the robot, and which messages cross each boundary.
 
 ```mermaid
 flowchart LR
@@ -26,7 +28,9 @@ flowchart LR
 
 ---
 
-## 2. MQTT Topics (VDA5050 §9) — 6/6 Implemented
+## 2. MQTT Topics (VDA5050 §6.2)
+
+The adapter implements all six VDA5050 MQTT topics. The table lists the QoS and retained flag the node actually uses for each one.
 
 | Topic | Direction | QoS | Retained |
 |:---:|:---:|:---:|:---:|
@@ -46,7 +50,9 @@ position live between timer ticks.
 
 ---
 
-## 3. Internal Module Structure
+## 3. Component View
+
+This section shows the source files inside the package and which one uses which.
 
 ```mermaid
 flowchart TB
@@ -67,7 +73,7 @@ flowchart TB
         end
 
         subgraph Transport["Transport"]
-            Mqtt["MqttClient\nPaho MQTT C++\nAsync, reconnect, QoS"]
+            Mqtt["MqttClient\nPaho MQTT C++\nAsync, reconnect, QoS, TLS"]
         end
 
         Main --> Node
@@ -84,14 +90,13 @@ flowchart TB
     end
 ```
 
-`SM`, `Order`, and `Action` are siblings coordinated by `Node` — `AdapterStateMachine`
-does not call into `OrderManager`/`ActionManager` itself (no such reference exists in
-`adapter_state_machine.cpp`); `VDA5050Node` reads/drives all three independently
-(e.g. `take_pending_cancel()` on `SM` when `OrderManager` accepts a new order).
+`AdapterStateMachine`, `OrderManager` and `ActionManager` are independent of each other; `AdapterStateMachine` never calls into the other two. `VDA5050Node` reads and drives all three on its own, and connects them where a change in one must affect another. For example, when `OrderManager` accepts a new order, `VDA5050Node` calls `take_pending_cancel()` on `AdapterStateMachine` to resolve any cancel that was still pending.
 
 ---
 
 ## 4. State Machine
+
+This section shows the adapter's top-level runtime mode and what moves it from one mode to another.
 
 ```mermaid
 stateDiagram-v2
@@ -125,13 +130,13 @@ stateDiagram-v2
 | `ActionManager` | Action lifecycle, blocking |
 | `VDA5050Node` | ROS/MQTT callbacks → state-machine events, publishing |
 
-**Superseded cancel:** `cancelOrder` finishes when `!driving && !order_active` (a step goal in flight counts as active).
-A new order accepted while the cancel is pending finishes it at once (`take_pending_cancel()`, "superseded by new order"),
-since a master may send `cancelOrder` and the replacement order back to back while the robot still drives.
+A pending `cancelOrder` normally finishes once the robot is no longer driving and has no active order; a step goal still in flight counts as an active order. If a new order is accepted while that cancel is still pending, the adapter finishes the cancel at once instead of waiting, because a master control may send `cancelOrder` and its replacement order back to back while the robot is still driving.
 
 ---
 
-## 5. Runtime Integration View
+## 5. Runtime Data Flow
+
+This section shows the messages and ROS 2 interfaces the running node uses at once: MQTT to the master control, and topics and an action to the robot driver.
 
 ```mermaid
 flowchart LR
@@ -169,19 +174,21 @@ flowchart LR
 
 ## 5b. Threading and State Publishing
 
-- Paho delivers `order`, `instantActions` and connection events on its own thread. The
-  callbacks only queue the work (`VDA5050Node::post`); `event_timer_`
-  (`vda5050.event_loop_period`, default 10 ms) runs it on the executor thread.
-- Every handler therefore runs on the single executor thread: `OrderManager`,
-  `ActionManager`, `AdapterStateMachine` and the robot state are never changed concurrently,
-  and a `state` snapshot is always consistent.
-- `publish_state()` only marks the state as changed; the event tick publishes it once. A
-  `cancelOrder` that touches order, actions and errors produces one `state` message.
-- The periodic `state_timer_` and `visualization_timer_` publish directly.
-- Shutdown: `connection` `OFFLINE` is published, the MQTT client disconnects and is destroyed
-  before any other member, so no Paho callback can reach a destroyed object.
+This section explains which thread runs each part of the node, and when a `state` message is actually published.
+
+Paho delivers `order`, `instantActions` and connection events on its own thread, but that thread does not process them. Each callback only queues the work through `VDA5050Node::post`, and `event_timer_` runs the queued work on the executor thread, on a period set by `vda5050.event_loop_period` (10 ms by default).
+
+Because of this, every handler runs on the same single executor thread. `OrderManager`, `ActionManager`, `AdapterStateMachine` and the robot's own state are never changed by two threads at once, so a `state` snapshot is always consistent.
+
+`publish_state()` does not publish anything by itself. It only marks the state as changed, and the next event tick publishes it once. A `cancelOrder` that changes the order, its actions and its errors in the same tick still produces a single `state` message.
+
+The periodic `state_timer_` and `visualization_timer_` are the exception: they publish directly, on their own schedule, instead of going through this queue.
+
+On shutdown, the node publishes `connection` `OFFLINE`, then disconnects the MQTT client and destroys it before any other member is destroyed. This order guarantees that no Paho callback can run against an object that no longer exists.
 
 ## 5c. Route Execution (`~/navigate_to_node`)
+
+This section explains how the adapter drives the accepted route one node at a time, and how it reacts to the driver's result.
 
 The adapter is the only owner of the order. `drive()` runs after every executor tick and step
 result and keeps at most one `NavigateToNode` goal in flight:
@@ -202,32 +209,23 @@ Results are matched by a per-goal token; results of preempted goals are ignored.
 | `ABORTED` / `DROPPED` | Order dropped (local cancel on the robot, `initPosition`), no error |
 | `ABORTED` / `PREEMPTED`, `CANCELED`, other codes | No progress |
 
-`paused` = pause requested and no goal in flight, so `startPause` finishes once the driver has
-stopped. `~/driver_status` is latched; a new `session_id` means the driver restarted and lost
-the goal, which is sent again (a goal sent to the new session is kept).
+The adapter considers the robot paused once it has requested a pause and no goal is in flight, so `startPause` finishes only after the driver has actually stopped.
 
-Driver liveness: the driver offers `~/driver_status` with a manual-by-topic liveliness lease and
-republishes it every lease / 3. When the liveliness expires (driver gone or its executor stalled)
-the goal in flight is dropped, `driving` goes false and `driverConnectionError` (FATAL) is raised;
-no step is sent until the liveliness is back, which clears the error. Before the first step the
-adapter cancels all goals on the driver (`async_cancel_all_goals`), so a goal of a previous
-adapter process does not keep driving the robot.
+`~/driver_status` is a latched topic. A new `session_id` on it means the driver restarted and lost the step goal that was in flight, so the adapter sends that goal again to the new session.
 
-The subscription requests liveliness `AUTOMATIC` with lease `vda5050.driver_status_max_lease`: Fast DDS
-reports liveliness changes only with a finite requested lease, and DDS matching needs the driver's
-offered lease to be no longer. Fast DDS does not report the loss of a writer in the same process, so
-detection relies on the driver running as its own process (the normal deployment).
+The driver publishes `~/driver_status` with a manual liveliness lease, and republishes it every third of that lease. If the lease expires, meaning the driver is gone or its executor stalled, the adapter drops the goal in flight, sets `driving` to false, and raises `driverConnectionError` as a FATAL error. No new step is sent until the liveliness comes back, at which point the adapter clears the error. Before sending its first step, the adapter also cancels every goal left on the driver, so a goal from a previous adapter process cannot keep driving the robot.
 
-Per-action commands (`PAUSE` / `RESUME` / `CANCEL` of one action: HARD dispatch, edge left,
-`cancel_all`) go on `~/action_command` (`vda5050_msgs/ActionCommand`).
+The adapter subscribes to `~/driver_status` with automatic liveliness and a lease of `vda5050.driver_status_max_lease`. A finite requested lease is required because Fast DDS only reports liveliness changes when one is set, and DDS matching requires the driver's offered lease to be no longer than this one. Fast DDS also cannot detect the loss of a writer in the same process, so this detection only works when the driver runs as its own process, which is the normal deployment.
 
-Local status for on-robot tools (`robot_local_ui`): `~/driving`, `~/paused` (latched `Bool`),
-`~/node_reached` (`NodeState`) and the failed step's `navigationError` on `~/error`. A driver
-`navigationError` naming an order that is not active is ignored, which also drops the adapter's own copy.
+Per-action commands, meaning `PAUSE`, `RESUME` or `CANCEL` of one action, are published on `~/action_command` (`vda5050_msgs/ActionCommand`). The adapter sends them for a HARD action dispatch, when an edge is left, and for `cancel_all`.
+
+The adapter also publishes local status that mirrors what MQTT carries to the master control: `~/driving` and `~/paused` as latched `Bool` topics, `~/node_reached` as `NodeState`, and the `navigationError` of a failed step on `~/error`. The adapter also subscribes to `~/error` for driver errors, and ignores a `navigationError` that names an order that is no longer active, so it does not read back its own message.
 
 ---
 
 ## 6. Order Flow
+
+This sequence shows what happens from the moment the master control publishes an order to the robot completing its route.
 
 ```mermaid
 sequenceDiagram
@@ -269,6 +267,8 @@ sequenceDiagram
 
 ## 7. Instant Action Flow
 
+This sequence shows how the adapter tells apart the instant actions it executes itself from the ones it forwards to the robot driver.
+
 ```mermaid
 sequenceDiagram
     participant MC as Master Control
@@ -287,12 +287,15 @@ sequenceDiagram
         Robot->>Node: step result, ~/driver_status driving=false
         Node->>SM: consume_ready_control_actions()
         Node->>AM: set_action_finished()
-    else External action
+    else Driver action (initPosition, startCharging, stopCharging, custom)
         AM-->>Node: execute callback
         Node->>Robot: ~/action_execute
         Robot->>Node: ~/action_state_feedback
         Node->>SM: on_action_blocking_changed(...)
         Node->>AM: set_action_running/finished/failed()
+        opt startCharging / stopCharging
+            Robot->>Node: ~/battery_state (charging)
+        end
     end
 
     Node->>MC: publish state
@@ -301,6 +304,8 @@ sequenceDiagram
 ---
 
 ## 8. Factsheet Flow (VDA5050 §9.4)
+
+This sequence shows when the adapter builds and publishes its factsheet, so the master control has it as soon as it subscribes.
 
 ```mermaid
 sequenceDiagram
@@ -318,9 +323,20 @@ sequenceDiagram
     MC->>MQTT: subscribe factsheet → receives retained immediately
 ```
 
+`protocolFeatures.agvActions` lists the types in `factsheet.supported_action_types`:
+
+| Action type | Scope | Blocking type | Executed by |
+|:---:|:---:|:---:|:---:|
+| `startPause`, `stopPause`, `cancelOrder`, `stateRequest`, `factsheetRequest` | INSTANT | NONE | adapter |
+| `initPosition` | INSTANT | NONE | driver |
+| `startCharging`, `stopCharging` | INSTANT | HARD | driver |
+| other types | INSTANT, NODE, EDGE | NONE, SOFT, HARD | driver |
+
 ---
 
 ## 9. Data Model (vda5050_types.hpp)
+
+This section lists the internal structs the adapter uses to represent the VDA5050 protocol, independent of JSON and ROS 2.
 
 | Struct | Description |
 |:---:|---|
@@ -341,62 +357,58 @@ sequenceDiagram
 
 ## 10. JSON Schema Compliance (VDA5050 v2.1.0)
 
-| Schema | Status |
-|:---:|:---:|
-| `order.schema.json` | ✅ Compliant |
-| `instantActions.schema.json` | ✅ Compliant |
-| `state.schema.json` | ✅ Compliant |
-| `visualization.schema.json` | ✅ Compliant |
-| `connection.schema.json` | ✅ Compliant |
-| `factsheet.schema.json` | ✅ Compliant |
+`test_vda5050_schemas` validates the messages this adapter publishes against the official schemas
+(`../vda5050_fleet_adapter_full_control/test/schemas/vda5050_2.1`):
 
-Key implementation notes:
-- `maxArrayLens` uses dot-notation keys per §9.4: `"order.nodes"`, `"state.errors"`
-- `std::optional<T>` custom serializer — absent fields are omitted from JSON output
-- `agvActions` includes required `resultDescription` and `blockingTypes` array fields
+| Message | Checked cases |
+|:---:|---|
+| `state` | idle; driving with node, edge and action states, errors, information and loads; manual mode with eStop and no position |
+| `connection` | `ONLINE`, `OFFLINE`, `CONNECTIONBROKEN` |
+| `visualization` | position and velocity; header only |
+| `factsheet` | built by `build_factsheet_from_params()` from `config/vda5050_params.yaml` |
+
+A few implementation details matter for schema compliance:
+- `maxArrayLens` uses the dot-notation keys of §9.4, such as `"order.nodes"` and `"state.errors"`, as literal JSON keys.
+- A custom serializer for `std::optional<T>` omits an absent field from the JSON output instead of writing `null`.
+- `agvGeometry` and `loadSpecification` are required objects whose members are all optional, so the adapter sends them as empty objects.
+- `timing.minOrderInterval` and `timing.minStateInterval` are both set to `vda5050.event_loop_period`, since the adapter takes an order and publishes a changed state at most once per event tick.
+- The published 2.1.0 `factsheet.schema` puts the `blockingTypes` enum on the array instead of on its items; the validator corrects this before checking a factsheet against it.
 
 ---
 
 ## 11. OrderManager — Order Updates
 
-An update (same `orderId`, higher `orderUpdateId`) must start at the **base end**:
+This section explains where an order update may start, and what strict mode adds to accepting one.
 
-1. the last remaining released node, or
-2. the last traversed node once the base is used up (the horizon may still hold nodes).
+An order update, meaning the same `orderId` with a higher `orderUpdateId`, must start at the base end: either the last remaining released node, or the last traversed node once the base is used up. Outside strict mode, the adapter also accepts an update that starts at the last horizon node, keeping the horizon before it. An update also reactivates an order that had already finished.
 
-Outside strict mode an update starting at the **last horizon node** is also accepted; the
-horizon before it is kept. An update of a finished order makes it active again.
+The adapter raises `newBaseRequest` once fewer than `vda5050.new_base_request_min_base_nodes` released nodes remain and the horizon still has nodes.
 
-`newBaseRequest` is raised when fewer than `vda5050.new_base_request_min_base_nodes` released
-nodes remain and the horizon is not empty.
-
-Strict mode (`vda5050.strict_mode`) adds structure validation (`validationError`), ignores a
-repeated `orderUpdateId`, reports a lower one as `orderUpdateError`, refuses a new `orderId`
-while an order is active and keeps `orderId`/`orderUpdateId` after `cancelOrder`.
+Strict mode adds structure validation through `validationError`, ignores a repeated `orderUpdateId`, reports a lower one as `orderUpdateError`, refuses a new `orderId` while an order is active, and keeps `orderId` and `orderUpdateId` after `cancelOrder`.
 
 ---
 
 ## 11b. OrderManager — Order Replacement
 
-Legacy mode: a new `orderId` replaces the active order, whatever route remains. Its first node must be the
-last traversed node, compared by `nodeId` (`sequenceId` restarts at 0 per order). Its first step preempts the goal
-in flight, so no progress of the replaced order is applied to it. Strict mode refuses a new `orderId` while an order
-is active.
+This section explains how the adapter switches to a completely new order outside strict mode.
+
+Outside strict mode, a new `orderId` replaces the active order, whatever route still remains. Its first node must be the last traversed node, compared by `nodeId`, because `sequenceId` restarts at 0 for each order. Its first step preempts the goal in flight, so no progress made on the replaced order carries over. Strict mode refuses a new `orderId` while an order is still active, so this replacement never happens there.
 
 ---
 
 ## 11c. Driver Telemetry
 
-`~/distance_since_last_node` (`std_msgs/Float64`) streams the AGV's real
-driven distance live; `REACHED` sets the exact value at the node.
+This section covers two driver topics that fall outside the request and response flows above.
 
-`~/operating_mode` (`std_msgs/String`, latched) comes from the bridge's `twist_mux`
-diagnostics: `AUTOMATIC` while Nav2/RMF drives, `MANUAL` while a joystick or keyboard
-override outranks it.
+`~/distance_since_last_node` streams the AGV's driven distance live, and `REACHED` sets its exact value once the robot reaches the node.
+
+`~/operating_mode` comes from the bridge's `twist_mux` diagnostics: `AUTOMATIC` while Nav2 or RMF drives the robot, `MANUAL` while a joystick or keyboard override takes priority.
 
 ---
 
 ## 12. ActionManager — Blocking Semantics
+
+This section explains how the three VDA5050 blocking types affect other actions and the route.
 
 | Blocking Type | Behavior |
 |:---:|---|
@@ -405,27 +417,32 @@ override outranks it.
 | `HARD` | Default: pauses running actions, runs alone, resumes them when finished. Strict: waits for running actions to end; later actions wait for it; no step goal while it runs |
 
 Dispatch rules:
-- Control actions (`cancelOrder`, `startPause`, `stopPause`, `stateRequest`, `factsheetRequest`) run at once and neither block nor get blocked
-- HARD action running → no other action dispatched
-- `dispatch_paused_` = true → only instant actions dispatched
-- Order actions → not dispatched until node/edge trigger is ready
-- At most `vda5050.max_finished_instant_actions` finished instant actions stay in `actionStates`
+- Control actions (`cancelOrder`, `startPause`, `stopPause`, `stateRequest`, `factsheetRequest`) run at once; they neither block other actions nor get blocked by them.
+- While a HARD action is running, no other action is dispatched.
+- While `dispatch_paused_` is set, only instant actions are dispatched.
+- An order action is not dispatched until its node or edge trigger is ready.
+- `actionStates` keeps at most `vda5050.max_finished_instant_actions` finished instant actions.
 
 ---
 
-## 13. Test Coverage — 217 Tests
+## 13. Test Coverage
 
-| Suite | Tests | Coverage |
-|:---:|:---:|---|
-| `test_adapter_state_machine` | 5 | Top-level mode transitions, control confirmations, fault/shutdown, pending-action supersede, driving flag |
-| `test_order_manager` | 59 | Accept, stitch, newBaseRequest, cancel, reject cases, order replacement, next step and progress, strict mode |
-| `test_action_manager` | 39 | NONE/SOFT/HARD blocking, control actions, sequential HARD, pause/resume/cancel, HARD-wait timeout, instant action cap |
-| `test_converters` | 50 | JSON round-trips, schema compliance, strict enums, ROS↔internal |
-| `test_full_control_compat` | 64 | Wire compatibility with `vda5050_fleet_adapter_full_control` (its builders/parsers), live node + fake `NavigateToNode` server over MQTT in both modes |
+This section lists the gtest suites and what each one checks; see the package [README § Testing](../README.md#testing) for how to run them.
+
+| Suite | Coverage |
+|:---:|---|
+| `test_adapter_state_machine` | Top-level mode transitions, control confirmations, fault and shutdown handling, pending-action supersede, driving flag |
+| `test_order_manager` | Accept, stitch, `newBaseRequest`, cancel, reject cases, order replacement, next step and progress, strict mode |
+| `test_action_manager` | NONE/SOFT/HARD blocking, control actions, sequential HARD, pause/resume/cancel, HARD-wait timeout, instant action cap |
+| `test_converters` | JSON round-trips, schema compliance, strict enums, ROS 2 to internal conversion |
+| `test_full_control_compat` | Wire compatibility with `vda5050_fleet_adapter_full_control`'s own builders and parsers, a live node with a fake `NavigateToNode` server over MQTT in both modes, TLS with per-AGV accounts, and startup parameter checks |
+| `test_schema_samples` | Publishes sample messages for `test_vda5050_schemas` to check against the official VDA5050 2.1 JSON schemas |
 
 ---
 
 ## 14. Component Responsibilities
+
+This section is a quick reference for what each class or header owns, without repeating the diagrams above.
 
 | Component | Responsibility |
 |:---:|---|
@@ -441,6 +458,8 @@ Dispatch rules:
 ---
 
 ## 15. Reading Order
+
+A suggested order for reading the source, from the data it works with to the code that wires everything together.
 
 1. [config/vda5050_params.yaml](../config/vda5050_params.yaml)
 2. [include/vda5050_client_adapter/vda5050_types.hpp](../include/vda5050_client_adapter/vda5050_types.hpp)

@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     libpaho-mqttpp-dev \
     python3-colcon-common-extensions \
     mosquitto-clients \
+    python3-jsonschema \
     ros-jazzy-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 

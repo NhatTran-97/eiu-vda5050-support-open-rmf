@@ -43,6 +43,7 @@
 #include <vda5050_msgs/msg/action_command.hpp>
 #include <vda5050_msgs/msg/action_state.hpp>
 #include <vda5050_msgs/msg/agv_position.hpp>
+#include <vda5050_msgs/msg/battery_state.hpp>
 #include <vda5050_msgs/msg/driver_status.hpp>
 #include <vda5050_msgs/msg/error.hpp>
 #include <vda5050_msgs/msg/node_state.hpp>
@@ -100,7 +101,7 @@ std::vector<fc::RouteWaypoint> route()
   std::vector<fc::RouteWaypoint> points;
   for (int i = 1; i <= 3; ++i)
   {
-    points.push_back({"wp" + std::to_string(i), {1.0 * i, 0.0, 0.0}, std::nullopt});
+    points.push_back({"wp" + std::to_string(i), {1.0 * i, 0.0, 0.0}, std::nullopt, ""});
   }
   return points;
 }
@@ -300,12 +301,108 @@ TEST(NodeLifecycleTest, ShutdownWhileTheBrokerIsUnreachableIsClean)
   SUCCEED();
 }
 
+TEST(NodeLifecycleTest, NodeDestroyedDuringTheFirstConnectAttemptIsClean)
+{
+  for (int round = 0; round < 3; ++round)
+  {
+    rclcpp::NodeOptions options;
+    options.use_global_arguments(false);
+    options.arguments({"--ros-args", "-r", "__ns:=/early_" + std::to_string(::getpid())});
+    options.parameter_overrides({{"mqtt.broker_url", "tcp://127.0.0.1:1"},
+                                 {"vda5050.serial_number", "early"}});
+    auto node = std::make_shared<vda5050_adapter::VDA5050Node>(options);
+    node.reset();
+  }
+  SUCCEED();
+}
+
 TEST(NodeLifecycleTest, InvalidParameterIsRejectedAtStartup)
 {
   rclcpp::NodeOptions options;
   options.use_global_arguments(false);
   options.parameter_overrides({{"vda5050.event_loop_period", 0.0}});
   EXPECT_THROW(vda5050_adapter::VDA5050Node node(options), std::invalid_argument);
+}
+
+TEST(NodeLifecycleTest, InconsistentTlsAndCredentialSettingsAreRejectedAtStartup)
+{
+  ::unsetenv("VDA5050_TEST_UNSET_VARIABLE");
+  const std::vector<std::vector<rclcpp::Parameter>> bad = {
+    {{"mqtt.tls.enabled", true}},
+    {{"mqtt.broker_url", "ssl://127.0.0.1:8883"}},
+    {{"mqtt.broker_url", "ssl://127.0.0.1:8883"}, {"mqtt.tls.enabled", true}, {"mqtt.tls.ca_file", "/nonexistent/ca.crt"}},
+    {{"mqtt.broker_url", "ssl://127.0.0.1:8883"}, {"mqtt.tls.enabled", true}, {"mqtt.tls.client_cert", "/etc/hostname"}},
+    {{"mqtt.password", "${VDA5050_TEST_UNSET_VARIABLE}"}},
+    {{"mqtt.username", "${UNCLOSED"}},
+  };
+  for (const auto& overrides : bad)
+  {
+    rclcpp::NodeOptions options;
+    options.use_global_arguments(false);
+    options.parameter_overrides(overrides);
+    EXPECT_THROW(vda5050_adapter::VDA5050Node node(options), std::invalid_argument) << overrides.front().get_name();
+  }
+}
+
+// Needs a broker from fleet_bringup/broker/setup_broker.py with ROBOTIS/0001 on interface AMR.
+TEST(TlsCompat, ClientTalksToTheMasterOverTlsWithItsOwnAccount)
+{
+  const char* broker = std::getenv("VDA5050_TEST_TLS_BROKER");
+  const char* ca = std::getenv("VDA5050_TEST_TLS_CA");
+  const char* master_password = std::getenv("VDA5050_TEST_TLS_MASTER_PASSWORD");
+  if (!broker || !ca || !master_password || !std::getenv("VDA5050_TEST_TLS_AGV_PASSWORD"))
+  {
+    GTEST_SKIP() << "set VDA5050_TEST_TLS_BROKER, _CA, _MASTER_PASSWORD and _AGV_PASSWORD to run this test";
+  }
+
+  vda5050_adapter::MqttConfig master_config;
+  master_config.broker_url = broker;
+  master_config.client_id = "tls_master_" + std::to_string(::getpid());
+  master_config.username = "fleet_master";
+  master_config.password = master_password;
+  master_config.clean_session = true;
+  master_config.tls.enabled = true;
+  master_config.tls.ca_file = ca;
+  vda5050_adapter::MqttClient master(master_config);
+  std::mutex mutex;
+  std::vector<std::string> connections;
+  int states = 0;
+  master.subscribe("AMR/v2/ROBOTIS/0001/connection", 1, [&](const vda5050_adapter::MqttMessage& m) {
+    std::lock_guard<std::mutex> l(mutex);
+    connections.push_back(json::parse(m.payload).value("connectionState", ""));
+  });
+  master.subscribe("AMR/v2/ROBOTIS/0001/state", 0, [&](const vda5050_adapter::MqttMessage&) {
+    std::lock_guard<std::mutex> l(mutex);
+    ++states;
+  });
+  master.connect();
+  ASSERT_TRUE(wait_until([&] { return master.is_connected(); })) << "the master could not connect over TLS";
+
+  rclcpp::NodeOptions options;
+  options.use_global_arguments(false);
+  options.arguments({"--ros-args", "-r", "__ns:=/tls_" + std::to_string(::getpid())});
+  options.parameter_overrides({{"mqtt.broker_url", std::string(broker)},
+                               {"mqtt.username", "ROBOTIS_0001"},
+                               {"mqtt.password", "${VDA5050_TEST_TLS_AGV_PASSWORD}"},
+                               {"mqtt.tls.enabled", true},
+                               {"mqtt.tls.ca_file", std::string(ca)},
+                               {"vda5050.interface_name", "AMR"},
+                               {"vda5050.manufacturer", "ROBOTIS"},
+                               {"vda5050.serial_number", "0001"},
+                               {"vda5050.state_publish_interval", 1.0}});
+  auto node = std::make_shared<vda5050_adapter::VDA5050Node>(options);
+  rclcpp::executors::SingleThreadedExecutor executor;
+  executor.add_node(node);
+  const auto online = [&] {
+    std::lock_guard<std::mutex> l(mutex);
+    return std::find(connections.begin(), connections.end(), "ONLINE") != connections.end() && states > 0;
+  };
+  const auto until = std::chrono::steady_clock::now() + 10s;
+  while (!online() && std::chrono::steady_clock::now() < until) executor.spin_some(50ms);
+  executor.remove_node(node);
+  node.reset();
+  master.disconnect();
+  EXPECT_TRUE(online()) << "no ONLINE connection and state from the client over TLS";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -445,6 +542,7 @@ public:
     mode_pub_ = node_->create_publisher<std_msgs::msg::String>(base + "operating_mode", rclcpp::QoS(1).transient_local());
     feedback_pub_ = node_->create_publisher<vda5050_msgs::msg::ActionState>(base + "action_state_feedback", rclcpp::QoS(10));
     position_pub_ = node_->create_publisher<vda5050_msgs::msg::AgvPosition>(base + "agv_position", rclcpp::QoS(10));
+    battery_pub_ = node_->create_publisher<vda5050_msgs::msg::BatteryState>(base + "battery_state", rclcpp::QoS(10));
     publish_status();
   }
 
@@ -471,6 +569,10 @@ public:
   void position(double x)
   {
     vda5050_msgs::msg::AgvPosition m; m.x = x; m.map_id = "map"; m.position_initialized = true; position_pub_->publish(m);
+  }
+  void battery(double charge, bool charging)
+  {
+    vda5050_msgs::msg::BatteryState m; m.battery_charge = charge; m.charging = charging; battery_pub_->publish(m);
   }
 
   // Report the incoming edge of the active step as entered.
@@ -597,6 +699,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr mode_pub_;
   rclcpp::Publisher<vda5050_msgs::msg::ActionState>::SharedPtr feedback_pub_;
   rclcpp::Publisher<vda5050_msgs::msg::AgvPosition>::SharedPtr position_pub_;
+  rclcpp::Publisher<vda5050_msgs::msg::BatteryState>::SharedPtr battery_pub_;
   mutable std::mutex mutex_;
   std::shared_ptr<StepHandle> active_;
   std::vector<std::shared_ptr<StepHandle>> lost_;
@@ -678,7 +781,8 @@ protected:
       {"vda5050.state_publish_interval", 1.0},
       {"vda5050.max_finished_instant_actions", int64_t{20}},
       {"factsheet.supported_action_types", std::vector<std::string>{
-        "startPause", "stopPause", "cancelOrder", "stateRequest", "factsheetRequest", "initPosition"}},
+        "startPause", "stopPause", "cancelOrder", "stateRequest", "factsheetRequest", "initPosition",
+        "startCharging", "stopCharging"}},
     });
     client_ = std::make_shared<vda5050_adapter::VDA5050Node>(options);
     executor_->add_node(client_);
@@ -1272,6 +1376,42 @@ TEST_P(LiveCompat, FactsheetRequestRepublishesTheFactsheet)
     return action_status(s, request.action_id) == "FINISHED";
   }).has_value());
   EXPECT_TRUE(bridge_->executed().empty());
+}
+
+TEST_P(LiveCompat, ChargingActionsReachTheDriverAndChargingIsReported)
+{
+  start_client();
+  ASSERT_TRUE(wait_until([&] { return !master_->factsheets().empty(); }));
+  const fc::ParsedFactsheet factsheet(master_->factsheets().back());
+  EXPECT_EQ(factsheet.blocking_type_for("startCharging", "NONE"), "HARD");
+  EXPECT_EQ(factsheet.blocking_type_for("stopCharging", "NONE"), "HARD");
+
+  const auto executed = [&](const std::string& type, const std::string& id) {
+    const auto all = bridge_->executed();
+    return std::any_of(all.begin(), all.end(), [&](const auto& a) { return a.action_type == type && a.action_id == id; });
+  };
+
+  const auto start = fc::build_instant_action(30, manufacturer_, serial_, "startCharging", json::object(), "HARD");
+  master_->send_instant(start.message);
+  ASSERT_TRUE(wait_until([&] { return executed("startCharging", start.action_id); }));
+  bridge_->feedback(start.action_id, "FINISHED");
+  bridge_->battery(80.0, true);
+  const auto charging = master_->wait_state([&](const json& s) {
+    return action_status(s, start.action_id) == "FINISHED" && s["batteryState"].value("charging", false);
+  });
+  ASSERT_TRUE(charging.has_value());
+  EXPECT_TRUE(fc::ParsedState(*charging).charging);
+
+  const auto stop = fc::build_instant_action(31, manufacturer_, serial_, "stopCharging", json::object(), "HARD");
+  master_->send_instant(stop.message);
+  ASSERT_TRUE(wait_until([&] { return executed("stopCharging", stop.action_id); }));
+  bridge_->feedback(stop.action_id, "FINISHED");
+  bridge_->battery(80.0, false);
+  const auto stopped = master_->wait_state([&](const json& s) {
+    return action_status(s, stop.action_id) == "FINISHED" && !s["batteryState"].value("charging", true);
+  });
+  ASSERT_TRUE(stopped.has_value());
+  EXPECT_FALSE(fc::ParsedState(*stopped).charging);
 }
 
 TEST_P(LiveCompat, FailedStepIsReportedOnceAndDropsTheOrder)

@@ -91,8 +91,7 @@ OrderAcceptResult OrderManager::process_order(const vda5050::Order& order)
       {
         return OrderAcceptResult::rejected("orderError", "orderUpdateId must be greater than current (" + std::to_string(current_order_update_id_) + ")");
       }
-      return OrderAcceptResult::rejected("orderUpdateError",
-        "orderUpdateId " + std::to_string(order.order_update_id) + " is lower than the current " + std::to_string(current_order_update_id_));
+      return OrderAcceptResult::rejected("orderUpdateError", "orderUpdateId " + std::to_string(order.order_update_id) + " is lower than the current " + std::to_string(current_order_update_id_));
     }
     const auto result = validate_update(order);
     if (!result.accepted) return result;
@@ -482,8 +481,7 @@ OrderManager::validate_new_order(const vda5050::Order& order) const
   {
     return OrderAcceptResult::rejected("orderError", "Order '" + current_order_id_ + "' is still active");
   }
-  // A new order_id supersedes the active one: only the node the robot is standing on must match
-  // (sequence_id resets per order).
+  // A new order_id supersedes the active one: only the node the robot is standing on must match (sequence_id resets per order).
   if (!last_node_id_.empty() && order.nodes.front().node_id != last_node_id_)
   {
     return OrderAcceptResult::rejected("orderError",
@@ -493,8 +491,7 @@ OrderManager::validate_new_order(const vda5050::Order& order) const
 }
 
 // Validate order update (update): the first node must be the base end -- the last released node,
-// or the last traversed node once the base is used up. Outside strict mode the horizon end is
-// accepted as well.
+// or the last traversed node once the base is used up. Outside strict mode the horizon end is accepted as well.
 OrderAcceptResult
 OrderManager::validate_update(const vda5050::Order& update) const
 {
@@ -560,9 +557,7 @@ void OrderManager::apply_stitch(const vda5050::Order& update) {
   new_base_request_        = false;
 
   const auto& stitch = update.nodes.front();
-  const bool stitch_at_base_end =
-    remaining_base_nodes_.empty()
-      ? last_node_id_ == stitch.node_id && last_node_sequence_id_ == stitch.sequence_id : remaining_base_nodes_.back().node_id == stitch.node_id &&
+  const bool stitch_at_base_end =  remaining_base_nodes_.empty() ? last_node_id_ == stitch.node_id && last_node_sequence_id_ == stitch.sequence_id : remaining_base_nodes_.back().node_id == stitch.node_id &&
         remaining_base_nodes_.back().sequence_id == stitch.sequence_id;
 
   if (stitch_at_base_end)

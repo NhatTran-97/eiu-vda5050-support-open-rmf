@@ -5,8 +5,14 @@
     mqtt:
       broker_url: "tcp://localhost:1883"
       client_id:  ""   # empty = derived from identity
-      username:   ""
+      username:   ""   # ${VAR} reads the environment
       password:   ""
+      tls:
+        enabled: false               # true needs an ssl:// broker_url
+        ca_file: ""
+        client_cert: ""
+        client_key: ""
+        verify_hostname: true
 
     # ── VDA5050 AGV identity ────────────────────────────────────────────────
     # MQTT topic structure: {interface_name}/v2/{manufacturer}/{serial_number}/{topic}
@@ -58,3 +64,5 @@
         - "stateRequest"
         - "factsheetRequest"
         - "initPosition"
+        - "startCharging"
+        - "stopCharging"

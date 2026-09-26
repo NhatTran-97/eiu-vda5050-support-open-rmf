@@ -6,6 +6,8 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -80,6 +82,34 @@ bool same_step(const RouteStep& a, const RouteStep& b)
 void require(bool ok, const std::string& name, const std::string& rule)
 {
   if (!ok) throw std::invalid_argument("Parameter '" + name + "' must be " + rule);
+}
+
+// Replace each ${NAME} in text with the environment variable NAME; an unset variable is an error of parameter (name).
+std::string expand_environment(const std::string& text, const std::string& name)
+{
+  std::string out;
+  std::size_t pos = 0;
+  while (true)
+  {
+    const auto open = text.find("${", pos);
+    if (open == std::string::npos)
+    {
+      return out + text.substr(pos);
+    }
+    const auto close = text.find('}', open + 2);
+    require(close != std::string::npos, name, "free of an unclosed '${'");
+    const std::string variable = text.substr(open + 2, close - open - 2);
+    const char* value = variable.empty() ? nullptr : std::getenv(variable.c_str());  // NOLINT(concurrency-mt-unsafe)
+    require(value != nullptr, name, "free of unset environment variables ('" + variable + "')");
+    out += text.substr(pos, open - pos) + value;
+    pos = close + 1;
+  }
+}
+
+// Whether path names a file that can be opened for reading.
+bool readable_file(const std::string& path)
+{
+  return std::ifstream(path).good();
 }
 
 }  // namespace
@@ -170,6 +200,13 @@ void VDA5050Node::declare_and_load_parameters() {
   client_id_    = declare_parameter<std::string>("mqtt.client_id",    "");
   username_     = declare_parameter<std::string>("mqtt.username",     "");
   password_     = declare_parameter<std::string>("mqtt.password",     "");
+  tls_.enabled         = declare_parameter<bool>("mqtt.tls.enabled", false);
+  tls_.ca_file         = declare_parameter<std::string>("mqtt.tls.ca_file", "");
+  tls_.client_cert     = declare_parameter<std::string>("mqtt.tls.client_cert", "");
+  tls_.client_key      = declare_parameter<std::string>("mqtt.tls.client_key", "");
+  tls_.verify_hostname = declare_parameter<bool>("mqtt.tls.verify_hostname", true);
+  username_ = expand_environment(username_, "mqtt.username");
+  password_ = expand_environment(password_, "mqtt.password");
 
   // VDA5050 identity
   interface_name_  = declare_parameter<std::string>("vda5050.interface_name",  "TB3");
@@ -188,8 +225,7 @@ void VDA5050Node::declare_and_load_parameters() {
   // Min interval between the extra state republishes on_agv_position() triggers
   // between state_timer_'s regular ticks, throttled so a fast publisher can't flood MQTT.
   position_publish_min_interval_ =  declare_parameter<double>("vda5050.position_publish_min_interval", 1.0);
-  // Max wait for a HARD action's pause confirmation before ActionManager fails it
-  // instead of waiting indefinitely (see ActionManager::check_timeouts).
+  // Max wait for a HARD action's pause confirmation before ActionManager fails it instead of waiting indefinitely (see ActionManager::check_timeouts).
   hard_action_pause_timeout_ =  declare_parameter<double>("vda5050.hard_action_pause_timeout", 30.0);
   // Period of the executor tick that runs queued MQTT work and publishes a changed state.
   event_loop_period_ = declare_parameter<double>("vda5050.event_loop_period", 0.01);
@@ -201,6 +237,17 @@ void VDA5050Node::declare_and_load_parameters() {
   driver_status_max_lease_ = declare_parameter<double>("vda5050.driver_status_max_lease", 10.0);
 
   require(!broker_url_.empty(), "mqtt.broker_url", "non-empty");
+  const bool tls_url = broker_url_.rfind("ssl://", 0) == 0 || broker_url_.rfind("mqtts://", 0) == 0;
+  require(tls_url == tls_.enabled, "mqtt.broker_url", tls_.enabled ? "an ssl:// or mqtts:// URL while mqtt.tls.enabled is true" : "a tcp:// URL while mqtt.tls.enabled is false");
+  require(tls_.client_cert.empty() == tls_.client_key.empty(), "mqtt.tls.client_cert/client_key", "set together");
+  for (const auto& [key, path] : {std::pair<std::string, std::string>{"ca_file", tls_.ca_file}, {"client_cert", tls_.client_cert}, {"client_key", tls_.client_key}})
+  {
+    require(!tls_.enabled || path.empty() || readable_file(path), "mqtt.tls." + key, "a readable file");
+  }
+  if (!tls_.enabled && !password_.empty())
+  {
+    RCLCPP_WARN(get_logger(), "MQTT password set without TLS: it travels in clear text");
+  }
   require(!interface_name_.empty() && !manufacturer_.empty() && !serial_number_.empty(),
           "vda5050.interface_name/manufacturer/serial_number", "non-empty");
   require(state_publish_interval_ > 0.0, "vda5050.state_publish_interval", "> 0");
@@ -229,13 +276,16 @@ void VDA5050Node::declare_and_load_parameters() {
   declare_parameter<double>("factsheet.physical_parameters.acceleration_max", 1.0);
   declare_parameter<double>("factsheet.physical_parameters.deceleration_max", 2.0);
   declare_parameter<double>("factsheet.physical_parameters.height_min",      -1.0); // -1 = not set
-  declare_parameter<double>("factsheet.physical_parameters.height_max",      -1.0);
+  declare_parameter<double>("factsheet.physical_parameters.height_max",       1.0);
   declare_parameter<double>("factsheet.physical_parameters.width",            0.5);
   declare_parameter<double>("factsheet.physical_parameters.length",           0.8);
 
   // ── Factsheet: supported action types (used to build protocolFeatures) ────
   declare_parameter<std::vector<std::string>>( "factsheet.supported_action_types",
     std::vector<std::string>{"startPause", "stopPause", "cancelOrder", "stateRequest", "factsheetRequest"});
+
+  require(get_parameter("factsheet.physical_parameters.height_max").as_double() > 0.0,
+          "factsheet.physical_parameters.height_max", "> 0");
 
   // Build factsheet once here so it is ready before MQTT connects
   factsheet_ = build_factsheet_from_params();
@@ -254,6 +304,7 @@ void VDA5050Node::setup_mqtt()
   cfg.client_id     = client_id_;
   cfg.username      = username_;
   cfg.password      = password_;
+  cfg.tls           = tls_;
   cfg.clean_session = false;
 
   // Last Will → CONNECTIONBROKEN (VDA5050 §7.2)
@@ -379,8 +430,7 @@ void VDA5050Node::setup_ros_interfaces() {
   auto driver_status_qos = rclcpp::QoS(1).transient_local();
   if (driver_status_max_lease_ > 0.0) 
   {
-    driver_status_qos.liveliness(rclcpp::LivelinessPolicy::Automatic)
-      .liveliness_lease_duration(rclcpp::Duration::from_seconds(driver_status_max_lease_));
+    driver_status_qos.liveliness(rclcpp::LivelinessPolicy::Automatic).liveliness_lease_duration(rclcpp::Duration::from_seconds(driver_status_max_lease_));
   }
   rclcpp::SubscriptionOptions driver_status_options;
   driver_status_options.event_callbacks.liveliness_callback = [this](rclcpp::QOSLivelinessChangedInfo& info) 
@@ -409,31 +459,28 @@ void VDA5050Node::setup_ros_interfaces() {
   distance_since_last_node_sub_ = create_subscription<std_msgs::msg::Float64>("~/distance_since_last_node", rclcpp::QoS(10), std::bind(&VDA5050Node::on_distance_since_last_node, this, _1));
 
   // ── Timers ───────────────────────────────────────────────────────────────
-  event_timer_ = create_wall_timer(
-    std::chrono::duration<double>(event_loop_period_), [this]()
+  event_timer_ = create_wall_timer(std::chrono::duration<double>(event_loop_period_), [this]()
     {
       on_event_tick();
     });
 
   state_timer_ = create_wall_timer(
-    std::chrono::duration<double>(state_publish_interval_), [this]()
-    {
-      flush_state();
-    });
+  std::chrono::duration<double>(state_publish_interval_), [this]()
+  {
+    flush_state();
+  });
 
-  visualization_timer_ = create_wall_timer(
-    std::chrono::duration<double>(visualization_interval_),[this]()
-    {
-      publish_visualization();
-    });
+  visualization_timer_ = create_wall_timer(std::chrono::duration<double>(visualization_interval_),[this]()
+  {
+    publish_visualization();
+  });
 
-  action_timeout_timer_ = create_wall_timer(
-    std::chrono::seconds(1), [this]() {
-      const bool changed = action_manager_->check_timeouts(
-        std::chrono::steady_clock::now(),
-        std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+  action_timeout_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() 
+  {
+      const bool changed = action_manager_->check_timeouts(std::chrono::steady_clock::now(),std::chrono::duration_cast<std::chrono::steady_clock::duration>(
           std::chrono::duration<double>(hard_action_pause_timeout_)));
-      if (changed) {
+      if (changed) 
+      {
         sync_action_blocking();
         publish_state();
       }
@@ -471,9 +518,7 @@ void VDA5050Node::on_order_message(const MqttMessage& msg) {
   RCLCPP_INFO(get_logger(), "Order received: id=%s updateId=%u",order.order_id.c_str(), order.order_update_id);
 
   OrderAcceptResult result;
-  const bool replacing_active_order =
-    order.order_id != order_manager_->current_order_id() &&
-    order_manager_->has_active_order();
+  const bool replacing_active_order = order.order_id != order_manager_->current_order_id() && order_manager_->has_active_order();
   if (replacing_active_order && action_manager_->has_active_order_actions())
   {
     result = OrderAcceptResult::rejected("orderError", "New order cannot replace the active order while node/edge actions are still active");
@@ -490,8 +535,7 @@ void VDA5050Node::on_order_message(const MqttMessage& msg) {
   }
 
   if (!result.accepted) {
-    RCLCPP_WARN(get_logger(), "Order rejected (%s): %s",
-                result.error_type.c_str(), result.rejection_reason.c_str());
+    RCLCPP_WARN(get_logger(), "Order rejected (%s): %s",result.error_type.c_str(), result.rejection_reason.c_str());
     vda5050::Error err;
     err.error_type        = result.error_type.empty() ? "orderError" : result.error_type;
     err.error_level       = vda5050::ErrorLevel::WARNING;
@@ -653,7 +697,8 @@ bool VDA5050Node::handle_instant_action(const vda5050::Action& action) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Mark the state as changed; on_event_tick() publishes it once per tick.
-void VDA5050Node::publish_state() {
+void VDA5050Node::publish_state() 
+{
   state_dirty_ = true;
 }
 
@@ -741,6 +786,9 @@ vda5050::Factsheet VDA5050Node::build_factsheet_from_params() const {
   // ── protocolLimits: timing (from existing timing params) ───────────────────
   fs.protocol_limits.timing.default_state_interval   = state_publish_interval_;
   fs.protocol_limits.timing.visualization_interval   = visualization_interval_;
+  // Orders are taken and state changes published once per event tick.
+  fs.protocol_limits.timing.min_order_interval       = event_loop_period_;
+  fs.protocol_limits.timing.min_state_interval       = event_loop_period_;
 
   // ── protocolFeatures: agvActions ──────────────────────────────────────────
   // Built-in instant actions are always supported
@@ -756,6 +804,8 @@ vda5050::Factsheet VDA5050Node::build_factsheet_from_params() const {
     {"stateRequest",     "Trigger an immediate state message publication",        {"NONE"}},
     {"factsheetRequest", "Trigger an immediate factsheet publication",            {"NONE"}},
     {"initPosition",     "Initialize the AGV position on the map",               {"NONE"}},
+    {"startCharging",    "Start charging at a charging spot",                     {"HARD"}},
+    {"stopCharging",     "Stop charging before the next order",                   {"HARD"}},
   };
 
   auto action_types_param = get_parameter("factsheet.supported_action_types").as_string_array();
@@ -799,8 +849,7 @@ vda5050::Factsheet VDA5050Node::build_factsheet_from_params() const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Receive AGV position (msg): store and throttle state publishes to avoid broker flooding.
-void VDA5050Node::on_agv_position(
-  const vda5050_msgs::msg::AgvPosition::SharedPtr msg)
+void VDA5050Node::on_agv_position(const vda5050_msgs::msg::AgvPosition::SharedPtr msg)
 {
   agv_position_     = internal_from_ros(*msg);
   agv_position_set_ = true;
@@ -815,16 +864,14 @@ void VDA5050Node::on_agv_position(
 }
 
 // Receive AGV velocity (msg): store for visualization publication.
-void VDA5050Node::on_velocity(
-  const vda5050_msgs::msg::Velocity::SharedPtr msg)
+void VDA5050Node::on_velocity(const vda5050_msgs::msg::Velocity::SharedPtr msg)
 {
   velocity_     = internal_from_ros(*msg);
   velocity_set_ = true;
 }
 
 // Receive battery state (msg): store for state publication.
-void VDA5050Node::on_battery_state(
-  const vda5050_msgs::msg::BatteryState::SharedPtr msg)
+void VDA5050Node::on_battery_state(const vda5050_msgs::msg::BatteryState::SharedPtr msg)
 {
   battery_state_ = internal_from_ros(*msg);
 }
@@ -835,7 +882,8 @@ void VDA5050Node::on_driver_status(const vda5050_msgs::msg::DriverStatus::Shared
   if (!driver_session_.empty() && msg->session_id != driver_session_) {
     const bool lost = step_ && step_->session != msg->session_id;
     RCLCPP_WARN(get_logger(), "Driver restarted (session %s -> %s)%s", driver_session_.c_str(), msg->session_id.c_str(), lost ? " -- resending the active step" : "");
-    if (lost) {
+    if (lost) 
+    {
       step_.reset();
       sync_order_activity();
     }
@@ -846,7 +894,8 @@ void VDA5050Node::on_driver_status(const vda5050_msgs::msg::DriverStatus::Shared
   const bool changed = set_driver_driving(msg->driving);
   drive();
 
-  if (maybe_complete_pending_control_actions() || changed) {
+  if (maybe_complete_pending_control_actions() || changed) 
+  {
     publish_state();
   }
 }
@@ -857,7 +906,8 @@ void VDA5050Node::on_driver_liveliness(const rclcpp::QOSLivelinessChangedInfo& i
     if (!driver_lost_) return;
     driver_lost_ = false;
     RCLCPP_WARN(get_logger(), "Driver back");
-    if (!stale_goals_cleared_) {
+    if (!stale_goals_cleared_) 
+    {
       stale_goals_cancel_sent_ = false;
     }
     clear_errors_by_type(kDriverLostError);
@@ -867,8 +917,7 @@ void VDA5050Node::on_driver_liveliness(const rclcpp::QOSLivelinessChangedInfo& i
   if (driver_lost_ || info.alive_count_change >= 0) return;
 
   driver_lost_ = true;
-  RCLCPP_ERROR(get_logger(), "Driver lost: driver_status liveliness expired%s",
-               step_ ? " -- step in flight dropped" : "");
+  RCLCPP_ERROR(get_logger(), "Driver lost: driver_status liveliness expired%s", step_ ? " -- step in flight dropped" : "");
   step_.reset();
   set_driver_driving(false);
 
@@ -919,10 +968,10 @@ void VDA5050Node::on_action_state_feedback(
 // navigationError naming an order that is no longer active is stale and ignored (also this node's own copy).
 void VDA5050Node::on_errors(const vda5050_msgs::msg::Error::SharedPtr msg) {
   const auto error = internal_from_ros(*msg);
-  if (error.error_type == "navigationError") {
+  if (error.error_type == "navigationError") 
+  {
     const auto order_id = error_reference(error, "orderId");
-    if (!order_id.empty() &&
-        (!order_manager_->has_active_order() || order_id != order_manager_->current_order_id())) {
+    if (!order_id.empty() && (!order_manager_->has_active_order() || order_id != order_manager_->current_order_id())) {
       return;
     }
   }
@@ -931,22 +980,22 @@ void VDA5050Node::on_errors(const vda5050_msgs::msg::Error::SharedPtr msg) {
 }
 
 // Receive safety state (msg): store for state publication.
-void VDA5050Node::on_safety_state(
-  const vda5050_msgs::msg::SafetyState::SharedPtr msg)
+void VDA5050Node::on_safety_state(const vda5050_msgs::msg::SafetyState::SharedPtr msg)
 {
   safety_state_ = internal_from_ros(*msg);
 }
 
 // Receive operating mode (msg): store it; an unknown name keeps the current mode.
-void VDA5050Node::on_operating_mode(
-  const std_msgs::msg::String::SharedPtr msg)
+void VDA5050Node::on_operating_mode(const std_msgs::msg::String::SharedPtr msg)
 {
   const auto mode = parse_operating_mode(msg->data);
-  if (!mode.has_value()) {
+  if (!mode.has_value()) 
+  {
     RCLCPP_WARN(get_logger(), "Unknown operating mode '%s' from the driver -- ignored", msg->data.c_str());
     return;
   }
-  if (*mode != operating_mode_) {
+  if (*mode != operating_mode_) 
+  {
     operating_mode_ = *mode;
     publish_state();
   }
@@ -972,16 +1021,21 @@ void VDA5050Node::drive()
 {
   clear_stale_goals();
   std::optional<RouteStep> next;
-  if (may_drive()) {
+  if (may_drive()) 
+  {
     next = order_manager_->next_step();
   }
 
-  if (!next) {
-    if (step_ && !step_->cancel_requested) {
+  if (!next) 
+  {
+    if (step_ && !step_->cancel_requested) 
+    {
       cancel_step();
     }
-  } else if (!step_ || step_->cancel_requested || !same_step(step_->step, *next)) {
-    if (driver_ready()) {
+  } else if (!step_ || step_->cancel_requested || !same_step(step_->step, *next)) 
+  {
+    if (driver_ready()) 
+    {
       send_step(*next);
     }
   }
@@ -991,16 +1045,18 @@ void VDA5050Node::drive()
 void VDA5050Node::clear_stale_goals()
 {
   if (stale_goals_cleared_ || stale_goals_cancel_sent_ || driver_lost_ ||
-      !step_client_->action_server_is_ready()) {
+      !step_client_->action_server_is_ready()) 
+      {
     return;
   }
   stale_goals_cancel_sent_ = true;
   using CancelResponse = rclcpp_action::Client<NavigateToNode>::CancelResponse;
-  step_client_->async_cancel_all_goals([this](const CancelResponse::SharedPtr response) {
+  step_client_->async_cancel_all_goals([this](const CancelResponse::SharedPtr response) 
+  {
     stale_goals_cleared_ = true;
-    if (response && !response->goals_canceling.empty()) {
-      RCLCPP_WARN(get_logger(), "Cancelled %zu step goal(s) left on the driver by a previous adapter process",
-                  response->goals_canceling.size());
+    if (response && !response->goals_canceling.empty()) 
+    {
+      RCLCPP_WARN(get_logger(), "Cancelled %zu step goal(s) left on the driver by a previous adapter process",response->goals_canceling.size());
     }
   });
 }
@@ -1023,15 +1079,15 @@ void VDA5050Node::send_step(const RouteStep& step)
   goal.order_id        = step.order_id;
   goal.order_update_id = step.order_update_id;
   goal.node            = ros_from_internal(step.node);
-  if (step.incoming_edge) {
+  if (step.incoming_edge) 
+  {
     goal.incoming_edge     = ros_from_internal(*step.incoming_edge);
     goal.incoming_edge_set = true;
   }
 
   const uint64_t token = ++step_token_;
   step_ = InFlightStep{token, step, nullptr, false, driver_session_};
-  RCLCPP_INFO(get_logger(), "Step: order=%s node=%s (seq=%u)", step.order_id.c_str(),
-              step.node.node_id.c_str(), step.node.sequence_id);
+  RCLCPP_INFO(get_logger(), "Step: order=%s node=%s (seq=%u)", step.order_id.c_str(), step.node.node_id.c_str(), step.node.sequence_id);
 
   rclcpp_action::Client<NavigateToNode>::SendGoalOptions options;
   options.goal_response_callback = [this, token](const StepGoalHandle::SharedPtr& handle) 
@@ -1130,7 +1186,8 @@ void VDA5050Node::enter_step_edge(RouteStep& step)
   if (!step.incoming_edge || step.edge_entered) return;
   step.edge_entered = true;
   const auto& edge = *step.incoming_edge;
-  if (order_manager_->edge_entered(edge.edge_id, edge.sequence_id)) {
+  if (order_manager_->edge_entered(edge.edge_id, edge.sequence_id)) 
+  {
     RCLCPP_INFO(get_logger(), "Edge entered: %s (seq=%u)", edge.edge_id.c_str(), edge.sequence_id);
     action_manager_->on_edge_entered(edge.edge_id, edge.sequence_id);
   }
@@ -1144,14 +1201,16 @@ void VDA5050Node::complete_step(RouteStep& step, double distance_driven)
   if (step.incoming_edge) 
   {
     const auto& edge = *step.incoming_edge;
-    if (order_manager_->edge_completed(edge.edge_id, edge.sequence_id)) {
+    if (order_manager_->edge_completed(edge.edge_id, edge.sequence_id)) 
+    {
       RCLCPP_INFO(get_logger(), "Edge completed: %s (seq=%u)", edge.edge_id.c_str(), edge.sequence_id);
       action_manager_->on_edge_left(edge.edge_id, edge.sequence_id);
     }
   }
 
   const auto& node = step.node;
-  if (!order_manager_->node_reached({node.node_id, node.sequence_id, distance_driven})) {
+  if (!order_manager_->node_reached({node.node_id, node.sequence_id, distance_driven})) 
+  {
     return;
   }
   RCLCPP_INFO(get_logger(), "Node reached: %s (seq=%u)", node.node_id.c_str(), node.sequence_id);
@@ -1163,7 +1222,8 @@ void VDA5050Node::complete_step(RouteStep& step, double distance_driven)
   reached.node_description  = node.node_description;
   reached.released          = node.released;
   reached.distance_driven   = distance_driven;
-  if (node.node_position) {
+  if (node.node_position) 
+  {
     reached.node_position     = ros_from_internal(*node.node_position);
     reached.node_position_set = true;
   }
@@ -1173,11 +1233,10 @@ void VDA5050Node::complete_step(RouteStep& step, double distance_driven)
 void VDA5050Node::drop_order(const RouteStep& step, const std::string& reason, bool failed)
 {
   if (!order_manager_->has_active_order() || order_manager_->current_order_id() != step.order_id)
-   {
+  {
     return;
   }
-  RCLCPP_WARN(get_logger(), "Order '%s' %s by the driver at node %s: %s", step.order_id.c_str(),
-              failed ? "failed" : "dropped", step.node.node_id.c_str(), reason.c_str());
+  RCLCPP_WARN(get_logger(), "Order '%s' %s by the driver at node %s: %s", step.order_id.c_str(), failed ? "failed" : "dropped", step.node.node_id.c_str(), reason.c_str());
 
   if (failed) {
     vda5050::Error err;
@@ -1220,10 +1279,9 @@ void VDA5050Node::on_distance_since_last_node(const std_msgs::msg::Float64::Shar
 // ─────────────────────────────────────────────────────────────────────────────
 
 // OrderManager callback: order was accepted. Reset action state for new order, publish to robot.
-void VDA5050Node::on_order_accepted(const std::string& order_id,
-                                      uint32_t order_update_id,
-                                      const std::vector<vda5050::Node>& remaining_nodes,
-                                      const std::vector<vda5050::Edge>& remaining_edges)
+void VDA5050Node::on_order_accepted(const std::string& order_id, uint32_t order_update_id,
+                                    const std::vector<vda5050::Node>& remaining_nodes,
+                                    const std::vector<vda5050::Edge>& remaining_edges)
 {
   RCLCPP_INFO(get_logger(), "Order accepted: %s (updateId=%u, nodes=%zu, edges=%zu)",
               order_id.c_str(), order_update_id, remaining_nodes.size(), remaining_edges.size());
@@ -1297,12 +1355,13 @@ bool VDA5050Node::maybe_complete_pending_control_actions()
 {
   const auto completed_actions = state_machine_->consume_ready_control_actions();
 
-  for (const auto& completed : completed_actions) {
-    action_manager_->set_action_finished(completed.action_id,
-                                         completed.result_description);
+  for (const auto& completed : completed_actions) 
+  {
+    action_manager_->set_action_finished(completed.action_id, completed.result_description);
   }
 
-  if (!completed_actions.empty()) {
+  if (!completed_actions.empty()) 
+  {
     sync_action_blocking();
   }
 
@@ -1316,8 +1375,7 @@ bool VDA5050Node::maybe_complete_pending_control_actions()
 // Replace adapter error (error) of same type; recompute fatal error state for state machine.
 void VDA5050Node::replace_adapter_error(const vda5050::Error& error)
 {
-  errors_.erase(
-    std::remove_if(errors_.begin(), errors_.end(), [&](const vda5050::Error& existing)
+  errors_.erase(std::remove_if(errors_.begin(), errors_.end(), [&](const vda5050::Error& existing)
     {
       return existing.error_type == error.error_type;
     }),
@@ -1330,11 +1388,10 @@ void VDA5050Node::replace_adapter_error(const vda5050::Error& error)
 void VDA5050Node::upsert_driver_error(const vda5050::Error& error)
 {
   const auto identity = error_identity(error);
-  auto it = std::find_if(errors_.begin(), errors_.end(),
-                         [&](const vda5050::Error& existing)
-                         {
-                           return !is_adapter_error_type(existing.error_type) && error_identity(existing) == identity;
-                         });
+  auto it = std::find_if(errors_.begin(), errors_.end(), [&](const vda5050::Error& existing)
+  {
+    return !is_adapter_error_type(existing.error_type) && error_identity(existing) == identity;
+  });
   if (it != errors_.end())
   {
     *it = error;
@@ -1349,12 +1406,10 @@ void VDA5050Node::upsert_driver_error(const vda5050::Error& error)
 // Clear all errors of type (error_type) from list; recompute fatal error state for state machine.
 void VDA5050Node::clear_errors_by_type(const std::string& error_type)
 {
-  errors_.erase(
-    std::remove_if(errors_.begin(), errors_.end(),
-                   [&](const vda5050::Error& error) {
-                     return error.error_type == error_type;
-                   }),
-    errors_.end());
+  errors_.erase(std::remove_if(errors_.begin(), errors_.end(), [&](const vda5050::Error& error) 
+    {
+      return error.error_type == error_type;
+    }), errors_.end());
   update_fatal_state();
 }
 
@@ -1362,8 +1417,7 @@ void VDA5050Node::clear_errors_by_type(const std::string& error_type)
 void VDA5050Node::clear_validation_errors(const std::string& topic)
 {
   errors_.erase(
-    std::remove_if(errors_.begin(), errors_.end(),
-                   [&](const vda5050::Error& error) 
+    std::remove_if(errors_.begin(), errors_.end(), [&](const vda5050::Error& error) 
                    {
                      return error.error_type == "validationError" && error_reference(error, kTopicReference) == topic;
                    }),
@@ -1485,13 +1539,11 @@ std::string VDA5050Node::now_iso8601()
   using Clock = std::chrono::system_clock;
   auto now    = Clock::now();
   auto t      = Clock::to_time_t(now);
-  auto ms     = std::chrono::duration_cast<std::chrono::milliseconds>(
-                  now.time_since_epoch()) % 1000;
+  auto ms     = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
   std::ostringstream oss;
   std::tm tm_buf{};
   gmtime_r(&t, &tm_buf);
-  oss << std::put_time(&tm_buf, "%FT%T")
-      << '.' << std::setfill('0') << std::setw(3) << ms.count() << 'Z';
+  oss << std::put_time(&tm_buf, "%FT%T") << '.' << std::setfill('0') << std::setw(3) << ms.count() << 'Z';
   return oss.str();
 }
 
