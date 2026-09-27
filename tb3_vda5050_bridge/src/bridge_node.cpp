@@ -16,7 +16,7 @@ namespace tb3_vda5050_bridge {
 
 namespace {
 
-// Wrap angle into (-pi, pi].
+// Normalizes an angle to (-pi, pi].
 double normalize_angle(double angle)
 {
   while (angle > M_PI) angle -= 2.0 * M_PI;
@@ -24,13 +24,13 @@ double normalize_angle(double angle)
   return angle;
 }
 
-// Throw std::invalid_argument naming the parameter (name) unless ok.
+// Validates a parameter and throws std::invalid_argument on failure.
 void require(bool ok, const std::string& name, const std::string& rule)
 {
   if (!ok) throw std::invalid_argument("Parameter '" + name + "' must be " + rule);
 }
 
-// Value of an action parameter, or empty if absent.
+// Returns an action parameter value or an empty string.
 std::string find_action_parameter(const vda5050_msgs::msg::Action& action, const std::string& key)
 {
   for (const auto& parameter : action.action_parameters) 
@@ -40,7 +40,7 @@ std::string find_action_parameter(const vda5050_msgs::msg::Action& action, const
   return "";
 }
 
-// Random 64-bit value as 16 hex digits.
+// Generates a random 64-bit session ID in hexadecimal format.
 std::string make_session_id()
 {
   std::random_device device;
@@ -65,6 +65,7 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options): rclcpp::Node("tb3_vd
   battery_topic_ = declare_parameter<std::string>("battery_topic", "/battery_state");
   nav2_action_name_ = declare_parameter<std::string>("nav2_action_name", "navigate_to_pose");
   supported_action_types_ = declare_parameter<std::vector<std::string>>("supported_action_types", std::vector<std::string>{});
+  simulate_charging_ = declare_parameter<bool>("simulate_charging", false);
   nav2_dispatch_timeout_sec_ = declare_parameter<double>("nav2_dispatch_timeout_sec", 120.0);
   amcl_pose_timeout_sec_ = declare_parameter<double>("amcl_pose_timeout_sec", 10.0);
   pose_stale_move_tolerance_m_ = declare_parameter<double>("pose_stale_move_tolerance_m", 0.15);
@@ -100,7 +101,7 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options): rclcpp::Node("tb3_vd
   battery_sub_ = create_subscription<sensor_msgs::msg::BatteryState>(battery_topic_, rclcpp::QoS(10), std::bind(&BridgeNode::on_battery, this, _1));
   action_execute_sub_ = create_subscription<vda5050_msgs::msg::Action>(adapter_topic("action_execute"), rclcpp::QoS(10), std::bind(&BridgeNode::on_action_execute, this, _1));
   action_command_sub_ = create_subscription<vda5050_msgs::msg::ActionCommand>(adapter_topic("action_command"), rclcpp::QoS(10),[this](vda5050_msgs::msg::ActionCommand::SharedPtr msg) {
-      // Actions here complete synchronously in on_action_execute().
+      // Instant actions complete synchronously in on_action_execute().
       RCLCPP_DEBUG(get_logger(), "Action command %u for %s ignored", msg->command, msg->action_id.c_str());
     });
   local_command_sub_ = create_subscription<std_msgs::msg::String>(adapter_topic("action_cancel"), rclcpp::QoS(10), std::bind(&BridgeNode::on_local_command, this, _1));
@@ -112,7 +113,7 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options): rclcpp::Node("tb3_vd
   battery_state_pub_ = create_publisher<vda5050_msgs::msg::BatteryState>(adapter_topic("battery_state"), rclcpp::QoS(10));
   velocity_pub_ = create_publisher<vda5050_msgs::msg::Velocity>(adapter_topic("velocity"), rclcpp::QoS(10));
 
-  // Manual liveliness: a stalled executor stops the heartbeat and the adapter sees the driver lost.
+  // Manual liveliness reports executor stalls as driver loss.
   const auto lease = std::chrono::duration_cast<std::chrono::nanoseconds>(
     std::chrono::duration<double>(driver_status_lease_sec_));
   driver_status_pub_ = create_publisher<vda5050_msgs::msg::DriverStatus>(adapter_topic("driver_status"),rclcpp::QoS(1).transient_local() .liveliness(rclcpp::LivelinessPolicy::ManualByTopic).liveliness_lease_duration(rclcpp::Duration(lease)));
@@ -131,9 +132,9 @@ BridgeNode::BridgeNode(const rclcpp::NodeOptions& options): rclcpp::Node("tb3_vd
     map_id_.c_str(), nav2_frame_id_.c_str(), adapter_ns_.c_str(), nav2_action_name_.c_str(), session_id_.c_str());
 }
 
-// ─── Telemetry ───────────────────────────────────────────────────────────────
+// Telemetry
 
-// Accumulates the distance driven; publishes velocity and leg distance at most every odom_publish_min_interval_sec.
+// Publishes velocity and accumulated distance at the configured interval.
 void BridgeNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
   const double odom_x = msg->pose.pose.position.x;
@@ -161,7 +162,7 @@ void BridgeNode::on_odom(const nav_msgs::msg::Odometry::SharedPtr msg)
   distance_since_last_node_pub_->publish(dist_msg);
 }
 
-// Caches the AMCL pose, checks its covariance and publishes the position.
+// Validates the AMCL pose and publishes the robot position.
 void BridgeNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
 {
   tf2::Quaternion q;
@@ -174,7 +175,7 @@ void BridgeNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStampe
   const double y = msg->pose.pose.position.y;
   const bool finite = std::isfinite(x) && std::isfinite(y) && std::isfinite(yaw);
 
-  // Row-major 6x6 covariance: index 0 = var(x), index 7 = var(y); both must pass the threshold.
+  // Covariance indices 0 and 7 contain the x and y variances.
   const double cov_x = msg->pose.covariance[0];
   const double cov_y = msg->pose.covariance[7];
   const bool covariance_ok = (cov_x >= 0.0 && cov_x < position_covariance_threshold_) && (cov_y >= 0.0 && cov_y < position_covariance_threshold_);
@@ -182,14 +183,14 @@ void BridgeNode::on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStampe
   last_amcl_pose_at_ = std::chrono::steady_clock::now();
   robot_pose_confident_ = finite && covariance_ok;
 
-  // Reject non-finite poses while retaining the last valid coordinates.
+  // Preserves the last valid coordinates for a non-finite pose.
   if (finite) {
     robot_x_ = x;
     robot_y_ = y;
     robot_yaw_ = yaw;
   }
 
-  // Record odometry at the last confident AMCL pose.
+  // Stores the odometry position for the latest valid AMCL pose.
   if (robot_pose_confident_ && last_odom_position_valid_) 
   {
     odom_x_at_last_amcl_pose_ = last_odom_x_;
@@ -219,7 +220,7 @@ bool BridgeNode::robot_pose_valid() const
   {
     return true;
   }
-  // Accept an older AMCL pose when odometry shows the robot stayed still.
+  // Accepts a stale AMCL pose while odometry remains stationary.
   if (!has_driven_since_last_amcl_pose_) 
   {
     return true;
@@ -232,12 +233,12 @@ bool BridgeNode::robot_pose_valid() const
   return moved_since < pose_stale_move_tolerance_m_;
 }
 
-// Publishes the battery charge as 0-100 %.
+// Publishes battery charge as a percentage.
 void BridgeNode::on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg)
 {
   vda5050_msgs::msg::BatteryState batt;
 
-  // TB3 OpenCR reports 0-100, standard ROS 0-1.
+  // OpenCR uses 0-100; standard ROS battery messages use 0-1.
   const float pct = msg->percentage;
   float battery_charge;
   bool have_reading = true;
@@ -268,12 +269,24 @@ void BridgeNode::on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg)
   batt.battery_charge = battery_charge;   // VDA5050: 0–100 %
   batt.battery_voltage = msg->voltage;
   batt.battery_health = -1;
-  batt.charging = (msg->power_supply_status == sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_CHARGING);
+  hardware_charging_ = (msg->power_supply_status == sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_CHARGING);
   batt.reach = 0;
-  battery_state_pub_->publish(batt);
+  last_battery_state_ = batt;
+  publish_battery_state();
 }
 
-// An unmasked non-navigation velocity source means manual control is active.
+// Publishes the cached battery state with the current charging flag.
+void BridgeNode::publish_battery_state()
+{
+  if (!last_battery_state_)
+  {
+    return;
+  }
+  last_battery_state_->charging = hardware_charging_ || simulated_charging_;
+  battery_state_pub_->publish(*last_battery_state_);
+}
+
+// Publishes MANUAL mode for an unmasked non-navigation velocity source.
 void BridgeNode::on_diagnostics(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg)
 {
   static const std::string prefix = "velocity topics.";
@@ -302,9 +315,9 @@ void BridgeNode::on_diagnostics(const diagnostic_msgs::msg::DiagnosticArray::Sha
   }
 }
 
-// ─── Actions ─────────────────────────────────────────────────────────────────
+// Actions
 
-// Runs an instant action and reports its result.
+// Executes an instant action and publishes its result.
 void BridgeNode::on_action_execute(const vda5050_msgs::msg::Action::SharedPtr msg)
 {
   RCLCPP_INFO(get_logger(), "Action execute: id=%s type=%s", msg->action_id.c_str(), msg->action_type.c_str());
@@ -326,10 +339,41 @@ void BridgeNode::on_action_execute(const vda5050_msgs::msg::Action::SharedPtr ms
     return;
   }
 
+  if (msg->action_type == "startCharging" || msg->action_type == "stopCharging")
+  {
+    set_charging(*msg);
+    return;
+  }
+
   publish_action_feedback(*msg, "FINISHED", "Completed (no-op handler)");
 }
 
-// Sets the AMCL initial pose from the action's x, y, theta; refused while a goal drives from a valid pose.
+// Processes simulated or hardware charging state.
+void BridgeNode::set_charging(const vda5050_msgs::msg::Action& action)
+{
+  const bool start = action.action_type == "startCharging";
+  if (start && active_step_)
+  {
+    publish_action_feedback(action, "FAILED", "startCharging refused while the robot is driving");
+    return;
+  }
+  if (simulate_charging_)
+  {
+    simulated_charging_ = start;
+    publish_battery_state();
+    RCLCPP_INFO(get_logger(), "%s (id=%s): simulated charger %s", action.action_type.c_str(), action.action_id.c_str(), start ? "on" : "off");
+    publish_action_feedback(action, "FINISHED", start ? "Simulated charging started" : "Simulated charging stopped");
+    return;
+  }
+  if (start && !hardware_charging_)
+  {
+    publish_action_feedback(action, "FAILED", "The battery does not report charging");
+    return;
+  }
+  publish_action_feedback(action, "FINISHED", start ? "The battery reports charging" : "Charging ends when the robot leaves the charger");
+}
+
+// Publishes an AMCL initial pose when navigation is inactive.
 void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
 {
   if (current_goal_handle_ && robot_pose_confident_) 
@@ -351,7 +395,7 @@ void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
     return;
   }
 
-  // The active step was planned from the previous pose.
+  // Invalidates the step planned from the previous pose.
   if (active_step_) 
   {
     cancel_navigation();
@@ -376,7 +420,7 @@ void BridgeNode::init_position(const vda5050_msgs::msg::Action& action)
   publish_action_feedback(action, "FINISHED", "Initial pose published to AMCL");
 }
 
-// "cancel:*" from local tools (e.g. robot_local_ui) drops the active step; other commands go through the adapter.
+// Drops the active step for a local cancel command.
 void BridgeNode::on_local_command(const std_msgs::msg::String::SharedPtr msg)
 {
   if (msg->data.rfind("cancel:", 0) != 0) 
@@ -393,7 +437,7 @@ void BridgeNode::on_local_command(const std_msgs::msg::String::SharedPtr msg)
   set_driving(false);
 }
 
-// ─── NavigateToNode steps ────────────────────────────────────────────────────
+// NavigateToNode steps
 
 rclcpp_action::GoalResponse BridgeNode::on_step_goal(const rclcpp_action::GoalUUID&,
                                                      std::shared_ptr<const NavigateToNode::Goal> goal)
@@ -407,7 +451,7 @@ rclcpp_action::CancelResponse BridgeNode::on_step_cancel(const std::shared_ptr<S
   return rclcpp_action::CancelResponse::ACCEPT;
 }
 
-// A new step replaces the active one; Nav2 preempts its goal with the new one.
+// Replaces the active step and preempts its Nav2 goal.
 void BridgeNode::on_step_accepted(const std::shared_ptr<StepHandle> handle)
 {
   if (active_step_) 
@@ -422,6 +466,11 @@ void BridgeNode::on_step_accepted(const std::shared_ptr<StepHandle> handle)
   }
   active_step_ = handle;
   ++step_token_;
+  if (simulated_charging_)
+  {
+    simulated_charging_ = false;
+    publish_battery_state();
+  }
   auto previous_goal = current_goal_handle_;
   current_goal_handle_.reset();
   goal_sent_ = false;
@@ -432,7 +481,7 @@ void BridgeNode::on_step_accepted(const std::shared_ptr<StepHandle> handle)
   }
 }
 
-// Stops navigation and finishes the active step once its client asked to cancel it.
+// Cancels navigation and completes the requested step cancellation.
 void BridgeNode::check_step_cancel()
 {
   if (!active_step_ || !active_step_->is_canceling()) 
@@ -444,7 +493,7 @@ void BridgeNode::check_step_cancel()
   set_driving(false);
 }
 
-// Completes the step in place, sends its Nav2 goal, or waits for a valid pose.
+// Completes, dispatches, or retries the active step.
 void BridgeNode::run_step()
 {
   if (!active_step_) 
@@ -475,7 +524,7 @@ void BridgeNode::run_step()
   send_navigation_goal();
 }
 
-// Finishes `handle` with `outcome` and, when reached, the distance driven since the previous node.
+// Completes the step and publishes traveled distance for REACHED.
 void BridgeNode::finish_step(std::shared_ptr<StepHandle> handle, uint8_t outcome, const std::string& description)
 {
   auto result = std::make_shared<NavigateToNode::Result>();
@@ -507,7 +556,7 @@ void BridgeNode::finish_step(std::shared_ptr<StepHandle> handle, uint8_t outcome
   RCLCPP_INFO(get_logger(), "Step %s finished: outcome=%u (%s)", handle->get_goal()->node.node_id.c_str(), outcome, description.c_str());
 }
 
-// ─── Navigation ──────────────────────────────────────────────────────────────
+// Navigation
 
 void BridgeNode::apply_speed_limit(double max_speed)
 {
@@ -522,7 +571,7 @@ void BridgeNode::apply_speed_limit(double max_speed)
   }
 }
 
-// Whether the robot is within the node's position (and, when constrained, heading) tolerance on the same map.
+// Returns true when the robot satisfies the node tolerances.
 bool BridgeNode::at_node(const vda5050_msgs::msg::Node& node) const
 {
   if (!robot_pose_valid()) 
@@ -544,7 +593,7 @@ bool BridgeNode::at_node(const vda5050_msgs::msg::Node& node) const
   return !theta_constrained || std::fabs(normalize_angle(node.node_position.theta - robot_yaw_)) < node.node_position.allowed_deviation_theta;
 }
 
-// Sends the Nav2 goal for the active step, or arms a retry if Nav2 isn't ready yet.
+// Sends the active Nav2 goal or schedules a retry.
 void BridgeNode::send_navigation_goal()
 {
   const auto step = active_step_;
@@ -566,9 +615,8 @@ void BridgeNode::send_navigation_goal()
   goal.pose.pose.position.x = node.node_position.x;
   goal.pose.pose.position.y = node.node_position.y;
 
-  // With no heading constraint, aim the goal yaw along the bearing to avoid a rotate-in-place.
-  const bool theta_constrained = node.node_position.theta_set &&
-                                 node.node_position.allowed_deviation_theta < unconstrained_theta_rad_;
+  // Uses the goal bearing when the node has no heading constraint.
+  const bool theta_constrained = node.node_position.theta_set && node.node_position.allowed_deviation_theta < unconstrained_theta_rad_;
   double goal_yaw = node.node_position.theta;
   if (!theta_constrained && robot_pose_valid()) 
   {
@@ -595,7 +643,7 @@ void BridgeNode::send_navigation_goal()
     }
     if (!handle) 
     {
-      // Often transient (AMCL not converged, costmap not ready): retry like an unready server.
+      // Retries transient Nav2 rejection until the dispatch timeout.
       RCLCPP_WARN(get_logger(), "Nav2 rejected the goal for node %s — holding, will retry", node_id.c_str());
       arm_nav2_retry();
       return;
@@ -621,14 +669,14 @@ void BridgeNode::send_navigation_goal()
       finish_step(step, NavigateToNode::Result::REACHED, "node reached");
       return;
     }
-    // Aborted, cancelled by another Nav2 client or unknown: retry until the dispatch timeout.
+    // Retries non-successful Nav2 results until the dispatch timeout.
     RCLCPP_WARN(get_logger(), "Navigation to %s ended with code=%d — will retry", node_id.c_str(),static_cast<int>(result.code));
     arm_nav2_retry();
   };
   nav2_client_->async_send_goal(goal, options);
 }
 
-// Cancels the current Nav2 goal, if any, and drops its pending callbacks.
+// Cancels the active Nav2 goal and invalidates pending callbacks.
 void BridgeNode::cancel_navigation()
 {
   ++step_token_;
@@ -642,7 +690,7 @@ void BridgeNode::cancel_navigation()
   RCLCPP_INFO(get_logger(), "Navigation cancel requested");
 }
 
-// Retries run_step() every nav2_retry_period_sec until the step's timeout.
+// Retries the active step until completion or timeout.
 void BridgeNode::arm_nav2_retry()
 {
   if (nav2_retry_timer_) {
@@ -663,7 +711,7 @@ void BridgeNode::arm_nav2_retry()
     }
     if (last_operating_mode_ == "MANUAL") 
     {
-      // A human has taken over -- don't burn the retry budget while they're driving.
+      // Pauses the retry timeout during manual control.
       nav2_retry_deadline_ += period;
       arm_nav2_retry();
       return;
@@ -682,7 +730,7 @@ void BridgeNode::arm_nav2_retry()
   });
 }
 
-// Stops the retry timer; the next retry starts a new window.
+// Stops the retry timer and clears its deadline.
 void BridgeNode::reset_nav2_retry()
 {
   if (nav2_retry_timer_) 
@@ -693,9 +741,9 @@ void BridgeNode::reset_nav2_retry()
   nav2_retry_deadline_set_ = false;
 }
 
-// ─── Status ──────────────────────────────────────────────────────────────────
+// Status
 
-// Publishes the ActionState of `action`.
+// Publishes the action state.
 void BridgeNode::publish_action_feedback(const vda5050_msgs::msg::Action& action,const std::string& status, const std::string& description)
 {
   vda5050_msgs::msg::ActionState state;
@@ -707,7 +755,7 @@ void BridgeNode::publish_action_feedback(const vda5050_msgs::msg::Action& action
   action_state_feedback_pub_->publish(state);
 }
 
-// Publishes driving on change; a stop re-anchors the stale-pose odometry baseline.
+// Publishes driving-state changes and resets the odometry baseline.
 void BridgeNode::set_driving(bool driving)
 {
   if (driving) {
@@ -727,7 +775,7 @@ void BridgeNode::set_driving(bool driving)
   publish_driver_status();
 }
 
-// Publishes the session id and driving flag.
+// Publishes driver status and asserts topic liveliness.
 void BridgeNode::publish_driver_status()
 {
   vda5050_msgs::msg::DriverStatus status;

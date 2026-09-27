@@ -1,14 +1,9 @@
 /**
  * @file test_bridge_node.cpp
- * @brief BridgeNode against a fake Nav2 NavigateToPose server and a fake client adapter.
+ * @brief Tests BridgeNode with simulated Nav2 and client-adapter interfaces.
  *
- * Coverage:
- *  - NavigateToNode steps: Nav2 goal, edge-entered feedback, REACHED with distance, node already reached,
- *    position-less node, edge speed limit
- *  - preemption by a newer step, client cancel, local "cancel:" from robot tools, per-action commands
- *  - Nav2 goal cancelled by another client, rejected goals and the retry window, manual override
- *  - driver status: driving flag, a new session id per bridge process, liveliness lease and heartbeat
- *  - initPosition, unsupported actions, operating mode, battery, odometry telemetry
+ * Covers navigation, retries, cancellation, driver status, actions, charging,
+ * and telemetry.
  */
 
 #include <gtest/gtest.h>
@@ -80,7 +75,7 @@ rclcpp::NodeOptions isolated_options()
   return options;
 }
 
-// ─── Step builders ───────────────────────────────────────────────────────────
+// Step builders
 
 vda5050_msgs::msg::Node route_node(const std::string& id, uint32_t seq, double x)
 {
@@ -97,7 +92,7 @@ vda5050_msgs::msg::Node route_node(const std::string& id, uint32_t seq, double x
   return n;
 }
 
-// Step toward wp<i> at x = i, entered over the edge from wp<i-1> (none for i = 0).
+// Builds a step from wp<i-1> to wp<i> at x = i.
 NavigateToNode::Goal step_goal(const std::string& order_id, int i, double max_speed = -1.0)
 {
   NavigateToNode::Goal goal;
@@ -114,9 +109,9 @@ NavigateToNode::Goal step_goal(const std::string& order_id, int i, double max_sp
   return goal;
 }
 
-// ─── Fakes ───────────────────────────────────────────────────────────────────
+// Test doubles
 
-// NavigateToPose server that records goals and finishes them on request.
+// Records NavigateToPose goals and completes them on request.
 class FakeNav2 {
 public:
   using GoalHandle = rclcpp_action::ServerGoalHandle<NavigateToPose>;
@@ -166,7 +161,7 @@ public:
     return !active_.empty() && active_.back()->is_active() && !active_.back()->is_canceling();
   }
 
-  // Finish the active goal as succeeded.
+  // Completes the active goal successfully.
   void succeed()
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -188,17 +183,17 @@ private:
   std::vector<std::shared_ptr<GoalHandle>> active_;
 };
 
-// Client adapter side of the bridge (NavigateToNode client, adapter topics), plus robot sensors.
+// Simulates client-adapter interfaces and robot sensors.
 class FakeRobot {
 public:
   using StepHandle = rclcpp_action::ClientGoalHandle<NavigateToNode>;
 
-  // What the client saw of one step goal.
+  // Captured client-adapter state for one step.
   struct Step {
     std::string            node_id;
     bool                   accepted{false};
-    int                    edge_entered{0};  // feedback messages with edge_entered set
-    std::optional<uint8_t> outcome;   // result outcome, CANCELED when the code does not carry one
+    int                    edge_entered{0};  // Number of edge-entered feedback messages.
+    std::optional<uint8_t> outcome;   // Result outcome; defaults to CANCELED when absent.
     double                 distance{0.0};
     StepHandle::SharedPtr  handle;
   };
@@ -225,6 +220,8 @@ public:
       return std::to_string(m.speed_limit); });
     record<vda5050_msgs::msg::BatteryState>(a("battery_state"), batteries_, [](const vda5050_msgs::msg::BatteryState& m) {
       return std::to_string(static_cast<int>(std::round(m.battery_charge))); });
+    record<vda5050_msgs::msg::BatteryState>(a("battery_state"), charging_, [](const vda5050_msgs::msg::BatteryState& m) {
+      return std::string(m.charging ? "charging" : "idle"); });
     record<vda5050_msgs::msg::AgvPosition>(a("agv_position"), positions_, [](const vda5050_msgs::msg::AgvPosition& m) {
       return m.position_initialized ? "valid" : "invalid"; });
 
@@ -239,7 +236,7 @@ public:
       [this](std_msgs::msg::String::SharedPtr m) { std::lock_guard<std::mutex> l(mutex_); mode_ = m->data; });
   }
 
-  // Send a step goal; returns its index in steps().
+  // Sends a step goal and returns its recorded index.
   std::size_t send(const NavigateToNode::Goal& goal)
   {
     std::size_t index;
@@ -262,7 +259,7 @@ public:
     };
     options.result_callback = [this, index](const StepHandle::WrappedResult& r) {
       std::lock_guard<std::mutex> l(mutex_);
-      // Same mapping as the client adapter: REACHED only with SUCCEEDED, other outcomes with ABORTED.
+      // Maps REACHED to SUCCEEDED and all other outcomes to ABORTED.
       uint8_t outcome = Outcome::CANCELED;
       if (r.code == rclcpp_action::ResultCode::SUCCEEDED) {
         outcome = Outcome::REACHED;
@@ -275,7 +272,7 @@ public:
     step_client_->async_send_goal(goal, options);
     return index;
   }
-  // Cancel step `index` once its goal is accepted.
+  // Requests cancellation after the step is accepted.
   bool cancel(std::size_t index)
   {
     if (!wait_until([&] { return step(index).handle != nullptr; })) return false;
@@ -307,11 +304,12 @@ public:
     m.twist.twist.linear.x = vx;
     odom_pub_->publish(m);
   }
-  void battery(float percentage, float voltage)
+  void battery(float percentage, float voltage, uint8_t status = sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_UNKNOWN)
   {
     sensor_msgs::msg::BatteryState m;
     m.percentage = percentage;
     m.voltage = voltage;
+    m.power_supply_status = status;
     battery_pub_->publish(m);
   }
   void twist_mux(bool joystick_unmasked)
@@ -348,6 +346,7 @@ public:
   std::vector<std::string> initial_poses() const { return get(initial_poses_); }
   std::vector<std::string> speed_limits() const { return get(speed_limits_); }
   std::vector<std::string> batteries() const { return get(batteries_); }
+  std::vector<std::string> charging() const { return get(charging_); }
   std::vector<std::string> positions() const { return get(positions_); }
   bool driving() const { std::lock_guard<std::mutex> l(mutex_); return driving_; }
   std::string session() const { std::lock_guard<std::mutex> l(mutex_); return session_; }
@@ -391,7 +390,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr mode_sub_;
   mutable std::mutex mutex_;
   std::vector<Step> steps_;
-  std::vector<std::string> feedback_, velocities_, initial_poses_, speed_limits_, batteries_, positions_;
+  std::vector<std::string> feedback_, velocities_, initial_poses_, speed_limits_, batteries_, charging_, positions_;
   bool driving_{false};
   std::string session_;
   int status_count_{0};
@@ -429,7 +428,7 @@ protected:
     fakes_node_.reset();
   }
 
-  // Start the bridge with test topics; extra overrides replace the defaults below.
+  // Starts the bridge with test topics and optional parameter overrides.
   void start_bridge(std::vector<rclcpp::Parameter> extra = {})
   {
     auto options = isolated_options();
@@ -468,7 +467,7 @@ protected:
     bridge_.reset();
   }
 
-  // Send the step toward wp<i> of `order_id` and wait until Nav2 drives it.
+  // Sends a step and waits for its Nav2 goal.
   std::size_t start_step(const std::string& order_id, int i)
   {
     const auto index = robot_->send(step_goal(order_id, i));
@@ -488,7 +487,7 @@ protected:
   std::atomic<bool> stop_{false};
 };
 
-// ─── Steps ───────────────────────────────────────────────────────────────────
+// Navigation steps
 
 TEST_F(BridgeNodeTest, StepDrivesToTheNodeAndReportsTheDistance)
 {
@@ -601,7 +600,7 @@ TEST_F(BridgeNodeTest, OtherLocalCommandsAndActionCommandsDoNotTouchNavigation)
   EXPECT_EQ(nav2_->cancelled(), 0);
 }
 
-// ─── Nav2 failures and retries ───────────────────────────────────────────────
+// Nav2 failures and retries
 
 TEST_F(BridgeNodeTest, GoalCancelledByAnotherClientIsSentAgain)
 {
@@ -644,7 +643,7 @@ TEST_F(BridgeNodeTest, ManualOverrideDoesNotSpendTheRetryWindow)
   ASSERT_TRUE(wait_until([&] { return nav2_->has_active_goal() && robot_->driving(); }));
 }
 
-// ─── Driver status ───────────────────────────────────────────────────────────
+// Driver status
 
 TEST_F(BridgeNodeTest, EveryBridgeProcessHasItsOwnSession)
 {
@@ -682,7 +681,7 @@ TEST_F(BridgeNodeTest, NonPositiveDriverStatusLeaseIsRejected)
   EXPECT_THROW(tb3_vda5050_bridge::BridgeNode node(options), std::invalid_argument);
 }
 
-// ─── Actions ─────────────────────────────────────────────────────────────────
+// Actions
 
 namespace {
 
@@ -751,7 +750,81 @@ TEST_F(BridgeNodeTest, UnsupportedActionFails)
   EXPECT_TRUE(robot_->has_feedback("x-1:RUNNING"));
 }
 
-// ─── Telemetry ───────────────────────────────────────────────────────────────
+// Charging
+
+namespace {
+
+vda5050_msgs::msg::Action charging_action(const std::string& id, const std::string& type)
+{
+  vda5050_msgs::msg::Action action;
+  action.action_id = id;
+  action.action_type = type;
+  return action;
+}
+
+std::vector<rclcpp::Parameter> charging_params(bool simulate)
+{
+  return {{"simulate_charging", simulate},
+          {"supported_action_types", std::vector<std::string>{"initPosition", "startCharging", "stopCharging"}}};
+}
+
+}  // namespace
+
+TEST_F(BridgeNodeTest, SimulatedChargerFollowsTheChargingActions)
+{
+  start_bridge(charging_params(true));
+  robot_->battery(80.0f, 12.0f);
+  ASSERT_TRUE(wait_until([&] { return !robot_->charging().empty(); }));
+  EXPECT_EQ(robot_->charging().back(), "idle");
+
+  robot_->execute(charging_action("c-1", "startCharging"));
+  ASSERT_TRUE(wait_until([&] { return robot_->has_feedback("c-1:FINISHED"); }));
+  ASSERT_TRUE(wait_until([&] { return robot_->charging().back() == "charging"; }));
+  robot_->battery(80.0f, 12.0f);
+  ASSERT_TRUE(wait_until([&] { return robot_->charging().size() >= 3u; }));
+  EXPECT_EQ(robot_->charging().back(), "charging") << "a new battery reading keeps the simulated flag";
+
+  robot_->execute(charging_action("c-2", "stopCharging"));
+  ASSERT_TRUE(wait_until([&] { return robot_->has_feedback("c-2:FINISHED"); }));
+  ASSERT_TRUE(wait_until([&] { return robot_->charging().back() == "idle"; }));
+}
+
+TEST_F(BridgeNodeTest, SimulatedChargerStopsWhenTheRobotDrives)
+{
+  start_bridge(charging_params(true));
+  robot_->battery(80.0f, 12.0f);
+  robot_->execute(charging_action("c-1", "startCharging"));
+  ASSERT_TRUE(wait_until([&] { return !robot_->charging().empty() && robot_->charging().back() == "charging"; }));
+  start_step("o1", 1);
+  ASSERT_TRUE(wait_until([&] { return robot_->charging().back() == "idle"; }));
+}
+
+TEST_F(BridgeNodeTest, StartChargingIsRefusedWhileDriving)
+{
+  start_bridge(charging_params(true));
+  start_step("o1", 1);
+  robot_->execute(charging_action("c-1", "startCharging"));
+  ASSERT_TRUE(wait_until([&] { return robot_->has_feedback("c-1:FAILED"); }));
+}
+
+TEST_F(BridgeNodeTest, WithoutSimulationStartChargingFollowsTheBattery)
+{
+  start_bridge(charging_params(false));
+  robot_->battery(80.0f, 12.0f, sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_DISCHARGING);
+  ASSERT_TRUE(wait_until([&] { return !robot_->charging().empty(); }));
+  robot_->execute(charging_action("c-1", "startCharging"));
+  ASSERT_TRUE(wait_until([&] { return robot_->has_feedback("c-1:FAILED"); }));
+  EXPECT_EQ(robot_->charging().back(), "idle");
+
+  robot_->battery(80.0f, 12.0f, sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_CHARGING);
+  ASSERT_TRUE(wait_until([&] { return robot_->charging().back() == "charging"; }));
+  robot_->execute(charging_action("c-2", "startCharging"));
+  ASSERT_TRUE(wait_until([&] { return robot_->has_feedback("c-2:FINISHED"); }));
+  robot_->execute(charging_action("c-3", "stopCharging"));
+  ASSERT_TRUE(wait_until([&] { return robot_->has_feedback("c-3:FINISHED"); }));
+}
+
+// Telemetry
 
 TEST_F(BridgeNodeTest, ManualOverrideFromTwistMuxIsLatched)
 {

@@ -28,7 +28,7 @@ TEST(OdomDistanceTracker, StraightLineAccumulatesExactDistance)
   EXPECT_DOUBLE_EQ(tracker.take(), 3.0);
 }
 
-// An L-shaped move (2 m then 3 m) counts the 5 m driven, not the 3.6 m straight line.
+// Verifies accumulated path length instead of straight-line displacement.
 TEST(OdomDistanceTracker, LShapedMoveSumsLegsNotStraightLine)
 {
   OdomDistanceTracker tracker;
@@ -47,7 +47,7 @@ TEST(OdomDistanceTracker, CurrentPeeksWithoutResetting)
   tracker.update(0.0, 0.0);
   tracker.update(1.0, 0.0);
   EXPECT_DOUBLE_EQ(tracker.current(), 1.0);
-  EXPECT_DOUBLE_EQ(tracker.current(), 1.0);   // unchanged by repeated peeks
+  EXPECT_DOUBLE_EQ(tracker.current(), 1.0);   // current() does not reset the accumulator.
   tracker.update(3.0, 0.0);
   EXPECT_DOUBLE_EQ(tracker.current(), 3.0);
   EXPECT_DOUBLE_EQ(tracker.take(), 3.0);
@@ -62,7 +62,7 @@ TEST(OdomDistanceTracker, TakeResetsAccumulatorButKeepsBaseline)
   EXPECT_DOUBLE_EQ(tracker.take(), 1.0);
   EXPECT_DOUBLE_EQ(tracker.take(), 0.0);
 
-  // The baseline survives take(): the next delta starts from the last position.
+  // take() resets distance but preserves the last position.
   tracker.update(1.0, 1.0);
   EXPECT_DOUBLE_EQ(tracker.take(), 1.0);
 }

@@ -1,147 +1,114 @@
 # TB3 VDA5050 Bridge — Architecture
 
-Architecture of `tb3_vda5050_bridge`: a step executor for `vda5050_client_adapter`, which owns the order.
+`tb3_vda5050_bridge` is the robot-side ROS 2 bridge between `vda5050_client_adapter` and the TurtleBot3 Nav2 stack. It executes one VDA5050 route step at a time and publishes robot feedback to the client adapter. Order management remains in `vda5050_client_adapter`.
 
----
+This document summarizes the system boundary, navigation flow, recovery behavior, and supported actions.
 
-## 1. Role in the System
+## System architecture
 
-`tb3_vda5050_bridge` runs on the TurtleBot3 side and:
-
-- executes `NavigateToNode` goals (one route node each) as Nav2 `NavigateToPose` goals
-- turns TurtleBot3 telemetry into the adapter's feedback topics
-- runs the instant actions it supports (`initPosition`)
-
-It keeps no order: route, stitching, progress and errors toward the master are the adapter's.
+The client adapter receives VDA5050 orders over MQTT and sends individual navigation steps to the bridge. The bridge converts each step into a Nav2 goal and returns its result with robot telemetry.
 
 ```mermaid
 flowchart LR
-    MC["Master Control"]
-    Broker[("MQTT Broker")]
-    Adapter["vda5050_client_adapter\n(order owner)"]
-    Bridge["tb3_vda5050_bridge\n(step executor)"]
-    Nav2["Nav2 NavigateToPose"]
-    TB3["TurtleBot3 sensors / motors"]
+    MC["Master control"]
+    Broker[("MQTT broker")]
+    Adapter["vda5050_client_adapter<br/>Order management"]
+    Bridge["tb3_vda5050_bridge<br/>Step execution"]
+    Nav2["Nav2 stack"]
+    Robot["TurtleBot3 ROS stack"]
 
     MC <-->|MQTT| Broker
     Broker <-->|MQTT| Adapter
-    Adapter -->|NavigateToNode goal| Bridge
-    Bridge -->|feedback / result\ndriver_status + telemetry| Adapter
-    Bridge <-->|Action + telemetry| Nav2
-    Nav2 <--> TB3
+    Adapter -->|NavigateToNode and instant actions| Bridge
+    Bridge -->|Results and telemetry| Adapter
+    Bridge -->|NavigateToPose, initial pose, speed limit| Nav2
+    Nav2 -->|Goal response, result, AMCL pose| Bridge
+    Robot -->|Odometry, battery, diagnostics| Bridge
+    Nav2 <-->|Motion commands and sensor data| Robot
 ```
 
----
+## Key flows
 
-## 2. Module Layout
+The bridge processes one active navigation step and reports each state change to the client adapter.
 
-| Module | Responsibility |
-|---|---|
-| `BridgeNode` | `NavigateToNode` server, Nav2 client and retry window, telemetry, driver status, instant actions |
-| `OdomDistanceTracker` | Real driven distance between nodes from consecutive `/odom` positions |
+### Navigation step
 
----
-
-## 3. Step Lifecycle
+A navigation step contains one target node and its incoming edge. The bridge validates the robot pose, completes an already reached target directly, or sends a `NavigateToPose` goal to Nav2.
 
 ```mermaid
 sequenceDiagram
     participant Adapter as vda5050_client_adapter
-    participant Bridge as BridgeNode
+    participant Bridge as tb3_vda5050_bridge
     participant Nav2
 
-    Adapter->>Bridge: NavigateToNode goal (order_id, node, incoming_edge)
-    alt robot already at the node / position-less node with a valid pose
-        Bridge-->>Adapter: result REACHED (distance_driven)
-    else
-        Bridge->>Nav2: SpeedLimit (edge maxSpeed), NavigateToPose
-        Nav2-->>Bridge: goal accepted
-        Bridge-->>Adapter: feedback edge_entered, driver_status driving=true
-        Nav2-->>Bridge: result SUCCEEDED
-        Bridge-->>Adapter: result REACHED (distance_driven), driving=false
+    Adapter->>Bridge: NavigateToNode goal
+    Bridge->>Bridge: Validate pose and target
+    alt Target is already reached
+        Bridge-->>Adapter: REACHED and traveled distance
+    else Nav2 is required
+        Bridge->>Nav2: Speed limit and NavigateToPose goal
+        Nav2-->>Bridge: Goal response
+        alt Goal is accepted
+            Bridge-->>Adapter: Edge feedback and driving=true
+            Nav2-->>Bridge: Final result
+            alt Result is SUCCEEDED
+                Bridge-->>Adapter: REACHED and driving=false
+            else Result is not successful
+                Bridge->>Bridge: Schedule retry
+            end
+        else Goal is rejected
+            Bridge->>Bridge: Schedule retry
+        end
     end
 ```
 
-| Outcome | Result code | When |
+| Step outcome | ROS action state | Condition |
 |---|---|---|
-| `REACHED` | `SUCCEEDED` | Nav2 succeeded, the robot is already within the node's tolerance, or a position-less node with a valid pose |
-| `FAILED` | `ABORTED` | The node was not reached within `nav2_dispatch_timeout_sec` (Nav2 unavailable, rejecting or ending goals early, pose not valid) |
-| `DROPPED` | `ABORTED` | `cancel:*` on `~/action_cancel` from a local tool, or `initPosition` invalidated the pose the step was planned from |
-| `PREEMPTED` | `ABORTED` | A newer goal arrived; Nav2 is preempted by the new goal, or cancelled when the new step needs no Nav2 goal |
-| `CANCELED` | `CANCELED` | The adapter cancelled the goal (pause, cancelOrder, blocking action); Nav2 is cancelled first |
+| `REACHED` | `SUCCEEDED` | Nav2 reaches the target, the robot already satisfies the node tolerance, or a node without a position is accepted from a valid pose. |
+| `FAILED` | `ABORTED` | The pose remains invalid, or Nav2 remains unavailable or unsuccessful until `nav2_dispatch_timeout_sec` expires. |
+| `DROPPED` | `ABORTED` | A local `cancel:*` command drops the step, or `initPosition` invalidates the pose used to plan it. |
+| `PREEMPTED` | `ABORTED` | A newer navigation step replaces the active step. |
+| `CANCELED` | `CANCELED` | The client adapter cancels the active step. The bridge cancels the Nav2 goal first. |
 
-Only one step is active. Every step bumps `step_token_`; Nav2 goal-response and result callbacks of
-an older token or step are ignored (a late acceptance is cancelled at once).
+Only one step is active at a time. A step token invalidates late Nav2 callbacks from an older goal.
 
-### Skipping Nav2 when already at the target
+**Direct completion.** The bridge returns `REACHED` without Nav2 when the robot already satisfies the node tolerance. A node without a position is also completed when the robot pose is valid.
 
-If the AMCL pose is within the node's `allowedDeviationXY` (`default_allowed_deviation_xy` when
-unset) and, when heading is constrained (`allowedDeviationTheta` below `unconstrained_theta_rad`),
-within `allowedDeviationTheta`, the step is `REACHED` without Nav2. In position but not in heading
-falls through to Nav2 for the rotation. Without a heading constraint the Nav2 goal yaw points along
-the bearing to the node to avoid a rotate-in-place.
+**Retry behavior.** An unavailable server, rejected goal, or unsuccessful result starts retries at intervals of `nav2_retry_period_sec`. The retry ends when the node is reached or the dispatch timeout expires. The timeout pauses while the robot is in `MANUAL` mode.
 
-### Nav2 not ready yet, and failed goals are retried
+**Distance tracking.** `OdomDistanceTracker` accumulates the traveled path from `odom_topic`. A `REACHED` result includes the distance since the previous node and then resets the accumulator.
 
-Nav2 unavailable, a rejected goal (often transient: AMCL not converged, costmap not ready) or a goal
-ended without success (e.g. cancelled by another Nav2 client) arms a retry every
-`nav2_retry_period_sec`. The step fails only when the node is still not reached after
-`nav2_dispatch_timeout_sec`; the window restarts with each step. While `operating_mode` is `MANUAL`
-the window is extended by every retry period.
+### Driver status and restart recovery
 
-### Real driven distance (`OdomDistanceTracker`)
+The bridge publishes `driver_status` with a random session ID and the current driving state. A new process creates a new session ID, which allows the client adapter to resend an interrupted step.
 
-Tracks the actual path walked between consecutive `/odom` positions, not the straight-line
-distance to the target. `REACHED` carries the distance since the previous node and resets it;
-a step of a new `order_id` resets it too. It is streamed live on `~/distance_since_last_node`.
+The topic uses transient-local durability and manual liveliness. The bridge republishes the status every third of `driver_status_lease_sec`. A stopped process or blocked executor causes the lease to expire and allows the client adapter to report a driver connection error.
 
----
+### Instant actions
 
-## 4. Driver Status and Restarts
+The bridge supports the instant actions listed in `supported_action_types`.
 
-`~/driver_status` (`transient_local`, depth 1) carries `session_id`, 16 random hex digits per
-process, and `driving`, true while a Nav2 goal of the active step is accepted. A client that sees a
-new `session_id` knows the step goal in flight was lost and sends it again; the bridge needs no
-persisted state. Stopping re-anchors the stale-pose odometry baseline.
+**Re-localization.** `initPosition` publishes a new AMCL pose. The action returns `FAILED` while navigation is active with a valid pose. Otherwise, the active step is dropped before the new pose is published.
 
-The publisher offers manual-by-topic liveliness with lease `driver_status_lease_sec` and a timer
-republishes the status every lease / 3. A dead process or a stalled executor lets the lease expire;
-the adapter then drops the step and reports `driverConnectionError` until the heartbeat is back.
-At start the adapter cancels every goal still on the server, so a step of a previous adapter
-process ends `CANCELED`.
+**Charging.** Charging actions use either the simulated charger or the charging state reported by the battery.
 
----
+| Condition | Behavior |
+|---|---|
+| `startCharging` while a step is active | The action returns `FAILED`. |
+| `simulate_charging: true` | `startCharging` enables the simulated charger, and `stopCharging` disables it. Both actions return `FINISHED`. |
+| `simulate_charging: false` | `startCharging` returns `FINISHED` only when the battery reports `CHARGING`. `stopCharging` returns `FINISHED` without changing the hardware state. |
+| A new navigation step | The simulated charger is disabled before navigation starts. |
 
-## 5. Re-localization (`initPosition`)
+The published charging state is true when the battery reports `CHARGING` or the simulated charger is enabled. A simulated-state change republishes the latest valid battery state.
 
-Refused (`FAILED`) while a Nav2 goal is active and the pose is confident. Otherwise the active step
-(planned from the old pose) ends `DROPPED`, Nav2 is cancelled, and the pose is published on
-`initial_pose_topic` with `initial_pose_covariance_xy/yaw`.
+### Manual override
 
----
+The bridge reads `twist_mux` diagnostics to identify the active velocity source. An unmasked source other than `navigation_velocity_source` changes `operating_mode` to `MANUAL`. Otherwise, the mode is `AUTOMATIC`. The bridge publishes the mode only when it changes.
 
-## 6. Manual Override Detection (`operating_mode`)
+## Interfaces
 
-`twist_mux` arbitrates joystick/keyboard/Nav2 by priority and reports each
-source's masked/unmasked state via `diagnostics_topic` (status `twist_mux_status_name`). Any source
-other than `navigation_velocity_source` reporting `unmasked` is a human takeover: `operating_mode` publishes
-`MANUAL` (else `AUTOMATIC`), only on change. `AgvPosition`/`Velocity` stay
-accurate either way (real odometry/AMCL, not what Nav2 commanded).
-`SEMIAUTOMATIC`/`SERVICE`/`TEACHIN` are never used — no such state on this robot.
+ROS interfaces and configuration values are maintained in the README as a single reference.
 
----
-
-## 7. ROS Interface and Parameters
-
-Topic, action and parameter tables (defaults, descriptions) live in
-[README.md](../README.md#ros-interface) — kept in one place to avoid the two drifting apart.
-Config file: [`config/bridge_params.yaml`](../config/bridge_params.yaml)
-
----
-
-## 8. Reading Order
-
-1. [`vda5050_msgs/action/NavigateToNode.action`](../../vda5050_msgs/action/NavigateToNode.action)
-2. [`include/tb3_vda5050_bridge/bridge_node.hpp`](../include/tb3_vda5050_bridge/bridge_node.hpp)
-3. [`src/bridge_node.cpp`](../src/bridge_node.cpp)
-4. [`include/tb3_vda5050_bridge/odom_distance_tracker.hpp`](../include/tb3_vda5050_bridge/odom_distance_tracker.hpp)
+- [ROS topics and actions](../README.md#ros-interface)
+- [Configuration parameters](../README.md#configuration)
+- [NavigateToNode action definition](../../vda5050_msgs/action/NavigateToNode.action)

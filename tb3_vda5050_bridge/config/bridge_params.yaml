@@ -10,6 +10,9 @@ tb3_vda5050_bridge:
     position_covariance_threshold: 0.5
     supported_action_types:
       - "initPosition"
+      - "startCharging"
+      - "stopCharging"
+    simulate_charging: false
     initial_pose_topic: "/initialpose"
 
     nav2_dispatch_timeout_sec: 120.0              # s
@@ -17,8 +20,8 @@ tb3_vda5050_bridge:
     pose_stale_move_tolerance_m: 0.15             # m
     speed_limit_topic: "/speed_limit"
     nav2_retry_period_sec: 2.0                    # s
-    odom_publish_min_interval_sec: 0.1            # s, 0 = every odom
-    driver_status_lease_sec: 1.0                  # s, <= adapter driver_status_max_lease
+    odom_publish_min_interval_sec: 0.1            # s; 0 publishes every odometry message.
+    driver_status_lease_sec: 1.0                  # s; must not exceed adapter driver_status_max_lease.
     default_allowed_deviation_xy: 0.5             # m
     unconstrained_theta_rad: 3.0                  # rad
     battery_voltage_full: 12.6                    # V

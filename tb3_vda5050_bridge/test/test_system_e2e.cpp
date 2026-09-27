@@ -1,16 +1,12 @@
 /**
  * @file test_system_e2e.cpp
- * @brief Fleet adapter (MQTT) -> vda5050_client_adapter -> tb3_vda5050_bridge -> fake Nav2.
+ * @brief End-to-end tests for the VDA5050 navigation path.
  *
- * Messages are built and parsed with vda5050_fleet_adapter_full_control's own code; the client
- * adapter and the bridge are the real nodes. Needs VDA5050_TEST_BROKER=tcp://host:port.
+ * Validates MQTT orders through the client adapter and bridge with a simulated
+ * Nav2 server. Requires VDA5050_TEST_BROKER=tcp://host:port.
  *
- * Coverage (client in default and strict mode):
- *  - route with horizon release driven to completion
- *  - cancelOrder followed at once by a new order, repeated
- *  - pause held across cancel + new order (traffic hold), then stopPause
- *  - bridge restart in the middle of a route after an order update: the client resends the step
- *  - bridge gone: driverConnectionError until it is back, then the route finishes
+ * Covers route updates, cancellation, pause, bridge restart, and driver loss
+ * in default and strict client modes.
  */
 
 #include <gtest/gtest.h>
@@ -81,11 +77,11 @@ rclcpp::NodeOptions node_options(const std::string& ns, std::vector<rclcpp::Para
   return options;
 }
 
-// Route wp1..wp3 at x = 1, 2, 3 from base wp0 at the robot (x = 0).
+// Builds waypoints wp1 to wp3 at x = 1 to 3 from wp0 at x = 0.
 std::vector<fc::RouteWaypoint> route()
 {
   std::vector<fc::RouteWaypoint> points;
-  for (int i = 1; i <= 3; ++i) points.push_back({"wp" + std::to_string(i), {1.0 * i, 0.0, 0.0}, std::nullopt});
+  for (int i = 1; i <= 3; ++i) points.push_back({"wp" + std::to_string(i), {1.0 * i, 0.0, 0.0}, std::nullopt, ""});
   return points;
 }
 
@@ -98,7 +94,7 @@ std::optional<std::string> action_status(const json& state, const std::string& a
   return std::nullopt;
 }
 
-// NavigateToPose server: accepts goals, finishes them on request, honours cancel requests.
+// Simulates NavigateToPose goal, result, and cancellation handling.
 class FakeNav2 {
 public:
   using GoalHandle = rclcpp_action::ServerGoalHandle<NavigateToPose>;
@@ -126,7 +122,7 @@ public:
 
   std::vector<double> goals() const { std::lock_guard<std::mutex> l(mutex_); return goals_; }
 
-  // Target x of the goal being executed, if any.
+  // Returns the x coordinate of the active goal.
   std::optional<double> active_goal() const
   {
     std::lock_guard<std::mutex> l(mutex_);
@@ -149,7 +145,7 @@ private:
   std::shared_ptr<GoalHandle> active_;
 };
 
-// Fleet adapter side on MQTT.
+// Simulates fleet-adapter MQTT communication.
 class Master {
 public:
   Master(const std::string& broker, const std::string& prefix) : prefix_(prefix)
@@ -272,7 +268,7 @@ protected:
     sim_.reset();
   }
 
-  // full_control's order for the route from wp0, `released` route points released.
+  // Builds a route order from wp0 with the requested release count.
   json order(const std::string& order_id, int update_id = 0, std::size_t released = 3, std::size_t stitch = 0)
   {
     return fc::build_route_order(1 + update_id, order_id, manufacturer_, serial_, "wp0", {0.0, 0.0, 0.0},
@@ -281,7 +277,7 @@ protected:
 
   bool nav2_heads_to(double x) { return wait_until([&] { return nav2_->active_goal() == x; }); }
 
-  // Destroy and recreate the bridge node with the same parameters.
+  // Recreates the bridge with the existing parameters.
   void restart_bridge()
   {
     executor_->remove_node(bridge_);
@@ -338,7 +334,7 @@ TEST_P(SystemE2E, CancelFollowedAtOnceByANewOrderKeepsTheNewOrder)
   std::string running;
   for (int round = 0; round < 10; ++round)
   {
-    // A new orderId follows a cancelOrder of the running order, as the fleet adapter sends it.
+    // Matches the fleet-adapter sequence: cancel the active order before sending a new order.
     if (!running.empty())
     {
       master_->send_instant(fc::build_instant_action(200 + round, manufacturer_, serial_, "cancelOrder",
@@ -372,7 +368,7 @@ TEST_P(SystemE2E, CancelFollowedAtOnceByANewOrderKeepsTheNewOrder)
     EXPECT_FALSE(settled->at("nodeStates").empty()) << "round " << round << ": " << settled->dump();
     EXPECT_TRUE(settled->at("errors").empty()) << "round " << round << ": " << settled->dump();
     EXPECT_TRUE(nav2_->active_goal().has_value()) << "round " << round;
-    // cancelOrder FINISHED, or removed with the old order's finished instant actions.
+    // Accepts a finished cancel action or its removal with the completed order state.
     const auto now = std::chrono::steady_clock::now();
     const auto outcome = tracker.assess(fc::ParsedState(*settled), now, now, fc::CancelPolicy{}).outcome;
     EXPECT_TRUE(outcome == fc::CancelTracker::Outcome::finished ||

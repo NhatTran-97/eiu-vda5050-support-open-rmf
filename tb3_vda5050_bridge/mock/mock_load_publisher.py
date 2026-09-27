@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a VDA5050 Load, standing in for a load sensor."""
+"""Publish simulated VDA5050 load data."""
 import argparse
 import sys
 
@@ -8,7 +8,7 @@ from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from vda5050_msgs.msg import Load
 
-# Relative topic, resolved in the launch namespace.
+# Resolve the relative topic in the launch namespace.
 LOAD_TOPIC = "vda5050_client_adapter/load"
 
 

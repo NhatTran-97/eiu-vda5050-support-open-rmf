@@ -3,17 +3,17 @@
 
 namespace tb3_vda5050_bridge {
 
-// Accumulate odometry distance for VDA5050 distanceSinceLastNode.
+// Tracks odometry distance for VDA5050 distanceSinceLastNode.
 class OdomDistanceTracker
 {
 public:
-  // Feed the latest odometry position; accumulates the delta from the previous call.
+  // Adds the distance from the previous position.
   void update(double x, double y);
 
-  // Return the accumulated distance and reset it to zero.
+  // Returns the accumulated distance and resets it.
   double take();
 
-  // Read current leg distance without resetting the accumulator.
+  // Returns the accumulated distance without resetting it.
   double current() const;
 
 private:

@@ -5,7 +5,7 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# ── Dependencies ──────────────────────────────────────────────────────────────
+# Dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
@@ -33,7 +33,7 @@ set(DEPS
   vda5050_msgs
 )
 
-# ── Core modules ──────────────────────────────────────────────────────────────
+# Core modules
 add_library(${PROJECT_NAME}_core
   src/odom_distance_tracker.cpp
 )
@@ -46,7 +46,7 @@ target_include_directories(${PROJECT_NAME}_core PUBLIC
 target_compile_features(${PROJECT_NAME}_core PUBLIC cxx_std_17)
 ament_target_dependencies(${PROJECT_NAME}_core vda5050_msgs)
 
-# ── Bridge node ───────────────────────────────────────────────────────────────
+# Bridge node
 add_library(${PROJECT_NAME}_node_lib
   src/bridge_node.cpp
 )
@@ -68,7 +68,7 @@ target_compile_features(tb3_vda5050_bridge_node PUBLIC cxx_std_17)
 ament_target_dependencies(tb3_vda5050_bridge_node rclcpp)
 target_link_libraries(tb3_vda5050_bridge_node ${PROJECT_NAME}_node_lib)
 
-# ── Install ───────────────────────────────────────────────────────────────────
+# Installation
 install(TARGETS
   ${PROJECT_NAME}_core
   ${PROJECT_NAME}_node_lib
@@ -106,7 +106,8 @@ if(BUILD_TESTING)
   target_link_libraries(test_bridge_node ${PROJECT_NAME}_node_lib)
   ament_target_dependencies(test_bridge_node ${DEPS})
 
-  # Fleet adapter -> client adapter -> bridge -> fake Nav2, over MQTT (needs VDA5050_TEST_BROKER).
+  # End-to-end path: fleet adapter -> client adapter -> bridge -> simulated Nav2.
+  # Requires VDA5050_TEST_BROKER.
   find_package(vda5050_client_adapter QUIET)
   find_package(nlohmann_json QUIET)
   set(VDA5050_FULL_CONTROL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../vda5050_fleet_adapter_full_control"

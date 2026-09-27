@@ -10,7 +10,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 
-// ROS2 standard messages
+// ROS 2 messages
 #include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <sensor_msgs/msg/battery_state.hpp>
@@ -19,11 +19,11 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 
-// Nav2 action
+// Nav2 interfaces
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <nav2_msgs/msg/speed_limit.hpp>
 
-// VDA5050 messages
+// VDA5050 interfaces
 #include <vda5050_msgs/action/navigate_to_node.hpp>
 #include <vda5050_msgs/msg/action.hpp>
 #include <vda5050_msgs/msg/action_command.hpp>
@@ -37,8 +37,7 @@
 
 namespace tb3_vda5050_bridge {
 
-// Executes NavigateToNode goals of the client adapter with Nav2 and reports the TB3 state.
-// The client adapter owns the order; this node drives one node at a time.
+// Executes VDA5050 navigation steps through Nav2.  Publishes TurtleBot3 state and action feedback to the client adapter.
 class BridgeNode : public rclcpp::Node
 {
 public:
@@ -51,8 +50,8 @@ private:
   using StepHandle     = rclcpp_action::ServerGoalHandle<NavigateToNode>;
 
   // Parameters
-  std::string map_id_;          // VDA5050 logical map name (reported in agv_position)
-  std::string nav2_frame_id_;   // TF frame for Nav2 goals (global_costmap.global_frame)
+  std::string map_id_;          // VDA5050 map identifier.
+  std::string nav2_frame_id_;   // TF frame for Nav2 goals.
   double      position_covariance_threshold_;
   std::string adapter_ns_;
   std::string odom_topic_;
@@ -60,22 +59,23 @@ private:
   std::string initial_pose_topic_;
   std::string battery_topic_;
   std::string nav2_action_name_;
-  std::vector<std::string> supported_action_types_;  // VDA5050 action types this bridge implements
-  double      nav2_dispatch_timeout_sec_;  // max time to reach a node before its goal fails
-  std::string speed_limit_topic_;  // Nav2 controller_server's speed override input
+  std::vector<std::string> supported_action_types_;  // Supported VDA5050 action types.
+  bool        simulate_charging_{false};  // Enables simulated startCharging and stopCharging actions.
+  double      nav2_dispatch_timeout_sec_;  // Maximum navigation dispatch time.
+  std::string speed_limit_topic_;  // Nav2 speed-limit input topic.
   double      pose_stale_move_tolerance_m_{0.15};
-  double      nav2_retry_period_sec_{2.0};          // period of the dispatch retry timer
-  double      default_allowed_deviation_xy_{0.5};  // node tolerance when the order gives none (m)
-  double      unconstrained_theta_rad_{3.0};       // allowedDeviationTheta at or above this ignores heading
-  double      battery_voltage_full_{12.6};         // voltage fallback for the charge (V)
+  double      nav2_retry_period_sec_{2.0};          // Navigation retry period.
+  double      default_allowed_deviation_xy_{0.5};  // Default node-position tolerance in meters.
+  double      unconstrained_theta_rad_{3.0};       // Heading-tolerance threshold for unconstrained goals.
+  double      battery_voltage_full_{12.6};         // Full-battery voltage fallback.
   double      battery_voltage_empty_{9.0};
-  double      initial_pose_covariance_xy_{0.25};   // initPosition covariance (m^2, rad^2)
+  double      initial_pose_covariance_xy_{0.25};   // Initial-pose covariance.
   double      initial_pose_covariance_yaw_{0.06853891945200942};
-  double      odom_publish_min_interval_sec_{0.1};  // velocity / distance telemetry throttle
-  double      driver_status_lease_sec_{1.0};        // driver_status liveliness lease; republished every lease / 3
+  double      odom_publish_min_interval_sec_{0.1};  // Velocity and distance publication interval.
+  double      driver_status_lease_sec_{1.0};        // Driver-status liveliness lease.
   std::string diagnostics_topic_;
-  std::string twist_mux_status_name_;               // twist_mux diagnostic status
-  std::string navigation_velocity_source_;          // twist_mux input used by Nav2
+  std::string twist_mux_status_name_;               // twist_mux diagnostic name.
+  std::string navigation_velocity_source_;          // Nav2 velocity-source name.
 
   // Subscribers
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr                       odom_sub_;
@@ -102,11 +102,11 @@ private:
   rclcpp_action::Server<NavigateToNode>::SharedPtr step_server_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
 
-  // Active step and its Nav2 goal; single-threaded executor, no locking.
+  // Active step and Nav2 goal for the single-threaded executor.
   std::shared_ptr<StepHandle> active_step_;
   std::string           last_step_order_id_;
-  uint64_t              step_token_{0};         // bumped per step; drops stale Nav2 callbacks
-  bool                  goal_sent_{false};      // a Nav2 goal went out for the current step
+  uint64_t              step_token_{0};         // Invalidates stale Nav2 callbacks.
+  bool                  goal_sent_{false};      // Nav2 goal state for the active step.
   Nav2GoalHandle::SharedPtr current_goal_handle_;
   rclcpp::TimerBase::SharedPtr cancel_check_timer_;
   rclcpp::TimerBase::SharedPtr driver_status_timer_;
@@ -117,33 +117,40 @@ private:
   std::string           session_id_;
   bool                  driving_{false};
   double                robot_x_{0.0}, robot_y_{0.0}, robot_yaw_{0.0};
-  bool                  robot_pose_confident_{false};  // last AMCL pose was finite with covariance under the threshold
+  bool                  robot_pose_confident_{false};  // Validity of the latest AMCL pose.
   std::chrono::steady_clock::time_point last_amcl_pose_at_;
   double                amcl_pose_timeout_sec_{10.0};
-  double                odom_x_at_last_amcl_pose_{0.0};  // odom snapshot at the last confident AMCL pose
+  double                odom_x_at_last_amcl_pose_{0.0};  // Odometry snapshot for the latest valid AMCL pose.
   double                odom_y_at_last_amcl_pose_{0.0};
   bool                  odom_at_last_amcl_pose_valid_{false};
-  bool                  has_driven_since_last_amcl_pose_{false};  // driven since the odom snapshot
-  OdomDistanceTracker   odom_distance_tracker_;  // VDA5050 distanceSinceLastNode telemetry
-  double                last_odom_x_{0.0}, last_odom_y_{0.0};  // for the stale-but-stationary pose check
+  bool                  has_driven_since_last_amcl_pose_{false};  // Motion state since the odometry snapshot.
+  OdomDistanceTracker   odom_distance_tracker_;  // VDA5050 distanceSinceLastNode tracker.
+  double                last_odom_x_{0.0}, last_odom_y_{0.0};  // Odometry position for the stale-pose check.
   bool                  last_odom_position_valid_{false};
-  float                 last_battery_charge_{0.0f};  // last known-good battery reading
+  float                 last_battery_charge_{0.0f};  // Latest valid battery reading.
   bool                  last_battery_valid_{false};
+  bool                  hardware_charging_{false};   // Charging state reported by the battery topic.
+  bool                  simulated_charging_{false};  // Simulated charger state.
+  std::optional<vda5050_msgs::msg::BatteryState> last_battery_state_;  // Last published battery state.
   std::chrono::steady_clock::time_point last_odom_publish_{};
 
-  // Publishes velocity and accumulates the distance driven.
+  // Publishes velocity and accumulates traveled distance.
   void on_odom(const nav_msgs::msg::Odometry::SharedPtr msg);
-  // Caches the AMCL pose, checks its covariance and publishes the position.
+  // Validates the AMCL pose and publishes the robot position.
   void on_amcl_pose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
-  // Publishes the battery charge, accepting 0-100 and 0-1 readings.
+  // Converts the battery reading to VDA5050 battery state.
   void on_battery(const sensor_msgs::msg::BatteryState::SharedPtr msg);
-  // Detects a manual override from twist_mux diagnostics and publishes operating_mode on change.
+  // Publishes MANUAL mode for a non-navigation twist_mux source.
   void on_diagnostics(const diagnostic_msgs::msg::DiagnosticArray::SharedPtr msg);
-  // Runs an instant action and reports its result.
+  // Executes an instant action and publishes its result.
   void on_action_execute(const vda5050_msgs::msg::Action::SharedPtr msg);
-  // Sets the AMCL initial pose; refused while a goal drives from a valid pose.
+  // Publishes an AMCL initial pose when navigation is inactive.
   void init_position(const vda5050_msgs::msg::Action& action);
-  // Handles "cancel:*" from local tools: drops the active step.
+  // Processes startCharging and stopCharging actions.
+  void set_charging(const vda5050_msgs::msg::Action& action);
+  // Publishes the cached battery state with the current charging flag.
+  void publish_battery_state();
+  // Drops the active step for a local cancel command.
   void on_local_command(const std_msgs::msg::String::SharedPtr msg);
 
   // NavigateToNode server callbacks.
@@ -151,37 +158,37 @@ private:
                                            std::shared_ptr<const NavigateToNode::Goal> goal);
   rclcpp_action::CancelResponse on_step_cancel(const std::shared_ptr<StepHandle> handle);
   void on_step_accepted(const std::shared_ptr<StepHandle> handle);
-  // Finishes steps whose cancellation was requested.
+  // Completes a requested step cancellation.
   void check_step_cancel();
 
-  // Works on the active step: completes it in place, sends the Nav2 goal or arms a retry.
+  // Completes, dispatches, or retries the active step.
   void run_step();
-  // Finishes `handle` with `outcome`; clears the active step when it is `handle`.
+  // Completes a step and clears it when active.
   void finish_step(std::shared_ptr<StepHandle> handle, uint8_t outcome, const std::string& description);
 
-  // Caps Nav2's speed at max_speed (m/s); max_speed < 0 lifts any previous cap.
+  // Applies a Nav2 speed limit; a negative value removes the limit.
   void apply_speed_limit(double max_speed);
-  // Whether the last AMCL pose is confident and recent enough to navigate on.
+  // Returns true when the AMCL pose is valid for navigation.
   bool robot_pose_valid() const;
-  // Whether the robot already stands on `node` within its tolerances.
+  // Returns true when the robot satisfies the node tolerances.
   bool at_node(const vda5050_msgs::msg::Node& node) const;
-  // Sends the Nav2 goal for the active step, or arms a retry if Nav2 is not ready.
+  // Sends the active Nav2 goal or schedules a retry.
   void send_navigation_goal();
-  // Cancels the current Nav2 goal and ignores its pending result.
+  // Cancels the active Nav2 goal and invalidates pending callbacks.
   void cancel_navigation();
-  // Retries run_step() every nav2_retry_period_sec until the step reaches its node or the timeout expires.
+  // Retries the active step until completion or timeout.
   void arm_nav2_retry();
-  // Stops the retry timer and forgets the retry window.
+  // Stops the retry timer and clears its deadline.
   void reset_nav2_retry();
-  // Publishes the ActionState of `action`.
+  // Publishes the action state.
   void publish_action_feedback(const vda5050_msgs::msg::Action& action,
                                const std::string& status,
                                const std::string& description = "");
-  // Publishes driving on change, re-anchoring the odometry baseline on transitions.
+  // Publishes driving-state changes and resets the odometry baseline.
   void set_driving(bool driving);
-  // Publishes session id and driving on ~/driver_status; each publish asserts its liveliness.
+  // Publishes driver status and asserts topic liveliness.
   void publish_driver_status();
-  // Full adapter topic name, e.g. "/vda5050_client_adapter/navigate_to_node".
+  // Returns the fully qualified client-adapter topic.
   std::string adapter_topic(const std::string& leaf) const;
 };
 
