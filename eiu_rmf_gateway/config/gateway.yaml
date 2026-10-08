@@ -1,0 +1,15 @@
+eiu_rmf_gateway:
+  ros__parameters:
+    redis_url: "redis://127.0.0.1:6379/0"
+    redis_prefix: "eiu:rmf"
+    flush_period_s: 0.1
+    heartbeat_period_s: 1.0
+    heartbeat_ttl_s: 3.0
+    events_maxlen: 10000
+    command_max_age_s: 30.0
+    command_block_ms: 500
+    task_events_host: "127.0.0.1"
+    task_events_port: 8100        # 0 = off
+    discovery_period_s: 2.0
+    robot_command_timeout_s: 10.0
+    nav_graph_path: ""            # nav graph file of the fleet adapter; empty = no editing
