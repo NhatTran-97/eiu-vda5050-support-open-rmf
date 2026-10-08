@@ -1,0 +1,1978 @@
+{
+  "app": {
+    "brandTop": "EIU",
+    "brandBottom": "Robot Services",
+    "tagline": "People · Things · Further · Together",
+    "footerTitle": "Dịch vụ robot",
+    "footerSubtitle": "Khuôn viên kết nối hơn",
+    "demo": "Demo",
+    "skipToContent": "Bỏ qua đến nội dung",
+    "adminBrand": "Master Control",
+    "adminSubtitle": "Quản trị",
+    "brand": "EIU Robot Services",
+    "platform": "Nền tảng vận hành robot",
+    "institution": "Eastern International University"
+  },
+  "nav": {
+    "main": "Menu chính",
+    "home": "Trang chủ",
+    "deliveries": "Đơn của tôi",
+    "deliveriesShort": "Đơn",
+    "tracking": "Theo dõi trực tiếp",
+    "trackingShort": "Theo dõi",
+    "notifications": "Thông báo",
+    "notificationsShort": "Thông báo",
+    "settings": "Cài đặt",
+    "overview": "Tổng quan",
+    "live": "Vận hành trực tiếp",
+    "liveShort": "Trực tiếp",
+    "tasks": "Nhiệm vụ",
+    "fleet": "Đội robot",
+    "schedule": "Lịch",
+    "maintenance": "Bảo trì",
+    "analytics": "Phân tích",
+    "administration": "Quản trị",
+    "users": "Người dùng & quyền",
+    "locations": "Địa điểm",
+    "integrations": "Tích hợp",
+    "systemSettings": "Cài đặt",
+    "account": "Tài khoản",
+    "menu": "Menu"
+  },
+  "topbar": {
+    "search": "Tìm kiếm",
+    "searchPlaceholder": "Tìm robot, nhiệm vụ hoặc địa điểm...",
+    "notifications": "Thông báo",
+    "unread": "{{count}} chưa đọc",
+    "userMenu": "Menu tài khoản",
+    "language": "Ngôn ngữ",
+    "signOut": "Đăng xuất",
+    "viewAll": "Xem tất cả",
+    "markAllRead": "Đánh dấu đã đọc",
+    "noNotifications": "Chưa có thông báo",
+    "live": {
+      "open": "Đang cập nhật trực tiếp",
+      "connecting": "Đang kết nối…",
+      "closed": "Mất cập nhật trực tiếp"
+    },
+    "rmf": {
+      "online": "Hệ thống robot: trực tuyến",
+      "offline": "Hệ thống robot: không có dữ liệu",
+      "unavailable": "Backend chưa nối được Open-RMF",
+      "disabled": "Đã tắt kết nối Open-RMF"
+    },
+    "adminSearchPlaceholder": "Tìm robot, fleet, bản đồ, người dùng, #nhiệm vụ…"
+  },
+  "role": {
+    "user": "Người dùng",
+    "admin": "Quản trị viên",
+    "operator": "Operator"
+  },
+  "pages": {
+    "home": {
+      "title": "Đặt giao hàng nhanh",
+      "subtitle": "Tạo yêu cầu giao hàng trong vài giây, robot sẽ mang đồ đến đúng nơi."
+    },
+    "deliveries": {
+      "title": "Đơn giao của tôi",
+      "subtitle": "Theo dõi đơn giao, xem lịch sử và gửi đồ đến đúng nơi."
+    },
+    "tracking": {
+      "title": "Theo dõi trực tiếp",
+      "subtitle": "Theo dõi đơn giao của bạn theo thời gian thực."
+    },
+    "notifications": {
+      "title": "Thông báo",
+      "subtitle": "Cảnh báo của robot bạn theo dõi và cập nhật nhiệm vụ của bạn."
+    },
+    "settings": {
+      "title": "Cài đặt",
+      "subtitle": "Tài khoản, ngôn ngữ và thông báo."
+    },
+    "detail": {
+      "title": "Đơn giao #{{id}}",
+      "back": "Đơn của tôi"
+    },
+    "notFound": {
+      "title": "Không tìm thấy trang",
+      "body": "Trang bạn tìm không tồn tại.",
+      "action": "Về trang chủ"
+    },
+    "forbidden": {
+      "title": "Không có quyền truy cập",
+      "body": "Tài khoản của bạn không có quyền mở trang này.",
+      "action": "Về trang chủ"
+    }
+  },
+  "common": {
+    "from": "Từ",
+    "to": "Đến",
+    "robot": "Robot",
+    "eta": "Dự kiến",
+    "battery": "Pin",
+    "distance": "Còn lại",
+    "status": "Trạng thái",
+    "actions": "Thao tác",
+    "dateTime": "Ngày & giờ",
+    "close": "Đóng",
+    "save": "Lưu",
+    "saving": "Đang lưu…",
+    "loading": "Đang tải…",
+    "retry": "Thử lại",
+    "loadFailed": "Không tải được dữ liệu.",
+    "viewDetails": "Xem chi tiết",
+    "track": "Theo dõi",
+    "trackLive": "Theo dõi trực tiếp",
+    "reorder": "Đặt lại",
+    "cancel": "Hủy",
+    "moreActions": "Thao tác khác",
+    "optional": "(Không bắt buộc)",
+    "none": "—",
+    "inProgress": "Đang thực hiện",
+    "pending": "Chờ",
+    "skipped": "Bỏ qua",
+    "back": "Quay lại",
+    "viewAll": "Xem tất cả"
+  },
+  "time": {
+    "lessThanMinute": "< 1 phút",
+    "minutes": "{{count}} phút",
+    "arrivingIn": "Đến nơi sau {{time}}",
+    "scheduledFor": "Hẹn lúc {{time}}"
+  },
+  "status": {
+    "scheduled": "Đã hẹn giờ",
+    "queued": "Chờ robot",
+    "to_pickup": "Đang đến lấy hàng",
+    "at_pickup": "Chờ bỏ hàng",
+    "in_transit": "Đang giao",
+    "arrived": "Đã đến nơi",
+    "completed": "Hoàn thành",
+    "cancelled": "Đã hủy",
+    "failed": "Thất bại",
+    "underway": "Đang thực hiện"
+  },
+  "timeline": {
+    "title": {
+      "requested": "Đã nhận yêu cầu",
+      "picked_up": "Đã lấy hàng",
+      "en_route": "Đang đến {{dropoff}}",
+      "arriving": "Sắp đến nơi",
+      "delivered": "Đã giao",
+      "assigned": "Đã có robot nhận",
+      "patrolling": "Tuần tra"
+    },
+    "desc": {
+      "requested": "Đơn giao của bạn đã được xác nhận.",
+      "waitingRobot": "Đang chờ robot rảnh.",
+      "toPickup": "Robot {{robot}} đang đến {{pickup}}.",
+      "atPickup": "Robot {{robot}} đang chờ ở {{pickup}}. Vui lòng bỏ hàng lên robot.",
+      "pickedUp": "Robot {{robot}} đã nhận hàng tại {{pickup}}.",
+      "enRoute": "Món đồ đang trên đường đến {{dropoff}}.",
+      "arriving": "Robot sắp đến {{dropoff}}.",
+      "collect": "Robot đã ở {{dropoff}}. Vui lòng nhận hàng.",
+      "deliveredPending": "Chúng tôi sẽ báo khi món đồ được giao.",
+      "delivered": "Đã giao đến {{dropoff}}.",
+      "assigned": "Robot {{robot}} đã nhận nhiệm vụ.",
+      "patrolling": "Vòng {{done}}/{{rounds}}: {{route}}",
+      "patrolDone": "Đã đi đủ {{rounds}} vòng."
+    }
+  },
+  "package": {
+    "general": "Đồ thông thường",
+    "documents": "Tài liệu & sách",
+    "food": "Đồ ăn & thức uống",
+    "lab_equipment": "Thiết bị thí nghiệm",
+    "fragile": "Đồ dễ vỡ"
+  },
+  "home": {
+    "createTitle": "Tạo đơn giao mới",
+    "createSubtitle": "Gửi đồ đến mọi nơi trong khuôn viên bằng robot giao hàng.",
+    "pickup": "Điểm lấy hàng",
+    "dropoff": "Điểm đến",
+    "packageType": "Loại hàng",
+    "when": "Thời gian",
+    "asap": "Càng sớm càng tốt",
+    "schedule": "Hẹn giờ",
+    "scheduleAt": "Giờ lấy hàng",
+    "note": "Ghi chú",
+    "notePlaceholder": "vd. Cẩn thận dễ vỡ, gọi khi đến…",
+    "selectLocation": "Chọn địa điểm",
+    "swap": "Đổi điểm lấy hàng và điểm đến",
+    "submit": "Gửi yêu cầu giao hàng",
+    "submitting": "Đang gửi yêu cầu…",
+    "created": "Đã tạo đơn giao #{{id}}",
+    "sameLocation": "Điểm lấy hàng và điểm đến phải khác nhau.",
+    "saved": "Địa điểm đã lưu",
+    "manage": "Quản lý",
+    "manageTitle": "Địa điểm đã lưu",
+    "manageHint": "Chọn các địa điểm hiện trên trang chủ. Địa điểm gắn sao được xếp trước.",
+    "noSaved": "Chưa có địa điểm đã lưu.",
+    "favorite": "Thêm vào yêu thích",
+    "unfavorite": "Bỏ khỏi yêu thích",
+    "useAsDestination": "Chọn {{name}} làm điểm đến",
+    "recent": "Điểm đến gần đây",
+    "viewAll": "Xem tất cả",
+    "noRecent": "Các điểm đến gần đây sẽ hiện ở đây.",
+    "templates": "Mẫu giao hàng thường dùng",
+    "templatesSubtitle": "Tạo nhanh các đơn giao bạn hay gửi.",
+    "useTemplate": "Dùng mẫu",
+    "comingSoon": "Sắp có",
+    "activeStrip": "Đơn #{{id}} · {{status}}",
+    "activeStripRobot": "Robot {{robot}} · Dự kiến {{eta}}",
+    "taskType": "Loại nhiệm vụ",
+    "stops": "Các điểm dừng",
+    "stopsHint": "Robot đi qua các điểm theo thứ tự rồi lặp lại theo số vòng.",
+    "addStop": "Thêm điểm dừng",
+    "removeStop": "Bỏ {{name}}",
+    "rounds": "Số vòng",
+    "needTwoStops": "Cần ít nhất 2 điểm dừng để chạy nhiều vòng.",
+    "submitPatrol": "Gửi nhiệm vụ tuần tra"
+  },
+  "deliveries": {
+    "tabs": {
+      "all": "Tất cả",
+      "active": "Đang giao",
+      "upcoming": "Sắp tới",
+      "completed": "Đã xong"
+    },
+    "activeTitle": "Đơn đang giao",
+    "listTitle": "Đơn gần đây & sắp tới",
+    "viewAll": "Xem tất cả đơn",
+    "empty": {
+      "all": "Bạn chưa có đơn giao nào.",
+      "active": "Hiện không có đơn nào đang giao.",
+      "upcoming": "Không có đơn hẹn giờ.",
+      "completed": "Chưa có đơn đã xong."
+    },
+    "create": "Tạo đơn giao",
+    "columns": {
+      "id": "#"
+    }
+  },
+  "detail": {
+    "route": "Lộ trình",
+    "package": "Loại hàng",
+    "note": "Ghi chú",
+    "requestedAt": "Thời gian tạo",
+    "scheduledAt": "Hẹn lấy hàng",
+    "finishedAt": "Kết thúc",
+    "requester": "Người yêu cầu",
+    "progress": "Tiến trình",
+    "cancelTitle": "Hủy đơn giao #{{id}}?",
+    "cancelBody": "Robot sẽ dừng đơn này và quay lại phục vụ. Không thể hoàn tác.",
+    "cancelConfirm": "Hủy đơn",
+    "keep": "Giữ đơn",
+    "cancelled": "Đã hủy đơn giao #{{id}}",
+    "kind": "Loại nhiệm vụ",
+    "stops": "Điểm dừng",
+    "rounds": "Số vòng",
+    "roundsValue": "{{done}}/{{rounds}} vòng",
+    "error": "Lỗi"
+  },
+  "tracking": {
+    "route": "Lộ trình giao hàng",
+    "legend": {
+      "pickup": "Lấy hàng",
+      "route": "Lộ trình",
+      "destination": "Điểm đến"
+    },
+    "waitingRobot": "Đang chờ robot",
+    "contactSupport": "Liên hệ hỗ trợ",
+    "viewFullMap": "Xem bản đồ lớn",
+    "exitFullMap": "Thu nhỏ bản đồ",
+    "cancelRequest": "Hủy yêu cầu",
+    "noActive": "Không có đơn đang giao",
+    "noActiveBody": "Tạo đơn giao để theo dõi robot tại đây.",
+    "yourActive": "Các đơn đang giao",
+    "zoomIn": "Phóng to",
+    "zoomOut": "Thu nhỏ",
+    "recenter": "Căn giữa lộ trình",
+    "floors": "Tầng",
+    "supportTitle": "Liên hệ hỗ trợ",
+    "supportBody": "Đội vận hành robot sẽ hỗ trợ đơn giao #{{id}} của bạn.",
+    "supportHours": "Giờ làm việc",
+    "email": "Email",
+    "phone": "Điện thoại"
+  },
+  "notifications": {
+    "markAllRead": "Đánh dấu tất cả đã đọc",
+    "markRead": "Đánh dấu đã đọc",
+    "today": "Hôm nay",
+    "thisWeek": "Tuần này",
+    "earlier": "Trước đó",
+    "empty": "Bạn đã xem hết thông báo.",
+    "viewDelivery": "Xem đơn",
+    "trackOrder": "Theo dõi đơn",
+    "types": {
+      "request_received": {
+        "title": "Đã nhận yêu cầu giao hàng",
+        "body": "Yêu cầu giao hàng #{{id}} đã được tiếp nhận và đang chờ robot."
+      },
+      "robot_at_pickup": {
+        "title": "Robot đã đến điểm lấy hàng",
+        "body": "Robot {{robot}} đã đến {{pickup}} cho đơn #{{id}}."
+      },
+      "package_loaded": {
+        "title": "Đã bỏ hàng lên robot",
+        "body": "Món hàng của bạn đã được đặt lên robot {{robot}}."
+      },
+      "near_destination": {
+        "title": "Sắp đến nơi",
+        "body": "Robot {{robot}} đang đến gần {{dropoff}}."
+      },
+      "robot_arrived": {
+        "title": "Robot đã đến nơi",
+        "body": "Robot {{robot}} đang ở {{dropoff}} với đơn #{{id}}. Vui lòng nhận hàng."
+      },
+      "delivered": {
+        "title": "Giao hàng thành công",
+        "body": "Đơn #{{id}} đã được giao đến {{dropoff}}."
+      },
+      "cancelled": {
+        "title": "Đơn giao đã hủy",
+        "body": "Đơn #{{id}} đã được hủy."
+      },
+      "delayed": {
+        "title": "Đơn giao bị chậm",
+        "body": "Nhiệm vụ #{{id}} chậm hơn dự kiến; thời gian đến sẽ được cập nhật."
+      },
+      "action_required": {
+        "title": "Cần bạn xử lý",
+        "body": "Đơn #{{id}} đang chờ tại {{location}}. Vui lòng đến nhận hàng."
+      },
+      "patrol_started": {
+        "title": "Bắt đầu tuần tra",
+        "body": "Robot {{robot}} bắt đầu nhiệm vụ tuần tra #{{id}}."
+      },
+      "patrol_completed": {
+        "title": "Tuần tra hoàn thành",
+        "body": "Nhiệm vụ tuần tra #{{id}} đã xong {{rounds}} vòng."
+      },
+      "task_failed": {
+        "title": "Nhiệm vụ thất bại",
+        "body": "Nhiệm vụ #{{id}} không thực hiện được. Xem chi tiết để biết lý do."
+      }
+    },
+    "emptyCategory": "Không có thông báo nào trong nhóm này.",
+    "category": {
+      "all": "Tất cả",
+      "action": "Cần xử lý",
+      "deliveries": "Cập nhật nhiệm vụ",
+      "issues": "Sự cố"
+    },
+    "tabAlerts": "Cảnh báo",
+    "tabTasks": "Nhiệm vụ của tôi",
+    "viewTask": "Xem nhiệm vụ"
+  },
+  "settings": {
+    "profile": "Hồ sơ",
+    "name": "Họ tên",
+    "email": "Email",
+    "role": "Vai trò",
+    "language": "Ngôn ngữ",
+    "languageHint": "Dùng cho ứng dụng và thông báo của bạn.",
+    "notifications": "Thông báo",
+    "deliveryUpdates": "Tiến trình giao hàng",
+    "deliveryUpdatesHint": "Robot đến điểm lấy hàng, đã bỏ hàng, sắp đến nơi.",
+    "delays": "Chậm trễ và sự cố",
+    "delaysHint": "Khi đơn giao bị trễ hoặc cần bạn xử lý.",
+    "security": "Bảo mật",
+    "currentPassword": "Mật khẩu hiện tại",
+    "newPassword": "Mật khẩu mới",
+    "confirmPassword": "Nhập lại mật khẩu mới",
+    "passwordHint": "Tối thiểu {{count}} ký tự.",
+    "passwordMismatch": "Hai mật khẩu mới không khớp.",
+    "changePassword": "Đổi mật khẩu",
+    "passwordChanged": "Đã đổi mật khẩu",
+    "saved": "Đã lưu cài đặt",
+    "demo": "Dữ liệu demo",
+    "demoHint": "Dữ liệu demo chỉ lưu trong trình duyệt này. Đặt lại sẽ khôi phục các đơn và robot mẫu.",
+    "reset": "Đặt lại dữ liệu demo",
+    "resetDone": "Đã đặt lại dữ liệu demo",
+    "adminLink": "Mở trang quản trị",
+    "title": "Cài đặt",
+    "subtitle": "Dịch vụ robot, đội robot và cấu hình nền tảng.",
+    "tabServices": "Dịch vụ & đội robot",
+    "tabSystem": "Hệ thống",
+    "tabAudit": "Nhật ký thay đổi",
+    "serviceEnabled": "Bật dịch vụ",
+    "overridden": "Đã đổi tại đây; tệp cấu hình ghi khác.",
+    "category": "Loại nhiệm vụ RMF",
+    "capabilities": "Năng lực yêu cầu",
+    "formFields": "Biểu mẫu nhiệm vụ",
+    "fleets": "Đội robot",
+    "fleetsHint": "Dịch vụ chính và năng lực của robot mỗi đội.",
+    "primary": "Loại",
+    "sources": "Dịch vụ: {{services}} · Danh mục: {{catalog}}",
+    "readOnlyHint": "Các giá trị lấy từ config/settings.yaml, thay đổi khi khởi động lại backend."
+  },
+  "login": {
+    "title": "Đăng nhập",
+    "subtitle": "Dùng tài khoản do quản trị viên cấp.",
+    "email": "Email",
+    "password": "Mật khẩu",
+    "showPassword": "Hiện mật khẩu",
+    "hidePassword": "Ẩn mật khẩu",
+    "submit": "Đăng nhập",
+    "submitting": "Đang đăng nhập…",
+    "noAccount": "Chưa có tài khoản? Liên hệ đội vận hành robot.",
+    "demoAccounts": "Tài khoản demo",
+    "demoUser": "Sinh viên",
+    "demoAdmin": "Quản trị viên",
+    "use": "Dùng",
+    "heroTitle": "Vận hành robot cho khuôn viên thông minh",
+    "heroBody": "Kết nối dịch vụ giao vận, vệ sinh và tuần tra trên toàn khuôn viên EIU.",
+    "heroValues": "Tin cậy • Bền vững • Kết nối",
+    "heroDetail": "Theo dõi robot, nhiệm vụ và vận hành khuôn viên trên một nền tảng thống nhất."
+  },
+  "search": {
+    "locations": "Địa điểm",
+    "deliveries": "Đơn giao",
+    "noResults": "Không có kết quả cho “{{query}}”",
+    "close": "Đóng tìm kiếm",
+    "pages": "Trang",
+    "robots": "Robot",
+    "fleets": "Fleet",
+    "users": "Operator",
+    "tasks": "Nhiệm vụ",
+    "openTask": "Xem trong Chẩn đoán",
+    "zones": "Khu vực"
+  },
+  "admin": {
+    "yes": "Có",
+    "no": "Không",
+    "unsaved": "Có thay đổi chưa lưu",
+    "discard": "Bỏ thay đổi",
+    "saveChanges": "Lưu thay đổi",
+    "leaveTitle": "Rời trang khi chưa lưu?",
+    "leaveBody": "Các thay đổi chưa lưu sẽ mất.",
+    "stay": "Ở lại",
+    "leave": "Rời trang",
+    "discardTitle": "Bỏ các thay đổi?",
+    "discardBody": "Bản đồ trở về như lần lưu gần nhất.",
+    "healthDetail": {
+      "engine": "Lưu trữ",
+      "heartbeat_age_s": "Heartbeat gần nhất",
+      "uptime_s": "Thời gian chạy",
+      "ros_domain": "ROS domain",
+      "nav_graph_path": "File nav graph",
+      "fleets_reporting": "Fleet đang báo",
+      "robots": "Robot RMF biết",
+      "enabled": "Bật",
+      "state_age_s": "/fleet_states gần nhất",
+      "online": "Robot trực tuyến",
+      "total": "Tổng robot",
+      "adapter": "Fleet adapter",
+      "interface": "Giao diện VDA5050",
+      "node": "Node",
+      "reported_ago_s": "Báo cáo gần nhất",
+      "interval_s": "Chu kỳ báo cáo",
+      "robots_online": "Robot adapter nghe được",
+      "messages_rx": "Tin nhận",
+      "messages_dropped": "Tin bỏ",
+      "publish_failed": "Gửi lỗi",
+      "connected": "Đã kết nối",
+      "connections_lost": "Số lần mất kết nối"
+    },
+    "overview": {
+      "title": "Tổng quan hệ thống",
+      "subtitle": "Đã cấu hình gì, phần nào có vấn đề, ai thay đổi gì gần đây.",
+      "robots": "Robot",
+      "robotsLine": "{{online}} trực tuyến · {{offline}} mất kết nối",
+      "fleets": "Fleet",
+      "allHealthy": "Tất cả bình thường",
+      "fleetsLine": "{{healthy}} bình thường",
+      "integrations": "Tích hợp",
+      "connected": "Đã kết nối",
+      "needsReview": "Cần kiểm tra",
+      "warnings": "Cảnh báo",
+      "warningsLine": "{{critical}} nghiêm trọng · {{unacked}} chưa xác nhận",
+      "health": "Tình trạng cấu hình và kết nối",
+      "details": "Chi tiết",
+      "recentChanges": "Thay đổi gần đây",
+      "maps": "Bản đồ",
+      "tasksRunning": "Nhiệm vụ đang chạy",
+      "users": "Tài khoản",
+      "usersLine": "{{active}} · {{admins}} quản trị"
+    },
+    "audit": {
+      "title": "Nhật ký thay đổi",
+      "subtitle": "Ai đã làm gì, lúc nào: tài khoản, robot, lane, nav graph, cảnh báo, nhiệm vụ.",
+      "entries": "Mục nhật ký",
+      "search": "Tìm theo người, đối tượng, nội dung",
+      "action": "Hành động",
+      "allActions": "Mọi hành động",
+      "empty": "Chưa có thay đổi nào.",
+      "time": "Thời gian",
+      "actor": "Người thực hiện",
+      "target": "Đối tượng",
+      "change": "Thay đổi",
+      "system": "Hệ thống / dòng lệnh",
+      "closed": "đóng lane {{lanes}}",
+      "opened": "mở lane {{lanes}}",
+      "maintenanceItem": "Bảo trì #{{id}} → {{status}}",
+      "maintenanceStatus": {
+        "planned": "Đã lên lịch",
+        "in_progress": "Đang bảo trì",
+        "done": "Hoàn tất",
+        "cancelled": "Đã hủy"
+      }
+    },
+    "auditAction": {
+      "user": {
+        "create": "tạo tài khoản",
+        "update": "sửa tài khoản",
+        "password": "đặt lại mật khẩu",
+        "disable": "khóa tài khoản"
+      },
+      "auth": {
+        "login": "đăng nhập",
+        "login_failed": "đăng nhập sai",
+        "password_changed": "đổi mật khẩu"
+      },
+      "robot": {
+        "pause": "tạm dừng",
+        "resume": "tiếp tục",
+        "speed_limit": "đổi giới hạn tốc độ",
+        "init_position": "đặt lại vị trí"
+      },
+      "registration": {
+        "add": "đăng ký robot",
+        "remove": "gỡ robot"
+      },
+      "lanes": {
+        "request": "đóng/mở lane"
+      },
+      "nav_graph": {
+        "save": "lưu nav graph"
+      },
+      "alert": {
+        "ack": "xác nhận cảnh báo",
+        "resolve": "đóng cảnh báo"
+      },
+      "task": {
+        "create": "tạo nhiệm vụ",
+        "cancel": "hủy nhiệm vụ",
+        "pause": "tạm dừng nhiệm vụ",
+        "resume": "tiếp tục nhiệm vụ",
+        "reassign": "đổi robot cho nhiệm vụ"
+      },
+      "maintenance": {
+        "create": "tạo bảo trì",
+        "update": "cập nhật bảo trì"
+      },
+      "service": {
+        "enable": "bật dịch vụ",
+        "disable": "tắt dịch vụ"
+      },
+      "zone": {
+        "enable": "bật khu vực",
+        "disable": "tắt khu vực"
+      }
+    },
+    "robots": {
+      "title": "Cấu hình robot",
+      "subtitle": "Định danh, fleet, giao thức, bản đồ và trạm sạc của từng robot; điều khiển khi cần.",
+      "type": "Loại",
+      "interface": "Giao thức",
+      "map": "Bản đồ",
+      "charger": "Trạm sạc",
+      "configure": "Cấu hình",
+      "saved": "Đã áp dụng cho {{robot}}",
+      "detailTitle": "Robot {{robot}}",
+      "detailHint": "Tên, fleet, giao thức và trạm sạc nằm trong file cấu hình của fleet adapter; ở đây đổi được giới hạn tốc độ và thao tác vận hành.",
+      "general": "Chung",
+      "manufacturer": "Nhà sản xuất",
+      "serial": "Số serial",
+      "source": "Khai báo ở",
+      "sourceKind": {
+        "config": "File cấu hình adapter",
+        "runtime": "Đăng ký khi chạy"
+      },
+      "connectivity": "Kết nối",
+      "adapterNode": "Node fleet adapter",
+      "controls": "Điều khiển khả dụng",
+      "navigation": "Điều hướng",
+      "position": "Vị trí",
+      "fleetSpeed": "Tốc độ tối đa của fleet",
+      "operations": "Vận hành",
+      "danger": "Vùng nguy hiểm"
+    },
+    "fleets": {
+      "title": "Cấu hình fleet",
+      "subtitle": "Mỗi fleet: adapter, giao thức, giới hạn, robot, trạm sạc và tình trạng tích hợp.",
+      "general": "Chung",
+      "limits": "Giới hạn chuyển động",
+      "limit": {
+        "linear_speed": "Tốc độ thẳng",
+        "linear_acceleration": "Gia tốc thẳng",
+        "angular_speed": "Tốc độ quay",
+        "angular_acceleration": "Gia tốc quay",
+        "footprint_radius": "Bán kính footprint",
+        "tolerance": "Dung sai kiểm tra"
+      },
+      "robots": "Robot ({{count}})",
+      "noState": "chưa có trạng thái",
+      "chargers": "Trạm sạc",
+      "reservedFor": "giữ cho {{robot}} (đã gỡ)",
+      "free": "Trống",
+      "integration": "Tích hợp",
+      "lastReport": "Báo cáo",
+      "robotsOnline": "Robot adapter nghe được",
+      "configHint": "Thông số fleet nằm trong file cấu hình của fleet adapter; đổi xong cần khởi động lại adapter.",
+      "empty": "Chưa có fleet nào báo registry."
+    },
+    "maps": {
+      "title": "Bản đồ",
+      "subtitle": "Xem bản đồ và lane; đóng/mở lane hoặc sửa nav graph khi chọn chế độ tương ứng.",
+      "view": "Xem",
+      "edit": "Sửa bản đồ",
+      "modeHint": {
+        "view": "Chế độ xem: không thay đổi gì.",
+        "lanes": "Đóng/mở lane: áp dụng ngay cho robot.",
+        "edit": "Sửa nav graph: lưu rồi khởi động lại fleet adapter."
+      }
+    },
+    "infra": {
+      "title": "Hạ tầng",
+      "subtitle": "Trạm sạc, cửa và thang máy theo nav graph.",
+      "chargers": "Trạm sạc",
+      "source": "Nguồn: {{path}}",
+      "noChargers": "Nav graph chưa có trạm sạc.",
+      "name": "Tên",
+      "usedBy": "Robot dùng",
+      "chargersHint": "Thêm trạm sạc bằng Bản đồ → Sửa bản đồ (đánh dấu waypoint là trạm sạc).",
+      "doors": "Cửa",
+      "noDoors": "Nav graph chưa khai báo cửa nào.",
+      "lifts": "Thang máy",
+      "noLifts": "Nav graph chưa khai báo thang máy nào."
+    },
+    "integrations": {
+      "title": "Tích hợp",
+      "subtitle": "Chuỗi từ backend tới robot: cơ sở dữ liệu, gateway, Open-RMF, fleet, fleet adapter, MQTT.",
+      "expandHint": "Bấm một dòng để xem số liệu chi tiết."
+    },
+    "users": {
+      "title": "Người dùng",
+      "subtitle": "Tài khoản được dùng hệ thống và vai trò của họ.",
+      "accounts": "{{count}} tài khoản",
+      "create": "Tạo tài khoản",
+      "created": "Đã tạo {{email}}",
+      "search": "Tìm theo tên hoặc email",
+      "empty": "Không có tài khoản phù hợp.",
+      "name": "Họ tên",
+      "email": "Email",
+      "role": "Vai trò",
+      "status": "Trạng thái",
+      "lastLogin": "Đăng nhập gần nhất",
+      "you": "bạn",
+      "enabled": "Hoạt động",
+      "disabled": "Đã khóa",
+      "edit": "Sửa tài khoản {{name}}",
+      "editShort": "Sửa",
+      "saved": "Đã lưu tài khoản",
+      "password": "Mật khẩu ban đầu",
+      "passwordHint": "Ít nhất {{min}} ký tự; người dùng đổi sau khi đăng nhập.",
+      "selfHint": "Không đổi được vai trò của chính bạn.",
+      "active": "Cho phép đăng nhập",
+      "activeHint": "Tắt để khóa tài khoản; các phiên đang mở bị đăng xuất.",
+      "signOutNote": "Người dùng sẽ bị đăng xuất khỏi mọi thiết bị.",
+      "resetTitle": "Đặt lại mật khẩu cho {{name}}",
+      "resetPassword": "Đặt lại mật khẩu",
+      "newPassword": "Mật khẩu mới",
+      "resetHint": "Ít nhất {{min}} ký tự; người dùng bị đăng xuất.",
+      "passwordSet": "Đã đặt lại mật khẩu"
+    },
+    "roles": {
+      "title": "Vai trò",
+      "subtitle": "Mỗi vai trò được làm gì.",
+      "matrix": "Quyền theo vai trò",
+      "fixed": "Vai trò do backend định nghĩa; gán vai trò ở trang Người dùng.",
+      "permission": "Quyền",
+      "describe": {
+        "user": "Đặt, theo dõi và hủy yêu cầu của chính mình.",
+        "admin": "Vận hành và cấu hình toàn hệ thống (Master Control)."
+      }
+    },
+    "permission": {
+      "delivery_create": "Tạo yêu cầu giao hàng/tuần tra",
+      "delivery_read_own": "Xem yêu cầu của mình",
+      "delivery_cancel_own": "Hủy yêu cầu của mình",
+      "delivery_read_any": "Xem yêu cầu của mọi người",
+      "delivery_cancel_any": "Hủy yêu cầu của mọi người",
+      "fleet_read": "Xem đội robot, nhiệm vụ, cảnh báo",
+      "fleet_control": "Điều khiển robot, xác nhận cảnh báo",
+      "fleet_register": "Đăng ký và gỡ robot",
+      "map_edit": "Đóng/mở lane, sửa nav graph",
+      "user_manage": "Quản lý tài khoản",
+      "admin_access": "Vào Master Control"
+    },
+    "diagnostics": {
+      "title": "Chẩn đoán",
+      "subtitle": "Nhiệm vụ của mọi người dùng và cảnh báo vận hành."
+    },
+    "util": {
+      "active": "Làm việc",
+      "charging": "Sạc",
+      "idle": "Rảnh",
+      "offline": "Mất kết nối",
+      "hint": "Giờ mỗi trạng thái, lấy mẫu mỗi {{s}} s",
+      "day": "Ngày",
+      "empty": "Chưa có mẫu lịch sử trong khoảng này."
+    },
+    "robotPage": {
+      "title": "Robot {{robot}}",
+      "subtitle": "Trạng thái thời gian thực, nhiệm vụ, vị trí, thông số kỹ thuật, lịch sử và sự kiện.",
+      "breadcrumb": "Vị trí trang",
+      "noMission": "Robot không có nhiệm vụ.",
+      "closedAt": "Đã hết lúc {{at}}",
+      "ongoing": "Đang xảy ra",
+      "connectivity": "Kết nối",
+      "stateAge": "Trạng thái {{age}} trước",
+      "mission": "Nhiệm vụ hiện tại",
+      "location": "Vị trí",
+      "near": "Gần {{waypoint}} ({{distance}} m)",
+      "technical": "Thông số kỹ thuật",
+      "utilization": "Mức sử dụng 7 ngày",
+      "recentTasks": "Nhiệm vụ gần đây",
+      "events": "Sự kiện",
+      "eventsHint": "Nhiệm vụ, cảnh báo và thay đổi của robot này",
+      "noEvents": "Chưa có sự kiện.",
+      "battery": "Pin theo thời gian",
+      "range": "Khoảng thời gian",
+      "noSamples": "Chưa có mẫu pin trong khoảng này.",
+      "hours": {
+        "1": "1 giờ",
+        "24": "24 giờ",
+        "168": "7 ngày"
+      },
+      "source": {
+        "task": "Nhiệm vụ",
+        "alert": "Cảnh báo",
+        "audit": "Thay đổi"
+      },
+      "col": {
+        "time": "Thời gian",
+        "level": "Mức",
+        "source": "Nguồn",
+        "event": "Sự kiện",
+        "detail": "Chi tiết"
+      },
+      "advanced": "Chi tiết nâng cao",
+      "tech": {
+        "rmf_mode": "Chế độ RMF",
+        "rmf_task": "Task RMF",
+        "nearest_waypoint": "Waypoint gần nhất",
+        "nearest_distance_m": "Khoảng cách tới waypoint",
+        "level": "Bản đồ",
+        "position": "Vị trí",
+        "adapter": "Fleet adapter",
+        "controls": "Điều khiển khả dụng",
+        "paused": "Tạm dừng (qua web)",
+        "speed_limit_mps": "Giới hạn tốc độ",
+        "fleet_state_age_s": "/fleet_states gần nhất",
+        "interface": "Giao diện VDA5050",
+        "manufacturer": "Nhà sản xuất",
+        "serial": "Số serial",
+        "charger": "Trạm sạc",
+        "path_points": "Điểm lộ trình RMF"
+      },
+      "taskEvent": {
+        "requested": "tạo yêu cầu",
+        "assigned": "được giao robot",
+        "started": "bắt đầu",
+        "arrived_pickup": "tới điểm lấy hàng",
+        "picked_up": "đã lấy hàng",
+        "arriving": "sắp tới nơi",
+        "arrived": "đã tới nơi",
+        "completed": "hoàn thành",
+        "cancelled": "bị hủy",
+        "failed": "thất bại",
+        "delayed": "bị chậm"
+      }
+    },
+    "analytics": {
+      "title": "Phân tích",
+      "subtitle": "Hiệu quả nhiệm vụ, mức sử dụng robot và cảnh báo, tính từ dữ liệu đã ghi.",
+      "export": "Xuất CSV",
+      "range": "Khoảng thời gian",
+      "ranges": {
+        "1": "Hôm nay",
+        "7": "7 ngày",
+        "30": "30 ngày"
+      },
+      "minutes": "{{v}} phút",
+      "completed": "Hoàn thành",
+      "failed": "Thất bại",
+      "cancelled": "Đã hủy",
+      "createdShort": "Tạo mới",
+      "tasksPerDay": "Nhiệm vụ theo ngày",
+      "utilization": "Mức sử dụng đội robot",
+      "places": "Địa điểm nhiều yêu cầu nhất",
+      "placesHint": "Điểm đến và điểm dừng được yêu cầu nhiều nhất",
+      "place": "Địa điểm",
+      "count": "Số lần",
+      "battery": "Phân bố pin hiện tại",
+      "batteryHint": "Số robot theo mức pin",
+      "robots": "Robot",
+      "alertsPerDay": "Cảnh báo theo ngày",
+      "alertCodes": "Loại cảnh báo thường gặp",
+      "noTasks": "Chưa có nhiệm vụ trong khoảng này.",
+      "kpi": {
+        "created": "Nhiệm vụ tạo mới",
+        "outcome": "{{completed}} xong · {{failed}} lỗi · {{cancelled}} hủy",
+        "success": "Tỉ lệ thành công",
+        "successHint": "Hoàn thành / (hoàn thành + thất bại)",
+        "duration": "Thời gian hoàn thành TB",
+        "durationHint": "Từ lúc yêu cầu tới khi xong",
+        "wait": "Chờ robot TB",
+        "waitHint": "Từ lúc yêu cầu tới khi có robot",
+        "utilization": "Mức sử dụng đội robot",
+        "utilizationHint": "Giờ làm việc / giờ trực tuyến",
+        "alerts": "Cảnh báo",
+        "alertsHint": "{{critical}} nghiêm trọng trong kỳ"
+      },
+      "alertCode": {
+        "rmf": {
+          "unavailable": "Mất kết nối Open-RMF",
+          "offline": "Không fleet nào báo"
+        },
+        "fleet": {
+          "offline": "Fleet mất kết nối"
+        },
+        "robot": {
+          "offline": "Robot mất kết nối",
+          "emergency": "Dừng khẩn cấp",
+          "adapter_error": "Lỗi adapter",
+          "battery_low": "Pin yếu"
+        },
+        "maintenance": {
+          "due": "Đến hạn bảo trì"
+        },
+        "adapter": {
+          "robots_offline": "Adapter mất robot",
+          "attention": "Sự cố adapter"
+        },
+        "task": {
+          "waiting": "Nhiệm vụ chờ lâu",
+          "failed": "Nhiệm vụ thất bại"
+        }
+      }
+    }
+  },
+  "errors": {
+    "generic": "Đã có lỗi xảy ra. Vui lòng thử lại.",
+    "network": {
+      "unreachable": "Không kết nối được máy chủ. Kiểm tra mạng của bạn."
+    },
+    "auth": {
+      "invalid_credentials": "Sai email hoặc mật khẩu.",
+      "too_many_attempts": "Thử quá nhiều lần. Vui lòng thử lại sau một phút.",
+      "required": "Vui lòng đăng nhập lại.",
+      "csrf": "Phiên làm việc đã hết hạn. Vui lòng tải lại trang.",
+      "forbidden": "Bạn không có quyền thực hiện thao tác này.",
+      "wrong_password": "Mật khẩu hiện tại không đúng.",
+      "password_too_short": "Mật khẩu mới quá ngắn."
+    },
+    "delivery": {
+      "unknown_location": "Hãy chọn điểm lấy hàng và điểm đến.",
+      "same_location": "Điểm lấy hàng và điểm đến phải khác nhau.",
+      "invalid_package": "Hãy chọn loại hàng.",
+      "note_too_long": "Ghi chú quá dài.",
+      "invalid_schedule": "Hãy chọn giờ lấy hàng từ 1 phút đến 14 ngày tính từ bây giờ.",
+      "limit_reached": "Bạn đang có {{max}} đơn chưa hoàn thành.",
+      "not_found": "Đơn giao này không tồn tại.",
+      "not_cancellable": "Đơn giao này không thể hủy nữa.",
+      "not_dispatched_yet": "Nhiệm vụ chưa được RMF nhận, thử lại sau vài giây."
+    },
+    "patrol": {
+      "invalid_stops": "Chọn từ 1 điểm dừng trở lên (tối đa theo cấu hình).",
+      "repeated_stop": "Hai điểm dừng liền nhau không được trùng.",
+      "invalid_rounds": "Số vòng không hợp lệ.",
+      "needs_two_stops": "Cần ít nhất 2 điểm dừng để chạy nhiều vòng."
+    },
+    "rmf": {
+      "unavailable": "Backend chưa kết nối được Open-RMF."
+    },
+    "request": {
+      "invalid": "Yêu cầu không hợp lệ."
+    },
+    "task": {
+      "invalid_kind": "Loại nhiệm vụ không hợp lệ.",
+      "field_required": "Cần nhập {{field}}.",
+      "same_location": "{{field}} phải khác điểm nhận.",
+      "unknown_location": "Địa điểm không hợp lệ ở {{field}}.",
+      "unknown_area": "Vùng không hợp lệ.",
+      "unknown_route": "Tuyến không hợp lệ.",
+      "unknown_zone": "Khu vực không hợp lệ.",
+      "invalid_option": "Hãy chọn giá trị cho {{field}}.",
+      "invalid_number": "{{field}} vượt giới hạn.",
+      "text_too_long": "{{field}} quá dài.",
+      "not_in_zone": "{{field}} không thuộc khu vực đã chọn.",
+      "invalid_repeat": "Lặp lại cần có giờ bắt đầu.",
+      "unknown_service": "Dịch vụ không tồn tại.",
+      "not_pausable": "Không thể tạm dừng nhiệm vụ lúc này.",
+      "not_resumable": "Không thể tiếp tục nhiệm vụ này.",
+      "not_reassignable": "Chỉ gán lại được nhiệm vụ chưa bắt đầu."
+    },
+    "dispatch": {
+      "no_response": "Bộ điều phối RMF không trả lời.",
+      "refused": "RMF từ chối nhiệm vụ."
+    },
+    "cancel": {
+      "no_response": "RMF không trả lời yêu cầu hủy.",
+      "refused": "RMF từ chối hủy."
+    },
+    "command": {
+      "no_answer": "Fleet adapter không trả lời kịp.",
+      "refused": "Fleet adapter từ chối.",
+      "service_unavailable": "Dịch vụ điều khiển của robot chưa sẵn sàng.",
+      "unknown_robot": "Gateway chưa thấy điều khiển của robot này.",
+      "call_failed": "Gọi dịch vụ thất bại.",
+      "no_adapter": "Không có fleet adapter nào nhận yêu cầu.",
+      "superseded": "Đã có yêu cầu mới hơn.",
+      "publish_failed": "Gateway không gửi được lệnh.",
+      "bad_body": "Lệnh không hợp lệ.",
+      "expired": "Lệnh quá hạn.",
+      "stale": "Nav graph đã bị thay đổi ở nơi khác; tải lại rồi sửa.",
+      "no_nav_graph": "Gateway chưa cấu hình nav_graph_path.",
+      "bad_yaml": "Nav graph không phải YAML hợp lệ.",
+      "bad_lane": "Có lane trỏ tới waypoint không tồn tại."
+    },
+    "robot": {
+      "not_found": "Không có robot này.",
+      "invalid_speed": "Tốc độ phải là số ≥ 0.",
+      "invalid_pose": "Vị trí không hợp lệ.",
+      "unknown_waypoint": "Không có waypoint này trên tầng của robot.",
+      "unknown_action": "Thao tác không hợp lệ."
+    },
+    "registration": {
+      "invalid": "Thiếu thông tin đăng ký."
+    },
+    "lanes": {
+      "invalid": "Chỉ số lane không hợp lệ.",
+      "no_fleet": "Chưa có fleet nào để gửi."
+    },
+    "nav_graph": {
+      "duplicate_name": "Trùng tên waypoint",
+      "bad_position": "Tọa độ không hợp lệ",
+      "bad_lane": "Lane không hợp lệ",
+      "duplicate_lane": "Trùng lane",
+      "catalog_waypoint_missing": "Không được xóa/đổi tên waypoint đang dùng cho địa điểm",
+      "stale": "Nav graph đã bị thay đổi; tải lại rồi sửa.",
+      "unavailable": "Chưa có nav graph từ gateway.",
+      "invalid": "Dữ liệu nav graph không hợp lệ."
+    },
+    "alert": {
+      "not_found": "Không có cảnh báo này.",
+      "resolved": "Cảnh báo đã đóng.",
+      "still_active": "Sự cố vẫn đang xảy ra; cảnh báo tự đóng khi sự cố hết."
+    },
+    "alerts": {
+      "invalid_state": "Bộ lọc cảnh báo không hợp lệ."
+    },
+    "tasks": {
+      "invalid_group": "Nhóm nhiệm vụ không hợp lệ."
+    },
+    "users": {
+      "invalid": "Thông tin tài khoản không hợp lệ.",
+      "email_taken": "Email này đã có tài khoản.",
+      "self": "Không thể đổi vai trò hay khóa chính tài khoản của bạn.",
+      "not_found": "Không có tài khoản này.",
+      "invalid_service": "Dịch vụ không tồn tại.",
+      "invalid_zone": "Khu vực không tồn tại.",
+      "invalid_permission": "Không thể cấp quyền này cho operator."
+    },
+    "analytics": {
+      "invalid_range": "Khoảng thời gian không hợp lệ."
+    },
+    "SERVICE_NOT_ALLOWED": "Bạn không có quyền với dịch vụ này.",
+    "PERMISSION_DENIED": "Bạn không có quyền thực hiện thao tác này.",
+    "ADMIN_ONLY": "Chỉ quản trị viên được thực hiện.",
+    "maintenance": {
+      "invalid": "Chọn robot và mô tả công việc.",
+      "invalid_window": "Khung bảo trì phải kết thúc sau khi bắt đầu.",
+      "closed": "Mục bảo trì đã đóng."
+    }
+  },
+  "kind": {
+    "delivery": "Giao hàng",
+    "patrol": "Tuần tra",
+    "clean": "Vệ sinh"
+  },
+  "ops": {
+    "tabs": {
+      "robots": "Robot",
+      "map": "Bản đồ & lane",
+      "system": "Hệ thống",
+      "overview": "Tổng quan",
+      "tasks": "Nhiệm vụ",
+      "alerts": "Cảnh báo"
+    },
+    "activity": {
+      "idle": "Rảnh",
+      "moving": "Đang chạy",
+      "waiting": "Đang chờ",
+      "offline": "Mất kết nối"
+    },
+    "robots": {
+      "title": "Robot trong fleet",
+      "empty": "Chưa có robot nào báo trạng thái.",
+      "fleet": "Fleet",
+      "status": "Trạng thái",
+      "battery": "Pin",
+      "task": "Nhiệm vụ",
+      "speed": "Giới hạn tốc độ",
+      "actions": "Thao tác",
+      "noTask": "—",
+      "speedNone": "Không giới hạn",
+      "speedUnknown": "—",
+      "noControls": "Adapter chưa cung cấp điều khiển",
+      "pause": "Tạm dừng",
+      "resume": "Tiếp tục",
+      "speedLimit": "Giới hạn tốc độ",
+      "setPosition": "Đặt lại vị trí",
+      "remove": "Gỡ khỏi fleet",
+      "pauseTitle": "Tạm dừng {{robot}}?",
+      "pauseBody": "Robot dừng tại chỗ cho tới khi được tiếp tục; nhiệm vụ của nó tạm dừng.",
+      "done": "{{robot}}: {{action}} xong",
+      "speedTitle": "Giới hạn tốc độ {{robot}}",
+      "speedLabel": "Tốc độ tối đa (m/s)",
+      "speedHint": "0 = bỏ giới hạn. Fleet adapter kiểm tra giá trị.",
+      "positionTitle": "Đặt lại vị trí {{robot}}",
+      "waypoint": "Waypoint",
+      "yaw": "Hướng (độ)",
+      "positionHint": "Robot được định vị lại tại waypoint đã chọn.",
+      "removeTitle": "Gỡ {{robot}} khỏi {{fleet}}?",
+      "removeBody": "Robot ngừng nhận nhiệm vụ. Tên, mã và trạm sạc của nó được giữ lại tới khi adapter khởi động lại.",
+      "apply": "Áp dụng",
+      "sent": "Đang chờ fleet adapter…",
+      "speedShort": "Tốc độ",
+      "robot": "Robot",
+      "view": "Kiểu xem",
+      "cards": "Dạng thẻ",
+      "table": "Dạng bảng",
+      "count": "{{count}} robot",
+      "removeType": "Gõ “{{robot}}” để xác nhận"
+    },
+    "pending": {
+      "title": "Robot mới phát hiện",
+      "empty": "Không có robot nào đang chờ đăng ký.",
+      "seenBy": "Thấy bởi {{fleets}}",
+      "notLocalized": "chưa định vị",
+      "noState": "chưa có trạng thái",
+      "removedAs": "Đã gỡ, từng là {{name}} ({{fleet}})",
+      "register": "Đăng ký",
+      "discovered": "Mới phát hiện"
+    },
+    "register": {
+      "title": "Đăng ký {{id}}",
+      "fleet": "Fleet",
+      "name": "Tên robot",
+      "charger": "Trạm sạc",
+      "responsiveWait": "Chờ chủ động (responsive wait)",
+      "confirmUnverified": "Vẫn thêm dù có kiểm tra không xác minh được",
+      "check": "Kiểm tra",
+      "passed": "Kiểm tra đạt — có thể đăng ký.",
+      "failed": "Không đạt kiểm tra.",
+      "needsConfirmation": "Chỉ còn kiểm tra không xác minh được; đánh dấu ô xác nhận để thêm.",
+      "submit": "Đăng ký robot",
+      "registered": "Đã đăng ký {{name}} vào {{fleet}}",
+      "notSaved": "chưa lưu cho lần khởi động sau",
+      "removed": "Đã gỡ {{name}}",
+      "errors": "Lỗi",
+      "warnings": "Cảnh báo",
+      "recheck": "Thông tin đã đổi — kiểm tra lại."
+    },
+    "map": {
+      "title": "Bản đồ vận hành",
+      "view": "Xem",
+      "lanes": "Đóng/mở lane",
+      "edit": "Sửa nav graph",
+      "lanesHint": "Bấm một lane để chọn/bỏ chọn. Bật Chọn vùng rồi kéo chuột: mọi lane đi qua khung được chọn.",
+      "closeSelected": "Đóng {{count}} lane",
+      "openSelected": "Mở {{count}} lane",
+      "openAll": "Mở tất cả",
+      "closedCount": "{{count}} lane đang đóng",
+      "clear": "Bỏ chọn",
+      "lanesSent": "Đã gửi yêu cầu lane tới {{fleets}}",
+      "legendOpen": "Lane mở",
+      "legendClosed": "Lane đóng",
+      "legendSelected": "Đang chọn",
+      "areaSelect": "Chọn vùng",
+      "layers": "Lớp hiển thị",
+      "layer": {
+        "robots": "Robot",
+        "lanes": "Đồ thị lane",
+        "labels": "Tên waypoint"
+      }
+    },
+    "editor": {
+      "unavailable": "Gateway chưa cấu hình nav_graph_path nên chưa sửa được nav graph.",
+      "select": "Chọn / kéo",
+      "addVertex": "Thêm waypoint",
+      "addLane": "Nối lane",
+      "bidirectional": "Hai chiều",
+      "vertex": "Waypoint #{{index}}",
+      "name": "Tên",
+      "charger": "Trạm sạc",
+      "deleteVertex": "Xóa waypoint",
+      "lane": "Lane {{from}} → {{to}}",
+      "deleteLane": "Xóa lane",
+      "save": "Lưu nav graph",
+      "discard": "Hủy thay đổi",
+      "saved": "Đã lưu nav graph",
+      "changes": "Có thay đổi chưa lưu",
+      "restartNote": "Fleet adapter đọc nav graph lúc khởi động: khởi động lại adapter để robot dùng đồ thị mới.",
+      "pickFirst": "Chọn waypoint đầu",
+      "pickSecond": "Chọn waypoint thứ hai",
+      "addHint": "Bấm lên bản đồ để thêm waypoint.",
+      "file": "File",
+      "confirmDiscard": "Bỏ các thay đổi chưa lưu?",
+      "summary": "{{vertices}} waypoint, {{lanes}} lane",
+      "selectHint": "Bấm một waypoint hoặc lane để sửa; kéo waypoint để di chuyển."
+    },
+    "system": {
+      "rmf": "Kết nối Open-RMF",
+      "gateway": "Gateway",
+      "domain": "ROS domain {{id}}",
+      "taskEvents": "Task events",
+      "adapters": "Fleet adapter",
+      "noAdapters": "Chưa thấy fleet adapter nào.",
+      "uptime": "Chạy {{time}}",
+      "robots": "{{online}}/{{registered}} robot trực tuyến",
+      "mqttOk": "MQTT đã kết nối",
+      "mqttLost": "Mất MQTT",
+      "rx": "{{count}} tin nhận",
+      "dropped": "{{count}} tin bị bỏ",
+      "reported": "Báo cáo {{ago}} trước, mỗi {{interval}}",
+      "waiting": "Chờ báo cáo đầu tiên",
+      "rate": "Tin/giây",
+      "attention": "Cần chú ý",
+      "allGood": "Không có vấn đề nào."
+    },
+    "adapterStatus": {
+      "ok": "Bình thường",
+      "warning": "Cảnh báo",
+      "critical": "Nghiêm trọng",
+      "silent": "Im lặng",
+      "waiting": "Đang chờ",
+      "found": "Đã thấy",
+      "absent": "Không thấy"
+    },
+    "mode": {
+      "idle": "Rảnh",
+      "charging": "Đang sạc",
+      "moving": "Đang chạy",
+      "paused": "Tạm dừng",
+      "waiting": "Đang chờ",
+      "emergency": "Dừng khẩn cấp",
+      "going_home": "Về trạm",
+      "docking": "Đang vào trạm",
+      "adapter_error": "Lỗi adapter",
+      "cleaning": "Đang dọn",
+      "offline": "Mất kết nối"
+    },
+    "tasks": {
+      "title": "Nhiệm vụ của mọi người dùng",
+      "subtitle": "Giao hàng, tuần tra và các loại nhiệm vụ khác trên Open-RMF.",
+      "search": "Tìm theo mã, robot, người yêu cầu, địa điểm",
+      "kind": "Loại nhiệm vụ",
+      "allKinds": "Mọi loại",
+      "empty": "Không có nhiệm vụ nào.",
+      "requester": "Người yêu cầu",
+      "rmfTask": "Mã task RMF",
+      "note": "Ghi chú",
+      "cancelTitle": "Hủy nhiệm vụ #{{id}}?",
+      "cancelBody": "Nhiệm vụ của {{name}} sẽ bị hủy trên Open-RMF; người yêu cầu nhận thông báo.",
+      "cancelSent": "Đã gửi yêu cầu hủy #{{id}}",
+      "group": {
+        "active": "Đang chạy",
+        "scheduled": "Hẹn giờ",
+        "finished": "Đã kết thúc",
+        "all": "Tất cả"
+      },
+      "unassigned": "Chưa có robot ({{count}})",
+      "noneUnassigned": "Mọi nhiệm vụ đều đã có robot.",
+      "late": "Trễ ({{count}})",
+      "lateHint": "Quá giờ dự kiến hơn 2 phút",
+      "noneLate": "Không có nhiệm vụ trễ.",
+      "lateBy": "trễ {{min}} phút",
+      "kpi": {
+        "active": "Đang chạy",
+        "queued": "Chờ robot",
+        "late": "Trễ",
+        "completedToday": "Xong hôm nay",
+        "failedToday": "Lỗi hôm nay",
+        "avgDuration": "Thời gian TB hôm nay"
+      }
+    },
+    "overview": {
+      "robots": "Robot trực tuyến",
+      "tasks": "Nhiệm vụ đang chạy",
+      "alerts": "Cảnh báo đang mở",
+      "moving": "đang chạy",
+      "idle": "rảnh",
+      "charging": "đang sạc",
+      "paused": "tạm dừng",
+      "offline": "mất kết nối",
+      "queued": "chờ robot",
+      "scheduled": "hẹn giờ",
+      "completedToday": "xong hôm nay",
+      "failedToday": "lỗi hôm nay",
+      "critical": "nghiêm trọng",
+      "unacked": "chưa xác nhận",
+      "map": "Bản đồ đội robot",
+      "attention": "Cần chú ý",
+      "health": "Tình trạng hệ thống"
+    },
+    "health": {
+      "database": "Cơ sở dữ liệu",
+      "gateway": "Gateway (ROS domain {{domain}})",
+      "rmf": "Open-RMF",
+      "task_events": "Task events của adapter",
+      "fleet": "Fleet {{name}} · {{online}}/{{total}} robot",
+      "adapter": "Fleet adapter {{name}}",
+      "mqtt": "MQTT của {{name}}"
+    },
+    "healthStatus": {
+      "ok": "Bình thường",
+      "warning": "Cảnh báo",
+      "critical": "Lỗi",
+      "unknown": "Chưa rõ"
+    }
+  },
+  "theme": {
+    "label": "Giao diện",
+    "light": "Sáng",
+    "dark": "Tối",
+    "system": "Theo hệ thống",
+    "hint": "Theo hệ thống dùng cài đặt sáng/tối của máy tính hoặc điện thoại; lựa chọn được lưu trên thiết bị này."
+  },
+  "alerts": {
+    "title": "Cảnh báo vận hành",
+    "subtitle": "Tự mở khi có sự cố và tự đóng khi sự cố hết; xác nhận để báo đang xử lý.",
+    "open": "Đang mở",
+    "history": "Lịch sử",
+    "none": "Không có cảnh báo nào.",
+    "noHistory": "Chưa có cảnh báo nào.",
+    "ack": "Xác nhận",
+    "resolve": "Đóng",
+    "ackAll": "Xác nhận tất cả ({{count}})",
+    "activeFor": "Đang xảy ra {{time}}",
+    "openedAgo": "Mở {{time}} trước",
+    "ended": "Đã hết lúc {{at}}",
+    "closedBy": "{{name}} đóng lúc {{at}}",
+    "ackedBy": "{{name}} đã xác nhận lúc {{at}}",
+    "hours": "{{count}} giờ",
+    "severity": {
+      "critical": "Nghiêm trọng",
+      "warning": "Cảnh báo",
+      "info": "Thông tin"
+    },
+    "code": {
+      "rmf": {
+        "unavailable": {
+          "title": "Mất kết nối Open-RMF",
+          "detail": "Gateway không chạy hoặc backend không nối được Redis."
+        },
+        "offline": {
+          "title": "Không fleet nào gửi trạng thái",
+          "detail": "Gateway chạy nhưng không nhận /fleet_states: fleet adapter dừng hoặc sai ROS domain."
+        }
+      },
+      "robot": {
+        "offline": {
+          "title": "{{robot}} mất kết nối",
+          "detail": "RMF không còn nhận trạng thái của robot."
+        },
+        "emergency": {
+          "title": "{{robot}} dừng khẩn cấp",
+          "detail": "Fleet adapter báo chế độ khẩn cấp."
+        },
+        "adapter_error": {
+          "title": "{{robot}} lỗi adapter",
+          "detail": "Fleet adapter báo lỗi cho robot này."
+        },
+        "battery_low": {
+          "title": "{{robot}} pin yếu ({{battery}}%)",
+          "detail": "Robot không ở trạm sạc."
+        }
+      },
+      "task": {
+        "waiting": {
+          "title": "Nhiệm vụ #{{id}} chờ robot {{minutes}} phút",
+          "detail": "Chưa robot nào nhận nhiệm vụ."
+        },
+        "failed": {
+          "title": "Nhiệm vụ #{{id}} thất bại",
+          "detail": "{{error}}"
+        }
+      },
+      "adapter": {
+        "robots_offline": {
+          "title": "{{fleet}}: {{online}}/{{registered}} robot đang báo trạng thái",
+          "detail": "Robot im lặng lâu nhất: {{robot}} ({{age}} s). RMF vẫn giữ vị trí cuối của robot."
+        }
+      },
+      "fleet": {
+        "offline": {
+          "title": "Fleet {{fleet}} mất kết nối ({{robots}} robot)",
+          "detail": "Không robot nào của fleet gửi trạng thái: fleet adapter dừng, mất broker hoặc sai ROS domain."
+        }
+      },
+      "maintenance": {
+        "due": {
+          "title": "{{robot}}: đến hạn {{title}}",
+          "detail": "Bảo trì đã quá hạn."
+        }
+      }
+    }
+  },
+  "adminNav": {
+    "overview": "Tổng quan",
+    "configuration": "Cấu hình",
+    "robots": "Robot",
+    "fleets": "Fleet",
+    "maps": "Bản đồ",
+    "infrastructure": "Hạ tầng",
+    "integrations": "Tích hợp",
+    "access": "Truy cập",
+    "users": "Người dùng",
+    "roles": "Vai trò",
+    "system": "Hệ thống",
+    "diagnostics": "Chẩn đoán",
+    "diagnosticsShort": "Chẩn đoán",
+    "audit": "Nhật ký thay đổi",
+    "menu": "Menu",
+    "userPortal": "Robot Services",
+    "portal": "Master Control",
+    "analytics": "Phân tích"
+  },
+  "charts": {
+    "table": "Xem bảng"
+  },
+  "account": {
+    "title": "Tài khoản",
+    "subtitle": "Hồ sơ, ngôn ngữ, thông báo và quyền truy cập được quản trị viên cấp.",
+    "access": "Quyền của bạn",
+    "accessHint": "Do quản trị viên thiết lập."
+  },
+  "activity": {
+    "created": "Đã tạo",
+    "running": "Đang chạy",
+    "completed": "Hoàn thành",
+    "failed": "Thất bại",
+    "empty": "Không có hoạt động nhiệm vụ trong khoảng này.",
+    "range": "Khoảng thời gian",
+    "when": "Thời gian",
+    "today": "Hôm nay",
+    "week": "Tuần",
+    "month": "Tháng"
+  },
+  "analytics": {
+    "svc": {
+      "created": "{{count}} nhiệm vụ đã tạo",
+      "deliveries": "Lượt giao",
+      "avgDelivery": "Thời gian giao TB",
+      "distance": "Quãng đường",
+      "areaCleaned": "Diện tích đã vệ sinh",
+      "cleaningDuration": "Thời lượng vệ sinh",
+      "coverage": "Độ phủ",
+      "rounds": "Vòng tuần tra",
+      "zones": "Khu vực đã phủ",
+      "avgRound": "Thời gian vòng TB",
+      "noData": "Chưa có dữ liệu"
+    }
+  },
+  "empty": {
+    "noAlerts": "Mọi hệ thống đang hoạt động bình thường.",
+    "noFleetView": "Tài khoản của bạn không được xem đội robot. Hãy liên hệ quản trị viên.",
+    "noMatch": "Không có kết quả khớp bộ lọc.",
+    "noRobots": "Hiện chưa có robot nào cho dịch vụ này.",
+    "noRobotsBody": "Robot sẽ hiện ở đây khi đội robot báo trạng thái về hệ thống.",
+    "noSchedule": "Chưa có nhiệm vụ robot nào được lên lịch.",
+    "noServices": {
+      "title": "Tài khoản của bạn chưa được cấp dịch vụ robot nào.",
+      "body": "Hãy liên hệ quản trị viên."
+    },
+    "noTasks": "Hiện không có nhiệm vụ robot nào."
+  },
+  "filters": {
+    "all": "Tất cả",
+    "allServices": "Mọi dịch vụ",
+    "allRobots": "Mọi robot",
+    "allZones": "Mọi khu vực",
+    "service": "Dịch vụ",
+    "status": "Trạng thái",
+    "robot": "Robot",
+    "zone": "Khu vực"
+  },
+  "fleet": {
+    "title": "Đội robot",
+    "subtitle": "Mọi robot thuộc dịch vụ của bạn: trạng thái, pin, nhiệm vụ, vị trí và kết nối.",
+    "tabRobots": "Robot",
+    "tabFleets": "Đội robot & đăng ký",
+    "search": "Tìm robot",
+    "col": {
+      "robot": "Robot",
+      "type": "Loại",
+      "status": "Trạng thái",
+      "battery": "Pin",
+      "task": "Nhiệm vụ hiện tại",
+      "location": "Vị trí",
+      "runtime": "Thời gian chạy",
+      "connection": "Kết nối",
+      "fleet": "Đội",
+      "actions": "Thao tác"
+    },
+    "details": "Chi tiết",
+    "eta": "Dự kiến đến",
+    "health": "Sức khỏe",
+    "lastUpdate": "Cập nhật lúc",
+    "noTask": "Không có nhiệm vụ",
+    "robotGone": "Robot này không còn báo trạng thái.",
+    "robotOf": "Robot {{service}}",
+    "serviceSection": "Chi tiết {{service}}",
+    "viewRobot": "Xem robot",
+    "viewTask": "Xem nhiệm vụ"
+  },
+  "integrations": {
+    "title": "Tích hợp",
+    "subtitle": "Open-RMF, ROS 2 gateway, fleet adapter VDA5050, MQTT và API của nhà cung cấp.",
+    "fleets": "Đội đã kết nối",
+    "lastUpdate": "Cập nhật lúc",
+    "logs": "Nhật ký",
+    "noLogs": "Chưa có mục nào.",
+    "name": {
+      "open_rmf": "Open-RMF",
+      "ros2_gateway": "ROS 2 Gateway",
+      "vda5050": "Fleet adapter VDA5050",
+      "mqtt": "MQTT Broker",
+      "vendor": "API nhà cung cấp"
+    },
+    "status": {
+      "ok": "Ổn định",
+      "warning": "Suy giảm",
+      "critical": "Mất kết nối",
+      "unknown": "Chưa rõ",
+      "not_configured": "Chưa cấu hình"
+    }
+  },
+  "live": {
+    "title": "Vận hành trực tiếp",
+    "subtitle": "Robot đang ở đâu, làm gì và cần xử lý gì.",
+    "robots": "Robot"
+  },
+  "locations": {
+    "title": "Địa điểm",
+    "subtitle": "Khu vực, địa điểm, vùng vệ sinh, tuyến tuần tra, bản đồ tầng và hạ tầng.",
+    "tabCatalog": "Khu vực & địa điểm",
+    "tabMap": "Bản đồ & làn",
+    "tabInfrastructure": "Hạ tầng",
+    "zoneOpen": "Mở cho nhiệm vụ robot",
+    "places": "Địa điểm ({{count}})",
+    "areas": "Vùng vệ sinh",
+    "routes": "Tuyến tuần tra",
+    "catalogHint": "Địa điểm, vùng và tuyến lấy từ danh mục (config/site.yaml); khu vực có thể đóng tại đây."
+  },
+  "maintenance": {
+    "title": "Bảo trì",
+    "subtitle": "Sức khỏe, lịch bảo trì và giờ hoạt động của mọi robot.",
+    "robots": "Robot",
+    "needsAttention": "Cần xử lý",
+    "col": {
+      "status": "Trạng thái bảo trì",
+      "next": "Lần bảo trì tới",
+      "hours": "Giờ hoạt động",
+      "issue": "Vấn đề"
+    },
+    "status": {
+      "none": "Không cần bảo trì",
+      "scheduled": "Đã lên lịch",
+      "due_soon": "Sắp đến hạn",
+      "due": "Đến hạn",
+      "in_progress": "Đang bảo trì"
+    },
+    "noneRequired": "Không cần bảo trì",
+    "hours_one": "{{count}} giờ hoạt động",
+    "hours_other": "{{count}} giờ hoạt động",
+    "hours": "{{count}} giờ hoạt động",
+    "plan": "Lên lịch bảo trì",
+    "planned": "Đã lên lịch bảo trì.",
+    "start": "Bắt đầu",
+    "markDone": "Hoàn tất",
+    "empty": "Không có robot nào.",
+    "itemTitle": "Hạng mục bảo trì",
+    "itemTitleHint": "Ví dụ: Thay chổi, Kiểm tra camera.",
+    "dueAt": "Ngày đến hạn",
+    "windowStart": "Bắt đầu",
+    "windowEnd": "Kết thúc",
+    "window": "Khung bảo trì",
+    "windowHint": "Không bắt buộc. Khoảng thời gian robot có thể tạm ngừng phục vụ.",
+    "error": {
+      "title": "Nhập hạng mục bảo trì.",
+      "when": "Nhập ngày đến hạn hoặc khung bảo trì.",
+      "startMissing": "Nhập thời điểm bắt đầu.",
+      "endMissing": "Nhập thời điểm kết thúc.",
+      "order": "Kết thúc phải sau bắt đầu.",
+      "dueBeforeWindow": "Khung bảo trì phải kết thúc trước hoặc đúng ngày đến hạn."
+    },
+    "note": "Ghi chú",
+    "done": {
+      "in_progress": "Đã bắt đầu bảo trì; robot không nhận nhiệm vụ.",
+      "done": "Đã hoàn tất bảo trì.",
+      "cancelled": "Đã hủy bảo trì.",
+      "planned": "Đã lưu."
+    }
+  },
+  "overview": {
+    "title": "Tổng quan vận hành robot",
+    "subtitle": "Vận hành robot thông minh cho khuôn viên kết nối và bền vững.",
+    "kpi": {
+      "robots": "Robot trực tuyến",
+      "robotsLine": "{{online}} trực tuyến · {{available}} sẵn sàng",
+      "tasks": "Nhiệm vụ đang chạy",
+      "tasksLine": "{{completed}} hoàn thành hôm nay",
+      "battery": "Pin trung bình",
+      "batteryLine": "Trung bình đội robot",
+      "attention": "Cần xử lý",
+      "attentionLine": "{{critical}} nghiêm trọng",
+      "online": "Robot trực tuyến",
+      "onlineLine": "{{available}} sẵn sàng · {{offline}} ngoại tuyến",
+      "activeLine": "{{executing}} đang thực hiện · {{scheduled}} đã hẹn",
+      "success": "{{rate}}% thành công",
+      "availability": "Độ sẵn sàng đội robot",
+      "availabilityLine": "{{ready}}/{{total}} robot sẵn sàng nhận nhiệm vụ",
+      "utilization": "Mức sử dụng đội robot {{pct}}%",
+      "criticalCount": "{{count}} nghiêm trọng",
+      "unackedCount": "{{count}} chưa xác nhận",
+      "ready": "Robot sẵn sàng",
+      "onlineCount": "{{count}} trực tuyến",
+      "offlineCount": "{{count}} ngoại tuyến",
+      "readyDetail": "{{charging}} đang sạc · {{busy}} đang chạy",
+      "readyHint": "Trực tuyến, rảnh và nhận được nhiệm vụ ngay"
+    },
+    "live": "Vận hành trực tiếp",
+    "openLive": "Mở",
+    "attention": "Cần xử lý",
+    "byService": "Dịch vụ robot",
+    "robotsCount_one": "{{count}} robot",
+    "robotsCount_other": "{{count}} robot",
+    "robotsCount": "{{count}} robot",
+    "noRobots": "Chưa có robot",
+    "tasksToday": "nhiệm vụ hôm nay",
+    "metric": {
+      "completedToday": "hoàn thành",
+      "roundsToday": "vòng hôm nay",
+      "areaM2Today": "m² đã vệ sinh hôm nay"
+    },
+    "disabled": "Dịch vụ đang tắt",
+    "activity": "Hoạt động nhiệm vụ",
+    "today": "Lịch hôm nay",
+    "fleetStatus": "Trạng thái đội robot",
+    "systemHealth": "Sức khỏe hệ thống",
+    "task": "Nhiệm vụ",
+    "allServices": "Mọi dịch vụ",
+    "yourServices": "Dịch vụ của bạn",
+    "connecting": "Đang kết nối…",
+    "updated": "Trực tiếp · cập nhật {{time}}",
+    "robotsOnMap_one": "{{count}} robot",
+    "robotsOnMap_other": "{{count}} robot",
+    "robotsOnMap": "{{count}} robot",
+    "legend": {
+      "route": "Tuyến đang chạy (robot đã chọn)",
+      "destination": "Điểm đến",
+      "charger": "Trạm sạc",
+      "remaining": "Tuyến còn lại",
+      "warning": "Cảnh báo",
+      "more": "Thêm",
+      "less": "Thu gọn",
+      "routeShort": "Tuyến"
+    },
+    "criticalCount": "{{count}} nghiêm trọng",
+    "openCount": "{{count}} đang mở",
+    "attentionHint": "Chọn cảnh báo để xem robot trên bản đồ.",
+    "openFleet": "Mở đội robot",
+    "system": "Hệ thống",
+    "tile": {
+      "active": "Đang chạy",
+      "today": "Hôm nay",
+      "rounds": "Vòng hôm nay",
+      "done": "Hoàn thành",
+      "ready": "sẵn sàng",
+      "tasksToday_one": "{{count}} nhiệm vụ hôm nay",
+      "tasksToday_other": "{{count}} nhiệm vụ hôm nay",
+      "tasksToday": "{{count}} nhiệm vụ hôm nay",
+      "roundsToday": "{{count}} vòng"
+    },
+    "activityToday": "Hoạt động hôm nay",
+    "rail": "Cột vận hành"
+  },
+  "schedule": {
+    "title": "Lịch",
+    "subtitle": "Nhiệm vụ robot, sạc pin và khung bảo trì theo ngày, tuần hoặc tháng.",
+    "view": "Chế độ xem",
+    "day": "Ngày",
+    "week": "Tuần",
+    "month": "Tháng",
+    "today": "Hôm nay",
+    "previous": "Trước",
+    "next": "Sau",
+    "charging": "{{robot}} đang sạc",
+    "more": "+{{count}} mục",
+    "weekday": {
+      "0": "CN",
+      "1": "T2",
+      "2": "T3",
+      "3": "T4",
+      "4": "T5",
+      "5": "T6",
+      "6": "T7"
+    }
+  },
+  "service": {
+    "other": "Khác",
+    "delivery": "Giao vận",
+    "cleaning": "Vệ sinh",
+    "patrol": "Tuần tra"
+  },
+  "system": {
+    "normal": "Nền tảng hoạt động tốt",
+    "fleetUnavailable": "Mất kết nối tới đội robot."
+  },
+  "taskForm": {
+    "templates": "Mẫu",
+    "when": "Thời gian",
+    "asap": "Càng sớm càng tốt",
+    "schedule": "Hẹn giờ",
+    "scheduleAt": "Thời điểm bắt đầu",
+    "repeat": "Lặp lại",
+    "advanced": "Nâng cao: chọn robot",
+    "robot": "Robot",
+    "robotHint": "Để tự động để hệ thống điều phối chọn robot phù hợp.",
+    "autoAssign": "Tự động (khuyến nghị)",
+    "selectRobot": "Chọn robot",
+    "selectLocation": "Chọn địa điểm",
+    "selectZone": "Chọn khu vực",
+    "selectArea": "Chọn vùng",
+    "selectRoute": "Chọn tuyến",
+    "pickZoneFirst": "Chọn khu vực trước",
+    "addStop": "Thêm điểm dừng",
+    "removeStop": "Bỏ {{name}}",
+    "notePlaceholder": "Thông tin cần lưu ý",
+    "required": "Bắt buộc",
+    "mustDiffer": "Phải khác {{other}}",
+    "noFleet": "Chưa có đội robot nào thực hiện được dịch vụ này; nhiệm vụ sẽ bị từ chối cho đến khi có.",
+    "submit": "Tạo nhiệm vụ {{service}}",
+    "field": {
+      "pickup": "Điểm nhận",
+      "dropoff": "Điểm giao",
+      "itemType": "Loại hàng",
+      "priority": "Ưu tiên",
+      "note": "Ghi chú",
+      "area": "Vùng vệ sinh",
+      "cleaningMode": "Chế độ vệ sinh",
+      "duration": "Thời lượng dự kiến",
+      "zone": "Khu vực tuần tra",
+      "route": "Tuyến tuần tra",
+      "rounds": "Số vòng",
+      "stops": "Điểm dừng"
+    },
+    "option": {
+      "itemType": {
+        "documents": "Tài liệu",
+        "parcel": "Bưu kiện",
+        "lab_equipment": "Thiết bị thí nghiệm",
+        "food": "Đồ ăn & thức uống",
+        "general": "Hàng thông thường"
+      },
+      "priority": {
+        "normal": "Bình thường",
+        "high": "Cao"
+      },
+      "cleaningMode": {
+        "full_area": "Toàn vùng",
+        "spot": "Vệ sinh điểm",
+        "custom_zone": "Vùng tùy chọn"
+      }
+    },
+    "unit": {
+      "min": "phút"
+    }
+  },
+  "repeat": {
+    "none": "Không lặp",
+    "daily": "Hằng ngày",
+    "weekdays": "Các ngày trong tuần",
+    "weekly": "Hằng tuần"
+  },
+  "tasks": {
+    "title": "Nhiệm vụ",
+    "subtitle": "Nhiệm vụ robot của mọi dịch vụ bạn vận hành.",
+    "create": "Tạo nhiệm vụ",
+    "createTitle": "Tạo nhiệm vụ robot",
+    "createService": "Tạo nhiệm vụ {{service}}",
+    "selectService": "Dịch vụ khả dụng",
+    "noFleetShort": "Chưa có đội robot",
+    "created": "Đã tạo nhiệm vụ {{code}}.",
+    "details": "Nhiệm vụ",
+    "search": "Tìm nhiệm vụ, robot, địa điểm",
+    "mineOnly": "Chỉ nhiệm vụ tôi tạo",
+    "overview": "Tổng quan",
+    "parameters": "Thông số nhiệm vụ",
+    "activity": "Diễn biến",
+    "noActivity": "Chưa có diễn biến.",
+    "notAssigned": "Chưa gán",
+    "requested": "Yêu cầu: {{robot}}",
+    "viewOnMap": "Xem trên bản đồ",
+    "pause": "Tạm dừng",
+    "resume": "Tiếp tục",
+    "cancel": "Hủy nhiệm vụ",
+    "reassign": "Gán lại",
+    "reassignTitle": "Gán lại {{code}}",
+    "reassignBody": "Nhiệm vụ được hủy và gửi lại cho robot bạn chọn.",
+    "reassigned": "Đã gửi lại thành {{code}} cho {{robot}}.",
+    "actionSent": {
+      "cancel": "Đã gửi yêu cầu hủy.",
+      "pause": "Đã gửi yêu cầu tạm dừng.",
+      "resume": "Đã gửi yêu cầu tiếp tục.",
+      "reassign": "Đã gán lại."
+    },
+    "kpi": {
+      "active": "Đang chạy",
+      "queued": "Chờ robot",
+      "waitingSince": "Lâu nhất: {{code}}",
+      "late": "Trễ",
+      "completedToday": "Hoàn thành hôm nay",
+      "avg": "TB {{min}} phút",
+      "activeLine": "{{executing}} đang thực hiện · {{paused}} tạm dừng",
+      "noneWaiting": "Không có nhiệm vụ chờ robot",
+      "lateOldest": "Trễ lâu nhất: {{code}}",
+      "noneLate": "Không có nhiệm vụ quá ETA",
+      "failedToday": "{{count}} thất bại"
+    },
+    "col": {
+      "id": "Mã",
+      "service": "Dịch vụ",
+      "robot": "Robot",
+      "requester": "Người tạo",
+      "createdBy": "Người tạo",
+      "origin": "Khu vực / Điểm đi",
+      "destination": "Điểm đến",
+      "status": "Trạng thái",
+      "priority": "Ưu tiên",
+      "created": "Tạo lúc",
+      "scheduled": "Hẹn lúc",
+      "started": "Bắt đầu",
+      "completed": "Kết thúc",
+      "eta": "Dự kiến",
+      "previous": "Thay cho"
+    },
+    "event": {
+      "requested": "Đã tạo nhiệm vụ",
+      "assigned": "Đã gán robot {{detail}}",
+      "started": "Bắt đầu thực hiện",
+      "arrived_pickup": "Đã tới điểm nhận",
+      "picked_up": "Bắt đầu giao",
+      "arriving": "Sắp tới điểm giao",
+      "arrived": "Đã tới điểm giao",
+      "completed": "Hoàn thành",
+      "cancelled": "Đã hủy",
+      "failed": "Thất bại",
+      "delayed": "Bị chậm",
+      "paused": "Tạm dừng",
+      "resumed": "Tiếp tục",
+      "reassigned": "Đã gán lại thành #{{detail}}",
+      "task_cancel": "{{detail}} yêu cầu hủy",
+      "task_pause": "{{detail}} yêu cầu tạm dừng",
+      "task_resume": "{{detail}} yêu cầu tiếp tục"
+    }
+  },
+  "taskState": {
+    "SCHEDULED": "Đã hẹn",
+    "QUEUED": "Chờ",
+    "ASSIGNED": "Đã gán",
+    "EXECUTING": "Đang thực hiện",
+    "PAUSED": "Tạm dừng",
+    "COMPLETED": "Hoàn thành",
+    "CANCELLED": "Đã hủy",
+    "FAILED": "Thất bại"
+  },
+  "robotStatus": {
+    "IDLE": "Rảnh",
+    "NAVIGATING": "Đang di chuyển",
+    "EXECUTING": "Đang làm nhiệm vụ",
+    "CHARGING": "Đang sạc",
+    "PAUSED": "Tạm dừng",
+    "MAINTENANCE": "Bảo trì",
+    "OFFLINE": "Ngoại tuyến",
+    "ERROR": "Lỗi"
+  },
+  "robotGroup": {
+    "active": "đang hoạt động",
+    "idle": "rảnh",
+    "charging": "đang sạc",
+    "paused": "tạm dừng",
+    "maintenance": "bảo trì",
+    "offline": "ngoại tuyến",
+    "error": "lỗi"
+  },
+  "scheduleStatus": {
+    "completed": "Hoàn thành",
+    "in_progress": "Đang diễn ra",
+    "scheduled": "Đã lên lịch",
+    "pending": "Chờ",
+    "failed": "Thất bại",
+    "cancelled": "Đã hủy"
+  },
+  "health": {
+    "healthy": "Tốt",
+    "warning": "Cảnh báo",
+    "critical": "Nghiêm trọng"
+  },
+  "connection": {
+    "online": "Trực tuyến",
+    "offline": "Ngoại tuyến"
+  },
+  "telemetry": {
+    "notReported": "Chưa báo",
+    "idle": "Không có nhiệm vụ đang chạy",
+    "noTask": "Không có nhiệm vụ",
+    "payload": "Hàng",
+    "compartment": "Ngăn chứa",
+    "pickup": "Điểm nhận",
+    "dropoff": "Điểm giao",
+    "qr_pin": "QR / PIN",
+    "route": "Tuyến hiện tại",
+    "water_tank": "Bình nước",
+    "waste_tank": "Bình chứa thải",
+    "brush_health": "Tình trạng chổi",
+    "cleaning_mode": "Chế độ vệ sinh",
+    "coverage": "Độ phủ",
+    "area": "Vùng đang vệ sinh",
+    "patrol_route": "Tuyến tuần tra",
+    "checkpoint": "Điểm kiểm tra hiện tại",
+    "rounds": "Số vòng đã xong",
+    "camera": "Camera",
+    "zone": "Khu vực hiện tại",
+    "value": {
+      "ok": "Bình thường",
+      "closed": "Đóng",
+      "locked": "Đã khóa",
+      "open": "Mở",
+      "empty": "Trống",
+      "not_used": "Không dùng",
+      "idle": "Rảnh",
+      "full_area": "Toàn vùng",
+      "spot": "Điểm",
+      "custom_zone": "Vùng tùy chọn"
+    }
+  },
+  "users": {
+    "title": "Người dùng & quyền",
+    "subtitle": "Tài khoản operator và dịch vụ, khu vực, quyền của từng người.",
+    "newOperator": "Thêm operator",
+    "createOperator": "Tạo operator",
+    "editAccess": "Sửa quyền",
+    "created": "Đã tạo operator.",
+    "updated": "Đã cập nhật quyền operator.",
+    "col": {
+      "user": "Người dùng",
+      "email": "Email",
+      "role": "Vai trò",
+      "department": "Đơn vị",
+      "services": "Dịch vụ được phép",
+      "zones": "Khu vực được phép",
+      "status": "Tài khoản hoạt động",
+      "lastActive": "Hoạt động gần nhất"
+    },
+    "all": "Mọi dịch vụ",
+    "allZones": "Mọi khu vực",
+    "none": "Không có",
+    "services": "Dịch vụ robot",
+    "zones": "Khu vực được phép",
+    "zonesHint": "Không chọn khu vực nào = mọi khu vực.",
+    "permissions": "Quyền",
+    "serviceDisabled": "Dịch vụ đang tắt",
+    "noServiceWarning": "Không có dịch vụ thì operator không tạo được nhiệm vụ.",
+    "adminHasAll": "Quản trị viên có mọi dịch vụ, khu vực và quyền.",
+    "roleHint": {
+      "operator": "Vận hành các dịch vụ robot được cấp.",
+      "admin": "Toàn quyền, gồm người dùng, tích hợp và cài đặt."
+    },
+    "permissionGroup": {
+      "task": "Quyền nhiệm vụ",
+      "fleet": "Quyền đội robot",
+      "insight": "Theo dõi"
+    }
+  },
+  "permission": {
+    "task": {
+      "create": "Tạo nhiệm vụ",
+      "cancel": "Hủy nhiệm vụ",
+      "schedule": "Hẹn giờ nhiệm vụ",
+      "pause": "Tạm dừng / tiếp tục",
+      "reassign": "Gán lại robot"
+    },
+    "fleet": {
+      "view": "Xem đội robot",
+      "view_all": "Xem mọi dịch vụ",
+      "assign": "Chọn robot thủ công",
+      "control": "Điều khiển robot"
+    },
+    "alerts": {
+      "ack": "Xác nhận cảnh báo"
+    },
+    "analytics": {
+      "view": "Xem phân tích"
+    },
+    "maintenance": {
+      "view": "Xem bảo trì",
+      "manage": "Quản lý bảo trì"
+    },
+    "users": {
+      "manage": "Quản lý người dùng"
+    },
+    "robots": {
+      "manage": "Quản lý robot"
+    },
+    "locations": {
+      "manage": "Quản lý địa điểm"
+    },
+    "integrations": {
+      "manage": "Quản lý tích hợp"
+    },
+    "settings": {
+      "manage": "Quản lý cài đặt"
+    },
+    "system": {
+      "diagnostics": "Chẩn đoán hệ thống"
+    }
+  },
+  "permissionHint": {
+    "task": {
+      "create": "Yêu cầu nhiệm vụ của dịch vụ được phép.",
+      "cancel": "Hủy nhiệm vụ chưa tới bước không thể hủy.",
+      "schedule": "Đặt giờ bắt đầu và lặp lại.",
+      "pause": "Tạm dừng nhiệm vụ đang chạy và tiếp tục.",
+      "reassign": "Gửi nhiệm vụ chưa bắt đầu cho robot khác."
+    },
+    "fleet": {
+      "view": "Xem robot của dịch vụ được phép.",
+      "view_all": "Xem cả robot, cảnh báo của dịch vụ khác (chỉ xem).",
+      "assign": "Chọn robot khi tạo nhiệm vụ.",
+      "control": "Tạm dừng, tiếp tục, giới hạn tốc độ, đặt vị trí."
+    },
+    "alerts": {
+      "ack": "Xác nhận và đóng cảnh báo."
+    },
+    "analytics": {
+      "view": "Mở trang phân tích."
+    },
+    "maintenance": {
+      "view": "Mở trang bảo trì."
+    }
+  }
+}

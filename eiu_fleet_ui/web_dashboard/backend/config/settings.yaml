@@ -1,0 +1,88 @@
+# Settings of the web backend. Every key is optional; the values below are the defaults.
+# EIU_WEB_SETTINGS=/path/to/file.yaml selects another file. See ../README.md for every key.
+
+server:
+  host: "127.0.0.1"
+  port: 8000
+  database: "../data/eiu_web.sqlite3"   # EIU_WEB_DATABASE
+  secure_cookies: false
+  session_hours: 12
+
+site:
+  name: "EIU Robot Services"
+  time_zone: "Asia/Ho_Chi_Minh"
+  default_locale: "vi"
+  catalog: "site.yaml"
+  services: "services.yaml"
+
+map:
+  map_yaml: "../../../maps/map.yaml"
+  nav_graph: "../../../maps/nav_graph.yaml"   # EIU_WEB_NAV_GRAPH
+  level: ""                                    # nav graph level of map_yaml; empty = the only level
+  rmf_levels: {}                               # RMF level name: nav graph level
+
+rmf:
+  enabled: true
+  requester: "eiu_web_dashboard"
+  dispatch_timeout_s: 15.0
+  cancel_timeout_s: 15.0
+  fleet_offline_s: 5.0
+  correction_window_s: 600.0
+
+redis:
+  url: "redis://127.0.0.1:6379/0"       # EIU_WEB_REDIS_URL
+  prefix: "eiu:rmf"                       # key prefix of eiu_rmf_gateway
+  cursor_key: "eiu:web:events_cursor"
+
+delivery:
+  max_open: 20
+  arriving_soon_s: 30.0
+  pickup_handler: "mock_dispenser_1"
+  dropoff_handler: "mock_ingestor_1"
+  schedule_min_lead_s: 60
+  schedule_max_ahead_days: 14
+  note_max: 200
+
+patrol:
+  max_stops: 8
+  max_rounds: 10
+
+realtime:
+  period_s: 0.5
+
+operations:
+  command_timeout_s: 12.0        # s
+  registration_timeout_s: 15.0   # s
+  tasks_limit: 200
+  late_after_s: 120.0            # s
+
+history:
+  sample_s: 60.0                 # s
+  keep_days: 30
+
+maintenance:
+  due_soon_days: 3.0             # days
+
+metrics:
+  history_samples: 120
+  silent_factor: 3.0
+  grace_s: 10.0
+
+alerts:
+  open_after_s: 5.0              # s
+  battery_low_pct: 20.0          # %
+  battery_critical_pct: 10.0     # %
+  task_waiting_s: 600.0          # s
+  failed_window_s: 86400.0       # s
+  history_limit: 200
+
+auth:
+  min_password_length: 8
+  lock_failures: 5
+  lock_s: 60
+
+support:
+  email: "robot-support@eiu.edu.vn"
+  phone: "0274 222 0347"
+  hours_vi: "Thứ 2 – Thứ 6, 7:30 – 17:00"
+  hours_en: "Mon – Fri, 7:30 AM – 5:00 PM"

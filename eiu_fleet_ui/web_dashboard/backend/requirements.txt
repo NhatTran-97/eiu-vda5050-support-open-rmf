@@ -1,0 +1,7 @@
+# Runtime libraries of the web backend.
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+argon2-cffi>=23.1
+redis>=4.3
+pyyaml>=6.0

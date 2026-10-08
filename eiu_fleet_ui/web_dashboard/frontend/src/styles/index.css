@@ -1,0 +1,497 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* Dark theme: <html data-theme="dark">, set from the user's choice or the system setting (lib/theme.ts). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-navy-950: #050f26;
+  --color-navy-900: #0a1d45;
+  --color-navy-800: #0e2a5e;
+  --color-navy-700: #14377a;
+
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dce8ff;
+  --color-brand-200: #bcd3ff;
+  --color-brand-300: #8fb5ff;
+  --color-brand-400: #5a8eff;
+  --color-brand-500: #2f6bff;
+  --color-brand-600: #1a5cf5;
+  --color-brand-700: #1449cc;
+  --color-brand-800: #163e9e;
+  --color-brand-hover: #1449cc;
+
+  /* Surfaces: page frame (navy) < card, dialog, menu (surface) < nested block (slate-50), field < hover, selected (slate-100). */
+  --color-surface: #ffffff;
+  --color-field: #ffffff;
+
+  /* Status colors, one per meaning, shared by charts, legends and dots (map markers use the same values from
+     robotStatusColor in domain/status.tsx). Green covers healthy, completed, charging and efficiency. */
+  --color-status-active: #3b82f6;
+  --color-status-live: #22b8cf;
+  --color-status-success: #22c55e;
+  --color-status-charging: #22c55e;
+  --color-status-idle: #94a3b8;
+  --color-status-offline: #64748b;
+  --color-status-warning: #f59e0b;
+  --color-status-critical: #ef4444;
+  --color-status-cancelled: #8b85c9;
+
+  /* Chart marks (validated categorical steps; text never uses them). */
+  --color-chart-blue: #2a78d6;
+  --color-chart-aqua: #1baf7a;
+  --color-chart-orange: #eb6834;
+  --color-chart-violet: #4a3aa7;
+  --color-chart-green: #008300;
+  --color-chart-red: #e34948;
+  --color-chart-amber: #eda100;
+
+  /* Metadata text: 13 px. */
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: calc(1.125 / 0.8125);
+
+  /* Responsive type scale of the operations workspace: each size grows linearly from its minimum at a 1366 px
+     viewport to its maximum at 1920 px and stays there on wider screens. */
+  --text-page-title: clamp(1.625rem, 0.7004rem + 1.0830vw, 2rem);
+  --text-page-title--line-height: 1.25;
+  --text-section: clamp(1rem, 0.5377rem + 0.5415vw, 1.1875rem);
+  --text-section--line-height: 1.3;
+  --text-card-title: clamp(0.875rem, 0.5668rem + 0.3610vw, 1rem);
+  --text-card-title--line-height: 1.3;
+  --text-kpi-critical: clamp(2.125rem, 1.2004rem + 1.0830vw, 2.5rem);
+  --text-kpi-critical--line-height: 1;
+  --text-kpi: clamp(1.875rem, 0.9504rem + 1.0830vw, 2.25rem);
+  --text-kpi--line-height: 1;
+  --text-kpi-secondary: clamp(1.5rem, 0.5754rem + 1.0830vw, 1.875rem);
+  --text-kpi-secondary--line-height: 1.1;
+  --text-kpi-unit: clamp(1.0625rem, 0.6002rem + 0.5415vw, 1.25rem);
+  --text-kpi-unit--line-height: 1;
+  --text-body: clamp(0.8125rem, 0.5043rem + 0.3610vw, 0.9375rem);
+  --text-body--line-height: 1.45;
+  --text-meta: clamp(0.75rem, 0.4418rem + 0.3610vw, 0.875rem);
+  --text-meta--line-height: 1.4;
+  --text-control: clamp(0.8125rem, 0.5043rem + 0.3610vw, 0.9375rem);
+  --text-control--line-height: 1.4;
+
+  /* Darker than the default slate-400: metadata text on white stays above 4.5:1. */
+  --color-slate-400: #6b788a;
+
+  --shadow-card: 0 1px 2px rgb(9 30 66 / 0.06), 0 12px 32px -16px rgb(9 30 66 / 0.35);
+
+  /* Hybrid Light operations workspace (Overview): EIU design brief. */
+  /* Layers: page (ops-bg) < card (ops-card) < nested item (ops-raised) < hover and neutral fill (ops-subtle). */
+  --color-eiu-navy: #123b67;
+  --color-eiu-deep: #0b2948;
+  --color-ops-bg: #f5f7f9;
+  --color-ops-card: #ffffff;
+  --color-ops-raised: #ffffff;
+  --color-ops-border: #e3e8ee;
+  --color-ops-subtle: #f0f3f6;
+  --color-ops-text: #1b2936;
+  --color-ops-muted: #657383;
+  --color-ops-blue: #2563eb;
+  --color-ops-blue-soft: #eaf1fe;
+  --color-ops-cyan: #20a4c4;
+  --color-ops-cyan-soft: #e6f6fa;
+  --color-ops-green: #5b8f45;
+  --color-ops-green-soft: #edf5e9;
+  --color-ops-amber: #b45309;
+  --color-ops-amber-soft: #fdf3e3;
+  --color-ops-red: #d94b4b;
+  --color-ops-red-soft: #fcecec;
+  --shadow-ops: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.03);
+}
+
+/* The page frame stays navy in both themes; the dark theme turns the content surfaces and their text dark. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-surface: #15243f;
+  --color-field: #1c2d4d;
+  --color-slate-50: #1d2f50;
+  --color-slate-100: #243759;
+  --color-slate-200: #364c73;
+  --color-slate-300: #3d5480;
+  --color-slate-400: #95a6c0;
+  --color-slate-500: #aebbd0;
+  --color-slate-600: #b6c2d4;
+  --color-slate-700: #cbd4e2;
+  --color-slate-800: #dfe5ee;
+  --color-slate-900: #eef2f8;
+  --color-slate-950: #f8fafc;
+  --color-brand-50: #15295a;
+  --color-brand-100: #1b3570;
+  --color-brand-200: #29478f;
+  --color-brand-700: #a9c4ff;
+  --color-brand-800: #c7d8ff;
+  --color-brand-hover: #2f6bff;
+  --color-red-50: #3b1620;
+  --color-red-100: #4b1b28;
+  --color-red-200: #6e2535;
+  --color-red-600: #f87171;
+  --color-red-700: #fca5a5;
+  --color-red-800: #fecaca;
+  --color-amber-50: #3a2b15;
+  --color-amber-100: #46331a;
+  --color-amber-200: #6b4e20;
+  --color-amber-600: #f2a93b;
+  --color-amber-700: #f0bd5e;
+  --color-amber-800: #f6d394;
+  --color-emerald-50: #0f2f27;
+  --color-emerald-100: #133b30;
+  --color-emerald-200: #1b5a46;
+  --color-emerald-600: #34d399;
+  --color-emerald-700: #6ee7b7;
+  --color-emerald-800: #a7f3d0;
+  --color-chart-blue: #3987e5;
+  --color-chart-aqua: #199e70;
+  --color-chart-orange: #d95926;
+  --color-chart-violet: #9085e9;
+  --color-chart-red: #e66767;
+  --color-chart-amber: #c98500;
+  --color-indigo-50: #1e1f4d;
+  --color-indigo-200: #34368a;
+  --color-indigo-700: #c7c9ff;
+  --color-sky-50: #0d2b40;
+  --color-sky-200: #164a6b;
+  --color-sky-700: #9ad8f8;
+  --color-teal-50: #0d2f2d;
+  --color-teal-200: #16524d;
+  --color-teal-700: #8ee6d8;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -16px rgb(0 0 0 / 0.6);
+  --color-ops-bg: #0b1524;
+  --color-ops-card: #132036;
+  --color-ops-raised: #1a2a44;
+  --color-ops-border: #2c4263;
+  --color-ops-subtle: #22355a;
+  --color-ops-text: #e8eef5;
+  --color-ops-muted: #aab7c7;
+  --color-ops-blue: #6c9bf2;
+  --color-ops-blue-soft: #172c55;
+  --color-ops-cyan: #3cc0de;
+  --color-ops-cyan-soft: #10313d;
+  --color-ops-green: #93c47a;
+  --color-ops-green-soft: #1a2e1d;
+  --color-ops-amber: #f0bd5e;
+  --color-ops-amber-soft: #3a2b15;
+  --color-ops-red: #ec7272;
+  --color-ops-red-soft: #3b1620;
+  --shadow-ops: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+
+/* Height of the top bar with its 1 px bottom border (64 px below lg, 72 px from lg), for layouts that fit below it. */
+:root {
+  --topbar-h: 65px;
+}
+
+@media (min-width: 64rem) {
+  :root {
+    --topbar-h: 73px;
+  }
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    color-scheme: light;
+  }
+
+  body {
+    @apply bg-navy-900 font-sans text-slate-900 antialiased;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-500;
+  }
+}
+
+@utility app-bg {
+  background:
+    radial-gradient(1100px 520px at 88% -8%, rgb(47 107 255 / 0.32), transparent 62%),
+    radial-gradient(700px 420px at 0% 100%, rgb(47 107 255 / 0.14), transparent 70%),
+    linear-gradient(180deg, var(--color-navy-800), var(--color-navy-900) 45%, var(--color-navy-950));
+}
+
+/* Light operations workspace: neutral page instead of the navy frame. */
+@utility ops-bg {
+  background: var(--color-ops-bg);
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Leaflet map */
+
+/* Doubled class: leaflet.css is loaded after this file and sets its own grey. */
+.leaflet-container.leaflet-container {
+  @apply bg-slate-100 font-sans;
+}
+
+.map-label.leaflet-tooltip {
+  @apply rounded-md border-0 bg-surface/90 px-1.5 py-0.5 text-xs font-medium text-slate-600 shadow-sm;
+}
+
+/* Occupancy maps are drawn for white paper; the dark theme inverts their brightness. */
+[data-theme="dark"] .leaflet-image-layer {
+  filter: invert(0.88) hue-rotate(180deg) brightness(0.95);
+}
+
+.map-label.leaflet-tooltip::before {
+  display: none;
+}
+
+.map-label--pickup.leaflet-tooltip,
+.map-label--dropoff.leaflet-tooltip {
+  @apply rounded-lg px-2.5 py-1 text-sm font-semibold shadow-md;
+}
+
+.map-label--pickup.leaflet-tooltip {
+  @apply text-slate-900;
+}
+
+.map-label--dropoff.leaflet-tooltip {
+  @apply bg-emerald-50 text-emerald-800;
+}
+
+.map-pin {
+  filter: drop-shadow(0 3px 4px rgb(9 30 66 / 0.35));
+}
+
+.map-dot {
+  @apply rounded-full border-2 border-white bg-slate-400 shadow;
+}
+
+.graph-vertex {
+  @apply size-4 rounded-full border-2 border-white bg-slate-600 shadow;
+}
+
+.graph-vertex--charger {
+  @apply bg-emerald-500;
+}
+
+.graph-vertex--selected {
+  @apply bg-amber-500 ring-4 ring-amber-300/60;
+}
+
+.robot-marker {
+  position: relative;
+  width: 40px;
+  height: 40px;
+}
+
+.robot-marker__pulse {
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  background: rgb(47 107 255 / 0.25);
+  animation: robot-pulse 2s ease-out infinite;
+}
+
+.robot-marker svg {
+  position: relative;
+  filter: drop-shadow(0 4px 6px rgb(9 30 66 / 0.4));
+}
+
+.robot-marker__icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  pointer-events: none;
+}
+
+.robot-marker--selected {
+  z-index: 1;
+}
+
+@keyframes robot-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .robot-marker__pulse {
+    animation: none;
+  }
+}
+
+@keyframes live-ping {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  80%,
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: live-ping 2s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot::after {
+    animation: none;
+  }
+}
+
+/* Dark technical blueprint map (live operations); tokens in features/map/blueprint.ts. */
+
+/* The occupancy image becomes the blueprint (FleetMap BlueprintFilter): free space -> inner surface, walls -> light
+   blue-gray, unknown space -> the map background. The same in both themes. */
+.map-blueprint .leaflet-image-layer.leaflet-image-layer {
+  filter: url(#bp-floor);
+}
+
+.map-blueprint.map-blueprint .leaflet-container,
+.map-blueprint .leaflet-container.leaflet-container {
+  background: var(--bp-bg);
+}
+
+.map-blueprint .map-dot {
+  width: 8px !important;
+  height: 8px !important;
+  border: 2px solid var(--bp-bg);
+  background: #e2eaf2;
+  box-shadow: none;
+}
+
+/* Map label sizes (places stay below robots) and the blueprint's colors (keep in step with features/map/blueprint.ts). */
+:root {
+  --bp-bg: #283d52;
+  --bp-poi-bg: #22364c;
+  --bp-chip-bg: #1c2d40;
+  --bp-chip-hover: #2a4058;
+  --bp-line: #4f6a88;
+  --bp-label: #e1e9f2;
+  --map-label-poi: clamp(11px, 6.069px + 0.3610vw, 13px);
+  --map-label-robot: clamp(12px, 7.069px + 0.3610vw, 14px);
+}
+
+.map-label--poi.leaflet-tooltip {
+  border: 1px solid var(--bp-line);
+  background: var(--bp-poi-bg);
+  color: var(--bp-label);
+  box-shadow: none;
+  font-size: var(--map-label-poi);
+  font-weight: 500;
+  padding: 1px 6px;
+}
+
+.map-label--robot.leaflet-tooltip {
+  border: 1px solid var(--bp-line);
+  background: var(--bp-chip-bg);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: var(--map-label-robot);
+  padding: 2px 7px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+}
+
+.map-label--robot-selected.leaflet-tooltip {
+  border-color: #ffffff;
+}
+
+.map-label--poi.leaflet-tooltip::before,
+.map-label--robot.leaflet-tooltip::before {
+  display: none;
+}
+
+.bp-robot {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+  transition: transform 120ms ease, filter 120ms ease;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.45));
+}
+
+.bp-robot:hover {
+  transform: scale(1.05);
+  filter: drop-shadow(0 2px 4px rgb(0 0 0 / 0.5)) brightness(1.12);
+}
+
+.bp-robot--selected {
+  filter: drop-shadow(0 0 6px rgb(147 197 253 / 0.35));
+}
+
+.bp-robot__icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.bp-robot__warn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 9px;
+  height: 9px;
+  border-radius: 9999px;
+  background: #f59e0b;
+  border: 2px solid var(--bp-bg);
+}
+
+@keyframes bp-alert {
+  0%,
+  100% {
+    stroke-opacity: 1;
+  }
+  50% {
+    stroke-opacity: 0.45;
+  }
+}
+
+.bp-robot--alert .bp-robot__ring {
+  animation: bp-alert 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bp-robot,
+  .bp-robot--alert .bp-robot__ring {
+    transition: none;
+    animation: none;
+  }
+}
+
+.map-blueprint .map-label--pickup.leaflet-tooltip,
+.map-blueprint .map-label--dropoff.leaflet-tooltip {
+  border: 1px solid var(--bp-line);
+  background: var(--bp-chip-bg);
+  font-size: var(--map-label-robot);
+  font-weight: 600;
+  padding: 2px 8px;
+  box-shadow: none;
+}
+
+.map-blueprint .map-label--pickup.leaflet-tooltip {
+  color: #93c5fd;
+}
+
+.map-blueprint .map-label--dropoff.leaflet-tooltip {
+  border-color: #22c55e;
+  color: #bbf7d0;
+}

@@ -47,6 +47,7 @@ fonts/           IBM Plex fonts
 test/            unit tests
 tools/           load_check.py, a load test of the dashboard
 docs/            architecture.md
+web_dashboard/   web client for students and staff (see web_dashboard/README.md)
 ```
 
 ## Prerequisites

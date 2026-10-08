@@ -1,0 +1,1978 @@
+{
+  "app": {
+    "brandTop": "EIU",
+    "brandBottom": "Robot Services",
+    "tagline": "People · Things · Further · Together",
+    "footerTitle": "Robot services",
+    "footerSubtitle": "A More Connected Campus",
+    "demo": "Demo",
+    "skipToContent": "Skip to content",
+    "adminBrand": "Master Control",
+    "adminSubtitle": "Administration",
+    "brand": "EIU Robot Services",
+    "platform": "Robot Operations Platform",
+    "institution": "Eastern International University"
+  },
+  "nav": {
+    "main": "Main menu",
+    "home": "Home",
+    "deliveries": "My Deliveries",
+    "deliveriesShort": "Deliveries",
+    "tracking": "Live Tracking",
+    "trackingShort": "Tracking",
+    "notifications": "Notifications",
+    "notificationsShort": "Alerts",
+    "settings": "Settings",
+    "overview": "Overview",
+    "live": "Live Operations",
+    "liveShort": "Live",
+    "tasks": "Tasks",
+    "fleet": "Fleet",
+    "schedule": "Schedule",
+    "maintenance": "Maintenance",
+    "analytics": "Analytics",
+    "administration": "Administration",
+    "users": "Users & Access",
+    "locations": "Locations",
+    "integrations": "Integrations",
+    "systemSettings": "Settings",
+    "account": "Account",
+    "menu": "Menu"
+  },
+  "topbar": {
+    "search": "Search",
+    "searchPlaceholder": "Search robots, tasks or locations...",
+    "notifications": "Notifications",
+    "unread": "{{count}} unread",
+    "userMenu": "Account menu",
+    "language": "Language",
+    "signOut": "Sign out",
+    "viewAll": "View all",
+    "markAllRead": "Mark all read",
+    "noNotifications": "No notifications yet",
+    "live": {
+      "open": "Live updates on",
+      "connecting": "Connecting…",
+      "closed": "Live updates off"
+    },
+    "rmf": {
+      "online": "Robot system online",
+      "offline": "Robot system silent",
+      "unavailable": "Backend not linked to Open-RMF",
+      "disabled": "Open-RMF link disabled"
+    },
+    "adminSearchPlaceholder": "Search robots, fleets, maps, users, #task…"
+  },
+  "role": {
+    "user": "User",
+    "admin": "Admin",
+    "operator": "Operator"
+  },
+  "pages": {
+    "home": {
+      "title": "Quick Order & Saved Locations",
+      "subtitle": "Create a delivery in seconds and get things where they need to go."
+    },
+    "deliveries": {
+      "title": "My Deliveries",
+      "subtitle": "Track your deliveries, view history, and get things where they need to go."
+    },
+    "tracking": {
+      "title": "Live Tracking",
+      "subtitle": "Follow your delivery in real time."
+    },
+    "notifications": {
+      "title": "Notifications",
+      "subtitle": "Alerts of the robots you monitor and updates of your tasks."
+    },
+    "settings": {
+      "title": "Settings",
+      "subtitle": "Your account, language and notifications."
+    },
+    "detail": {
+      "title": "Delivery #{{id}}",
+      "back": "My deliveries"
+    },
+    "notFound": {
+      "title": "Page not found",
+      "body": "The page you are looking for does not exist.",
+      "action": "Back to home"
+    },
+    "forbidden": {
+      "title": "No access",
+      "body": "Your account does not have permission to open this page.",
+      "action": "Back to home"
+    }
+  },
+  "common": {
+    "from": "From",
+    "to": "To",
+    "robot": "Robot",
+    "eta": "ETA",
+    "battery": "Battery",
+    "distance": "Distance",
+    "status": "Status",
+    "actions": "Actions",
+    "dateTime": "Date & Time",
+    "close": "Close",
+    "save": "Save",
+    "saving": "Saving…",
+    "loading": "Loading…",
+    "retry": "Try again",
+    "loadFailed": "Could not load this data.",
+    "viewDetails": "View details",
+    "track": "Track",
+    "trackLive": "Track Live",
+    "reorder": "Reorder",
+    "cancel": "Cancel",
+    "moreActions": "More actions",
+    "optional": "(Optional)",
+    "none": "—",
+    "inProgress": "In Progress",
+    "pending": "Pending",
+    "skipped": "Skipped",
+    "back": "Back",
+    "viewAll": "View all"
+  },
+  "time": {
+    "lessThanMinute": "< 1 min",
+    "minutes": "{{count}} min",
+    "arrivingIn": "Arriving in {{time}}",
+    "scheduledFor": "Scheduled for {{time}}"
+  },
+  "status": {
+    "scheduled": "Scheduled",
+    "queued": "Waiting for robot",
+    "to_pickup": "Going to pickup",
+    "at_pickup": "Waiting for loading",
+    "in_transit": "Delivering",
+    "arrived": "Arrived",
+    "completed": "Completed",
+    "cancelled": "Cancelled",
+    "failed": "Failed",
+    "underway": "Underway"
+  },
+  "timeline": {
+    "title": {
+      "requested": "Request received",
+      "picked_up": "Item picked up",
+      "en_route": "En route to {{dropoff}}",
+      "arriving": "Arriving soon",
+      "delivered": "Delivered",
+      "assigned": "Robot assigned",
+      "patrolling": "Patrolling"
+    },
+    "desc": {
+      "requested": "Your delivery has been confirmed.",
+      "waitingRobot": "Waiting for a free robot.",
+      "toPickup": "Robot {{robot}} is heading to {{pickup}}.",
+      "atPickup": "Robot {{robot}} is waiting at {{pickup}}. Please load your item.",
+      "pickedUp": "Robot {{robot}} picked up your item at {{pickup}}.",
+      "enRoute": "Your item is on the way to {{dropoff}}.",
+      "arriving": "Robot will arrive at {{dropoff}} shortly.",
+      "collect": "Robot is at {{dropoff}}. Please collect your item.",
+      "deliveredPending": "We'll notify you when your item is delivered.",
+      "delivered": "Delivered to {{dropoff}}.",
+      "assigned": "Robot {{robot}} took the task.",
+      "patrolling": "Round {{done}} of {{rounds}}: {{route}}",
+      "patrolDone": "Finished {{rounds}} rounds."
+    }
+  },
+  "package": {
+    "general": "General item",
+    "documents": "Documents & books",
+    "food": "Food & drinks",
+    "lab_equipment": "Lab equipment",
+    "fragile": "Fragile item"
+  },
+  "home": {
+    "createTitle": "Create a New Delivery",
+    "createSubtitle": "Send items anywhere on campus with our delivery robots.",
+    "pickup": "Pickup Location",
+    "dropoff": "Destination",
+    "packageType": "Package Type",
+    "when": "When",
+    "asap": "As soon as possible",
+    "schedule": "Schedule",
+    "scheduleAt": "Pickup time",
+    "note": "Note",
+    "notePlaceholder": "e.g. Handle with care, call on arrival…",
+    "selectLocation": "Select a location",
+    "swap": "Swap pickup and destination",
+    "submit": "Request Delivery",
+    "submitting": "Sending request…",
+    "created": "Delivery #{{id}} requested",
+    "sameLocation": "Pickup and destination must be different.",
+    "saved": "Saved Locations",
+    "manage": "Manage",
+    "manageTitle": "Saved locations",
+    "manageHint": "Choose the locations shown on your home page. Starred ones come first.",
+    "noSaved": "No saved locations yet.",
+    "favorite": "Add to favorites",
+    "unfavorite": "Remove from favorites",
+    "useAsDestination": "Use {{name}} as destination",
+    "recent": "Recent Destinations",
+    "viewAll": "View All",
+    "noRecent": "Your recent destinations appear here.",
+    "templates": "Common Delivery Templates",
+    "templatesSubtitle": "One-tap deliveries for your most frequent requests.",
+    "useTemplate": "Use Template",
+    "comingSoon": "Coming soon",
+    "activeStrip": "Delivery #{{id}} · {{status}}",
+    "activeStripRobot": "Robot {{robot}} · ETA {{eta}}",
+    "taskType": "Task type",
+    "stops": "Stops",
+    "stopsHint": "The robot visits the stops in order, then repeats them for each round.",
+    "addStop": "Add a stop",
+    "removeStop": "Remove {{name}}",
+    "rounds": "Rounds",
+    "needTwoStops": "Several rounds need at least 2 stops.",
+    "submitPatrol": "Request Patrol"
+  },
+  "deliveries": {
+    "tabs": {
+      "all": "All",
+      "active": "Active",
+      "upcoming": "Upcoming",
+      "completed": "Completed"
+    },
+    "activeTitle": "Active Delivery",
+    "listTitle": "Recent & Upcoming Deliveries",
+    "viewAll": "View All Deliveries",
+    "empty": {
+      "all": "You have no deliveries yet.",
+      "active": "No delivery is on the way right now.",
+      "upcoming": "No scheduled deliveries.",
+      "completed": "No finished deliveries yet."
+    },
+    "create": "Create a delivery",
+    "columns": {
+      "id": "#"
+    }
+  },
+  "detail": {
+    "route": "Route",
+    "package": "Package",
+    "note": "Note",
+    "requestedAt": "Requested",
+    "scheduledAt": "Scheduled pickup",
+    "finishedAt": "Finished",
+    "requester": "Requested by",
+    "progress": "Progress",
+    "cancelTitle": "Cancel delivery #{{id}}?",
+    "cancelBody": "The robot stops this delivery and returns to service. This cannot be undone.",
+    "cancelConfirm": "Cancel delivery",
+    "keep": "Keep delivery",
+    "cancelled": "Delivery #{{id}} cancelled",
+    "kind": "Task type",
+    "stops": "Stops",
+    "rounds": "Rounds",
+    "roundsValue": "{{done}} of {{rounds}} rounds",
+    "error": "Error"
+  },
+  "tracking": {
+    "route": "Delivery Route",
+    "legend": {
+      "pickup": "Pickup",
+      "route": "Route",
+      "destination": "Destination"
+    },
+    "waitingRobot": "Waiting for a robot",
+    "contactSupport": "Contact Support",
+    "viewFullMap": "View Full Map",
+    "exitFullMap": "Exit full map",
+    "cancelRequest": "Cancel Request",
+    "noActive": "No active delivery",
+    "noActiveBody": "Create a delivery to follow its robot here.",
+    "yourActive": "Your active deliveries",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "recenter": "Center on route",
+    "floors": "Floors",
+    "supportTitle": "Contact support",
+    "supportBody": "The robot operations team can help with your delivery #{{id}}.",
+    "supportHours": "Hours",
+    "email": "Email",
+    "phone": "Phone"
+  },
+  "notifications": {
+    "markAllRead": "Mark All Read",
+    "markRead": "Mark as read",
+    "today": "Today",
+    "thisWeek": "This Week",
+    "earlier": "Earlier",
+    "empty": "You're all caught up.",
+    "viewDelivery": "View Delivery",
+    "trackOrder": "Track Order",
+    "types": {
+      "request_received": {
+        "title": "Delivery request received",
+        "body": "Delivery request #{{id}} was received and is waiting for a robot."
+      },
+      "robot_at_pickup": {
+        "title": "Robot arrived at pickup",
+        "body": "Robot {{robot}} has arrived at {{pickup}} for order #{{id}}."
+      },
+      "package_loaded": {
+        "title": "Package loaded",
+        "body": "Your package has been loaded onto robot {{robot}}."
+      },
+      "near_destination": {
+        "title": "Near destination",
+        "body": "Robot {{robot}} is approaching {{dropoff}}."
+      },
+      "robot_arrived": {
+        "title": "Robot has arrived",
+        "body": "Robot {{robot}} is at {{dropoff}} with order #{{id}}. Please collect your item."
+      },
+      "delivered": {
+        "title": "Delivery complete",
+        "body": "Your order #{{id}} has been delivered to {{dropoff}}. Enjoy!"
+      },
+      "cancelled": {
+        "title": "Delivery cancelled",
+        "body": "Order #{{id}} has been cancelled."
+      },
+      "delayed": {
+        "title": "Delivery delayed",
+        "body": "Task #{{id}} is running later than expected; the arrival time will be updated."
+      },
+      "action_required": {
+        "title": "Action required",
+        "body": "Your order #{{id}} is waiting at {{location}}. Please collect your items."
+      },
+      "patrol_started": {
+        "title": "Patrol started",
+        "body": "Robot {{robot}} started patrol #{{id}}."
+      },
+      "patrol_completed": {
+        "title": "Patrol completed",
+        "body": "Patrol #{{id}} finished {{rounds}} rounds."
+      },
+      "task_failed": {
+        "title": "Task failed",
+        "body": "Task #{{id}} could not be carried out. Open it for the reason."
+      }
+    },
+    "emptyCategory": "No notifications in this group.",
+    "category": {
+      "all": "All",
+      "action": "Needs action",
+      "deliveries": "Task updates",
+      "issues": "Issues"
+    },
+    "tabAlerts": "Alerts",
+    "tabTasks": "My tasks",
+    "viewTask": "View task"
+  },
+  "settings": {
+    "profile": "Profile",
+    "name": "Name",
+    "email": "Email",
+    "role": "Role",
+    "language": "Language",
+    "languageHint": "Used for the app and for your notifications.",
+    "notifications": "Notifications",
+    "deliveryUpdates": "Delivery progress",
+    "deliveryUpdatesHint": "Robot at pickup, package loaded, near destination.",
+    "delays": "Delays and problems",
+    "delaysHint": "When a delivery is late or needs your action.",
+    "security": "Security",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "passwordHint": "At least {{count}} characters.",
+    "passwordMismatch": "The new passwords do not match.",
+    "changePassword": "Change password",
+    "passwordChanged": "Password changed",
+    "saved": "Settings saved",
+    "demo": "Demo data",
+    "demoHint": "Demo data is stored in this browser only. Reset restores the sample deliveries and robots.",
+    "reset": "Reset demo data",
+    "resetDone": "Demo data reset",
+    "adminLink": "Open the admin console",
+    "title": "Settings",
+    "subtitle": "Robot services, fleets and the configuration of the platform.",
+    "tabServices": "Services & fleets",
+    "tabSystem": "System",
+    "tabAudit": "Audit log",
+    "serviceEnabled": "Service enabled",
+    "overridden": "Changed here; the configuration file says otherwise.",
+    "category": "RMF category",
+    "capabilities": "Required capabilities",
+    "formFields": "Task form",
+    "fleets": "Fleets",
+    "fleetsHint": "Primary service and capabilities of each fleet's robots.",
+    "primary": "Type",
+    "sources": "Services: {{services}} · Catalog: {{catalog}}",
+    "readOnlyHint": "These values come from config/settings.yaml and change with a restart of the backend."
+  },
+  "login": {
+    "title": "Sign in",
+    "subtitle": "Use the account provided by your administrator.",
+    "email": "Email",
+    "password": "Password",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "submit": "Sign in",
+    "submitting": "Signing in…",
+    "noAccount": "No account yet? Contact the robot operations team.",
+    "demoAccounts": "Demo accounts",
+    "demoUser": "Student",
+    "demoAdmin": "Administrator",
+    "use": "Use",
+    "heroTitle": "Smart campus robot operations",
+    "heroBody": "Connecting delivery, cleaning, and patrol services across the EIU campus.",
+    "heroValues": "Reliable • Sustainable • Connected",
+    "heroDetail": "Monitor robots, track tasks, and manage campus operations through one unified platform."
+  },
+  "search": {
+    "locations": "Locations",
+    "deliveries": "Deliveries",
+    "noResults": "No results for “{{query}}”",
+    "close": "Close search",
+    "pages": "Pages",
+    "robots": "Robots",
+    "fleets": "Fleets",
+    "users": "Operators",
+    "tasks": "Tasks",
+    "openTask": "Open in Diagnostics",
+    "zones": "Zones"
+  },
+  "admin": {
+    "yes": "Yes",
+    "no": "No",
+    "unsaved": "You have unsaved changes",
+    "discard": "Discard",
+    "saveChanges": "Save changes",
+    "leaveTitle": "Leave without saving?",
+    "leaveBody": "Your unsaved changes will be lost.",
+    "stay": "Stay",
+    "leave": "Leave",
+    "discardTitle": "Discard the changes?",
+    "discardBody": "The map returns to its last saved state.",
+    "healthDetail": {
+      "engine": "Storage",
+      "heartbeat_age_s": "Last heartbeat",
+      "uptime_s": "Uptime",
+      "ros_domain": "ROS domain",
+      "nav_graph_path": "Nav graph file",
+      "fleets_reporting": "Fleets reporting",
+      "robots": "Robots known to RMF",
+      "enabled": "Enabled",
+      "state_age_s": "Last /fleet_states",
+      "online": "Robots online",
+      "total": "Robots",
+      "adapter": "Fleet adapter",
+      "interface": "VDA5050 interface",
+      "node": "Node",
+      "reported_ago_s": "Last report",
+      "interval_s": "Report period",
+      "robots_online": "Robots the adapter hears",
+      "messages_rx": "Messages received",
+      "messages_dropped": "Messages dropped",
+      "publish_failed": "Publish failures",
+      "connected": "Connected",
+      "connections_lost": "Connections lost"
+    },
+    "overview": {
+      "title": "System overview",
+      "subtitle": "What is configured, what has a problem, what changed recently.",
+      "robots": "Robots",
+      "robotsLine": "{{online}} online · {{offline}} offline",
+      "fleets": "Fleets",
+      "allHealthy": "All healthy",
+      "fleetsLine": "{{healthy}} healthy",
+      "integrations": "Integrations",
+      "connected": "Connected",
+      "needsReview": "Needs review",
+      "warnings": "Warnings",
+      "warningsLine": "{{critical}} critical · {{unacked}} unacknowledged",
+      "health": "Configuration health",
+      "details": "Details",
+      "recentChanges": "Recent changes",
+      "maps": "Maps",
+      "tasksRunning": "Tasks running",
+      "users": "Accounts",
+      "usersLine": "{{active}} · {{admins}} admins"
+    },
+    "audit": {
+      "title": "Audit log",
+      "subtitle": "Who did what and when: accounts, robots, lanes, the nav graph, alerts, tasks.",
+      "entries": "Entries",
+      "search": "Search by person, target, content",
+      "action": "Action",
+      "allActions": "All actions",
+      "empty": "No changes yet.",
+      "time": "Time",
+      "actor": "By",
+      "target": "Target",
+      "change": "Change",
+      "system": "System / command line",
+      "closed": "closed lanes {{lanes}}",
+      "opened": "opened lanes {{lanes}}",
+      "maintenanceItem": "Maintenance #{{id}} → {{status}}",
+      "maintenanceStatus": {
+        "planned": "Planned",
+        "in_progress": "In progress",
+        "done": "Done",
+        "cancelled": "Cancelled"
+      }
+    },
+    "auditAction": {
+      "user": {
+        "create": "created account",
+        "update": "changed account",
+        "password": "reset password",
+        "disable": "disabled account"
+      },
+      "auth": {
+        "login": "signed in",
+        "login_failed": "failed sign-in",
+        "password_changed": "changed password"
+      },
+      "robot": {
+        "pause": "paused",
+        "resume": "resumed",
+        "speed_limit": "changed speed limit",
+        "init_position": "set position"
+      },
+      "registration": {
+        "add": "registered robot",
+        "remove": "removed robot"
+      },
+      "lanes": {
+        "request": "closed/opened lanes"
+      },
+      "nav_graph": {
+        "save": "saved nav graph"
+      },
+      "alert": {
+        "ack": "acknowledged alert",
+        "resolve": "closed alert"
+      },
+      "task": {
+        "create": "created task",
+        "cancel": "cancelled task",
+        "pause": "paused task",
+        "resume": "resumed task",
+        "reassign": "reassigned task"
+      },
+      "maintenance": {
+        "create": "planned maintenance",
+        "update": "updated maintenance"
+      },
+      "service": {
+        "enable": "enabled service",
+        "disable": "disabled service"
+      },
+      "zone": {
+        "enable": "enabled zone",
+        "disable": "disabled zone"
+      }
+    },
+    "robots": {
+      "title": "Robot configuration",
+      "subtitle": "Identity, fleet, protocol, map and charger of each robot; controls when needed.",
+      "type": "Type",
+      "interface": "Interface",
+      "map": "Map",
+      "charger": "Charger",
+      "configure": "Configure",
+      "saved": "Applied to {{robot}}",
+      "detailTitle": "Robot {{robot}}",
+      "detailHint": "Name, fleet, protocol and charger live in the fleet adapter's config file; here you can change the speed limit and run operations.",
+      "general": "General",
+      "manufacturer": "Manufacturer",
+      "serial": "Serial number",
+      "source": "Defined in",
+      "sourceKind": {
+        "config": "Adapter config file",
+        "runtime": "Runtime registration"
+      },
+      "connectivity": "Connectivity",
+      "adapterNode": "Fleet adapter node",
+      "controls": "Controls available",
+      "navigation": "Navigation",
+      "position": "Position",
+      "fleetSpeed": "Fleet maximum speed",
+      "operations": "Operations",
+      "danger": "Danger zone"
+    },
+    "fleets": {
+      "title": "Fleet configuration",
+      "subtitle": "Each fleet: adapter, protocol, limits, robots, chargers and integration health.",
+      "general": "General",
+      "limits": "Motion limits",
+      "limit": {
+        "linear_speed": "Linear speed",
+        "linear_acceleration": "Linear acceleration",
+        "angular_speed": "Angular speed",
+        "angular_acceleration": "Angular acceleration",
+        "footprint_radius": "Footprint radius",
+        "tolerance": "Check tolerance"
+      },
+      "robots": "Robots ({{count}})",
+      "noState": "no state",
+      "chargers": "Chargers",
+      "reservedFor": "reserved for {{robot}} (removed)",
+      "free": "Free",
+      "integration": "Integration",
+      "lastReport": "Report",
+      "robotsOnline": "Robots the adapter hears",
+      "configHint": "Fleet settings live in the fleet adapter's config file; restart the adapter after a change.",
+      "empty": "No fleet has reported its registry yet."
+    },
+    "maps": {
+      "title": "Maps",
+      "subtitle": "View the map and lanes; close lanes or edit the nav graph after choosing that mode.",
+      "view": "View",
+      "edit": "Edit map",
+      "modeHint": {
+        "view": "View mode: nothing changes.",
+        "lanes": "Lanes: applied to the robots at once.",
+        "edit": "Editing the nav graph: save, then restart the fleet adapter."
+      }
+    },
+    "infra": {
+      "title": "Infrastructure",
+      "subtitle": "Chargers, doors and lifts as the nav graph declares them.",
+      "chargers": "Charging stations",
+      "source": "Source: {{path}}",
+      "noChargers": "The nav graph has no chargers.",
+      "name": "Name",
+      "usedBy": "Used by",
+      "chargersHint": "Add a charger in Maps → Edit map (mark a waypoint as a charger).",
+      "doors": "Doors",
+      "noDoors": "The nav graph declares no doors.",
+      "lifts": "Lifts",
+      "noLifts": "The nav graph declares no lifts."
+    },
+    "integrations": {
+      "title": "Integrations",
+      "subtitle": "The chain from the backend to the robots: database, gateway, Open-RMF, fleets, fleet adapters, MQTT.",
+      "expandHint": "Click a row for its figures."
+    },
+    "users": {
+      "title": "Users",
+      "subtitle": "Who may use the system, and with which role.",
+      "accounts": "{{count}} accounts",
+      "create": "Create account",
+      "created": "{{email}} created",
+      "search": "Search by name or email",
+      "empty": "No matching account.",
+      "name": "Name",
+      "email": "Email",
+      "role": "Role",
+      "status": "Status",
+      "lastLogin": "Last sign-in",
+      "you": "you",
+      "enabled": "Active",
+      "disabled": "Disabled",
+      "edit": "Edit {{name}}",
+      "editShort": "Edit",
+      "saved": "Account saved",
+      "password": "Initial password",
+      "passwordHint": "At least {{min}} characters; the user changes it after signing in.",
+      "selfHint": "You cannot change your own role.",
+      "active": "Allowed to sign in",
+      "activeHint": "Turn off to disable the account; its open sessions end.",
+      "signOutNote": "The user will be signed out everywhere.",
+      "resetTitle": "Reset the password of {{name}}",
+      "resetPassword": "Reset password",
+      "newPassword": "New password",
+      "resetHint": "At least {{min}} characters; the user is signed out.",
+      "passwordSet": "Password reset"
+    },
+    "roles": {
+      "title": "Roles",
+      "subtitle": "What each role may do.",
+      "matrix": "Permissions by role",
+      "fixed": "Roles are defined by the backend; assign them on the Users page.",
+      "permission": "Permission",
+      "describe": {
+        "user": "Requests, follows and cancels own tasks.",
+        "admin": "Runs and configures the whole system (Master Control)."
+      }
+    },
+    "permission": {
+      "delivery_create": "Create delivery and patrol requests",
+      "delivery_read_own": "See own requests",
+      "delivery_cancel_own": "Cancel own requests",
+      "delivery_read_any": "See everyone's requests",
+      "delivery_cancel_any": "Cancel everyone's requests",
+      "fleet_read": "See the fleet, tasks, alerts",
+      "fleet_control": "Control robots, acknowledge alerts",
+      "fleet_register": "Register and remove robots",
+      "map_edit": "Close lanes, edit the nav graph",
+      "user_manage": "Manage accounts",
+      "admin_access": "Open Master Control"
+    },
+    "diagnostics": {
+      "title": "Diagnostics",
+      "subtitle": "Tasks of every user and operations alerts."
+    },
+    "util": {
+      "active": "Active",
+      "charging": "Charging",
+      "idle": "Idle",
+      "offline": "Offline",
+      "hint": "Hours per state, sampled every {{s}} s",
+      "day": "Day",
+      "empty": "No history samples in this range."
+    },
+    "robotPage": {
+      "title": "Robot {{robot}}",
+      "subtitle": "Live state, mission, location, technical status, history and events.",
+      "breadcrumb": "Breadcrumb",
+      "noMission": "The robot has no task.",
+      "closedAt": "Ended at {{at}}",
+      "ongoing": "Ongoing",
+      "connectivity": "Connectivity",
+      "stateAge": "State {{age}} ago",
+      "mission": "Current mission",
+      "location": "Location",
+      "near": "Near {{waypoint}} ({{distance}} m)",
+      "technical": "Technical status",
+      "utilization": "Utilization, 7 days",
+      "recentTasks": "Recent tasks",
+      "events": "Events",
+      "eventsHint": "Tasks, alerts and changes of this robot",
+      "noEvents": "No events yet.",
+      "battery": "Battery over time",
+      "range": "Range",
+      "noSamples": "No battery samples in this range.",
+      "hours": {
+        "1": "Last hour",
+        "24": "Last 24 hours",
+        "168": "Last 7 days"
+      },
+      "source": {
+        "task": "Task",
+        "alert": "Alert",
+        "audit": "Change"
+      },
+      "col": {
+        "time": "Time",
+        "level": "Level",
+        "source": "Source",
+        "event": "Event",
+        "detail": "Details"
+      },
+      "advanced": "Advanced details",
+      "tech": {
+        "rmf_mode": "RMF mode",
+        "rmf_task": "RMF task",
+        "nearest_waypoint": "Nearest waypoint",
+        "nearest_distance_m": "Distance to waypoint",
+        "level": "Map",
+        "position": "Position",
+        "adapter": "Fleet adapter",
+        "controls": "Controls available",
+        "paused": "Paused (via web)",
+        "speed_limit_mps": "Speed limit",
+        "fleet_state_age_s": "Last /fleet_states",
+        "interface": "VDA5050 interface",
+        "manufacturer": "Manufacturer",
+        "serial": "Serial number",
+        "charger": "Charger",
+        "path_points": "RMF path points"
+      },
+      "taskEvent": {
+        "requested": "requested",
+        "assigned": "robot assigned",
+        "started": "started",
+        "arrived_pickup": "at pickup",
+        "picked_up": "picked up",
+        "arriving": "arriving",
+        "arrived": "arrived",
+        "completed": "completed",
+        "cancelled": "cancelled",
+        "failed": "failed",
+        "delayed": "delayed"
+      }
+    },
+    "analytics": {
+      "title": "Analytics",
+      "subtitle": "Task performance, robot utilization and alerts, from the recorded data.",
+      "export": "Export CSV",
+      "range": "Range",
+      "ranges": {
+        "1": "Today",
+        "7": "7 days",
+        "30": "30 days"
+      },
+      "minutes": "{{v}} min",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled",
+      "createdShort": "Created",
+      "tasksPerDay": "Tasks per day",
+      "utilization": "Fleet utilization",
+      "places": "Busiest places",
+      "placesHint": "Most requested destinations and stops",
+      "place": "Place",
+      "count": "Count",
+      "battery": "Battery now",
+      "batteryHint": "Robots by battery level",
+      "robots": "Robots",
+      "alertsPerDay": "Alerts per day",
+      "alertCodes": "Most frequent alerts",
+      "noTasks": "No tasks in this range.",
+      "kpi": {
+        "created": "Tasks created",
+        "outcome": "{{completed}} done · {{failed}} failed · {{cancelled}} cancelled",
+        "success": "Success rate",
+        "successHint": "Completed / (completed + failed)",
+        "duration": "Average completion time",
+        "durationHint": "From request to done",
+        "wait": "Average wait for a robot",
+        "waitHint": "From request to robot assigned",
+        "utilization": "Fleet utilization",
+        "utilizationHint": "Active hours / online hours",
+        "alerts": "Alerts",
+        "alertsHint": "{{critical}} critical in this period"
+      },
+      "alertCode": {
+        "rmf": {
+          "unavailable": "Open-RMF link lost",
+          "offline": "No fleet reporting"
+        },
+        "fleet": {
+          "offline": "Fleet offline"
+        },
+        "robot": {
+          "offline": "Robot offline",
+          "emergency": "Emergency stop",
+          "adapter_error": "Adapter error",
+          "battery_low": "Low battery"
+        },
+        "maintenance": {
+          "due": "Maintenance due"
+        },
+        "adapter": {
+          "robots_offline": "Adapter lost robots",
+          "attention": "Adapter problem"
+        },
+        "task": {
+          "waiting": "Task waiting long",
+          "failed": "Task failed"
+        }
+      }
+    }
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "network": {
+      "unreachable": "Cannot reach the server. Check your connection."
+    },
+    "auth": {
+      "invalid_credentials": "Wrong email or password.",
+      "too_many_attempts": "Too many attempts. Try again in a minute.",
+      "required": "Please sign in again.",
+      "csrf": "Your session has expired. Reload the page.",
+      "forbidden": "You are not allowed to do this.",
+      "wrong_password": "The current password is wrong.",
+      "password_too_short": "The new password is too short."
+    },
+    "delivery": {
+      "unknown_location": "Choose a pickup location and a destination.",
+      "same_location": "Pickup and destination must be different.",
+      "invalid_package": "Choose a package type.",
+      "note_too_long": "The note is too long.",
+      "invalid_schedule": "Choose a pickup time between 1 minute and 14 days from now.",
+      "limit_reached": "You already have {{max}} open deliveries.",
+      "not_found": "This delivery does not exist.",
+      "not_cancellable": "This delivery can no longer be cancelled.",
+      "not_dispatched_yet": "RMF has not taken the task yet; try again in a few seconds."
+    },
+    "patrol": {
+      "invalid_stops": "Choose at least one stop, up to the configured limit.",
+      "repeated_stop": "Two consecutive stops must differ.",
+      "invalid_rounds": "The number of rounds is not allowed.",
+      "needs_two_stops": "Several rounds need at least 2 stops."
+    },
+    "rmf": {
+      "unavailable": "The backend is not linked to Open-RMF."
+    },
+    "request": {
+      "invalid": "The request is not valid."
+    },
+    "task": {
+      "invalid_kind": "Unknown task type.",
+      "field_required": "{{field}} is required.",
+      "same_location": "{{field}} must differ from the pickup.",
+      "unknown_location": "Unknown place in {{field}}.",
+      "unknown_area": "Unknown area.",
+      "unknown_route": "Unknown route.",
+      "unknown_zone": "Unknown zone.",
+      "invalid_option": "Choose a value for {{field}}.",
+      "invalid_number": "{{field}} is out of range.",
+      "text_too_long": "{{field}} is too long.",
+      "not_in_zone": "{{field}} is not in the chosen zone.",
+      "invalid_repeat": "A repeat needs a scheduled start.",
+      "unknown_service": "Unknown service.",
+      "not_pausable": "This task cannot be paused now.",
+      "not_resumable": "This task cannot be resumed.",
+      "not_reassignable": "Only a task that has not started can be reassigned."
+    },
+    "dispatch": {
+      "no_response": "The RMF dispatcher did not answer.",
+      "refused": "RMF refused the task."
+    },
+    "cancel": {
+      "no_response": "RMF did not answer the cancel request.",
+      "refused": "RMF refused to cancel."
+    },
+    "command": {
+      "no_answer": "The fleet adapter did not answer in time.",
+      "refused": "The fleet adapter refused.",
+      "service_unavailable": "The robot's control service is not available.",
+      "unknown_robot": "The gateway has no controls for this robot.",
+      "call_failed": "The service call failed.",
+      "no_adapter": "No fleet adapter listens for the request.",
+      "superseded": "A newer request replaced it.",
+      "publish_failed": "The gateway could not send the command.",
+      "bad_body": "The command is not valid.",
+      "expired": "The command expired.",
+      "stale": "The nav graph changed elsewhere; reload and edit again.",
+      "no_nav_graph": "The gateway has no nav_graph_path.",
+      "bad_yaml": "The nav graph is not valid YAML.",
+      "bad_lane": "A lane points to a missing waypoint."
+    },
+    "robot": {
+      "not_found": "No such robot.",
+      "invalid_speed": "The speed must be a number ≥ 0.",
+      "invalid_pose": "The position is not valid.",
+      "unknown_waypoint": "No such waypoint on the robot's floor.",
+      "unknown_action": "Unknown action."
+    },
+    "registration": {
+      "invalid": "The registration is missing fields."
+    },
+    "lanes": {
+      "invalid": "Invalid lane index.",
+      "no_fleet": "No fleet to send to."
+    },
+    "nav_graph": {
+      "duplicate_name": "Duplicate waypoint names",
+      "bad_position": "Invalid position",
+      "bad_lane": "Invalid lane",
+      "duplicate_lane": "Duplicate lane",
+      "catalog_waypoint_missing": "Waypoints used by campus locations must stay",
+      "stale": "The nav graph changed; reload and edit again.",
+      "unavailable": "No nav graph from the gateway.",
+      "invalid": "Invalid nav graph data."
+    },
+    "alert": {
+      "not_found": "No such alert.",
+      "resolved": "The alert is closed already.",
+      "still_active": "The problem still holds; the alert closes by itself when it ends."
+    },
+    "alerts": {
+      "invalid_state": "Invalid alert filter."
+    },
+    "tasks": {
+      "invalid_group": "Invalid task group."
+    },
+    "users": {
+      "invalid": "Invalid account data.",
+      "email_taken": "This email already has an account.",
+      "self": "You cannot change the role of or disable your own account.",
+      "not_found": "No such account.",
+      "invalid_service": "Unknown service.",
+      "invalid_zone": "Unknown zone.",
+      "invalid_permission": "That permission cannot be granted to an operator."
+    },
+    "analytics": {
+      "invalid_range": "Invalid range."
+    },
+    "SERVICE_NOT_ALLOWED": "You do not have permission for this service.",
+    "PERMISSION_DENIED": "You do not have permission for this action.",
+    "ADMIN_ONLY": "Only an administrator can do this.",
+    "maintenance": {
+      "invalid": "Choose a robot and describe the work.",
+      "invalid_window": "The window must end after it starts.",
+      "closed": "This maintenance item is closed."
+    }
+  },
+  "kind": {
+    "delivery": "Delivery",
+    "patrol": "Patrol",
+    "clean": "Cleaning"
+  },
+  "ops": {
+    "tabs": {
+      "robots": "Robots",
+      "map": "Map & lanes",
+      "system": "System",
+      "overview": "Overview",
+      "tasks": "Tasks",
+      "alerts": "Alerts"
+    },
+    "activity": {
+      "idle": "Idle",
+      "moving": "Moving",
+      "waiting": "Waiting",
+      "offline": "Offline"
+    },
+    "robots": {
+      "title": "Fleet robots",
+      "empty": "No robot reports its state yet.",
+      "fleet": "Fleet",
+      "status": "Status",
+      "battery": "Battery",
+      "task": "Task",
+      "speed": "Speed limit",
+      "actions": "Actions",
+      "noTask": "—",
+      "speedNone": "No limit",
+      "speedUnknown": "—",
+      "noControls": "No controls from the adapter yet",
+      "pause": "Pause",
+      "resume": "Resume",
+      "speedLimit": "Speed limit",
+      "setPosition": "Set position",
+      "remove": "Remove from fleet",
+      "pauseTitle": "Pause {{robot}}?",
+      "pauseBody": "The robot stops where it is until resumed; its task waits.",
+      "done": "{{robot}}: {{action}} done",
+      "speedTitle": "Speed limit of {{robot}}",
+      "speedLabel": "Maximum speed (m/s)",
+      "speedHint": "0 removes the limit. The fleet adapter checks the value.",
+      "positionTitle": "Set the position of {{robot}}",
+      "waypoint": "Waypoint",
+      "yaw": "Heading (degrees)",
+      "positionHint": "The robot is localized at the chosen waypoint.",
+      "removeTitle": "Remove {{robot}} from {{fleet}}?",
+      "removeBody": "The robot stops taking tasks. Its name, identity and charger stay reserved until the adapter restarts.",
+      "apply": "Apply",
+      "sent": "Waiting for the fleet adapter…",
+      "speedShort": "Speed",
+      "robot": "Robot",
+      "view": "View",
+      "cards": "Cards",
+      "table": "Table",
+      "count": "{{count}} robots",
+      "removeType": "Type “{{robot}}” to confirm"
+    },
+    "pending": {
+      "title": "Robots found on the broker",
+      "empty": "No robot is waiting to be registered.",
+      "seenBy": "Seen by {{fleets}}",
+      "notLocalized": "not localized",
+      "noState": "no state yet",
+      "removedAs": "Removed, was {{name}} ({{fleet}})",
+      "register": "Register",
+      "discovered": "New"
+    },
+    "register": {
+      "title": "Register {{id}}",
+      "fleet": "Fleet",
+      "name": "Robot name",
+      "charger": "Charger",
+      "responsiveWait": "Responsive wait",
+      "confirmUnverified": "Add even if some checks cannot be verified",
+      "check": "Check",
+      "passed": "Checks passed — the robot can be registered.",
+      "failed": "The checks failed.",
+      "needsConfirmation": "Only unverifiable checks are in the way; tick the confirmation to add it.",
+      "submit": "Register robot",
+      "registered": "{{name}} registered in {{fleet}}",
+      "notSaved": "not saved for the next start",
+      "removed": "{{name}} removed",
+      "errors": "Errors",
+      "warnings": "Warnings",
+      "recheck": "The form changed — check again."
+    },
+    "map": {
+      "title": "Operations map",
+      "view": "View",
+      "lanes": "Lanes",
+      "edit": "Edit nav graph",
+      "lanesHint": "Click a lane to toggle it. Turn on Area select and drag: every lane that crosses the box is selected.",
+      "closeSelected": "Close {{count}} lanes",
+      "openSelected": "Open {{count}} lanes",
+      "openAll": "Open all",
+      "closedCount": "{{count}} lanes closed",
+      "clear": "Clear",
+      "lanesSent": "Lane request sent to {{fleets}}",
+      "legendOpen": "Open lane",
+      "legendClosed": "Closed lane",
+      "legendSelected": "Selected",
+      "areaSelect": "Area select",
+      "layers": "Layers",
+      "layer": {
+        "robots": "Robots",
+        "lanes": "Lane graph",
+        "labels": "Waypoint names"
+      }
+    },
+    "editor": {
+      "unavailable": "The gateway has no nav_graph_path, so the nav graph cannot be edited.",
+      "select": "Select / drag",
+      "addVertex": "Add waypoint",
+      "addLane": "Add lane",
+      "bidirectional": "Both directions",
+      "vertex": "Waypoint #{{index}}",
+      "name": "Name",
+      "charger": "Charger",
+      "deleteVertex": "Delete waypoint",
+      "lane": "Lane {{from}} → {{to}}",
+      "deleteLane": "Delete lane",
+      "save": "Save nav graph",
+      "discard": "Discard changes",
+      "saved": "Nav graph saved",
+      "changes": "Unsaved changes",
+      "restartNote": "The fleet adapter reads the nav graph at start: restart it for the robots to use the new graph.",
+      "pickFirst": "Pick the first waypoint",
+      "pickSecond": "Pick the second waypoint",
+      "addHint": "Click the map to add a waypoint.",
+      "file": "File",
+      "confirmDiscard": "Discard the unsaved changes?",
+      "summary": "{{vertices}} waypoints, {{lanes}} lanes",
+      "selectHint": "Click a waypoint or lane to edit it; drag a waypoint to move it."
+    },
+    "system": {
+      "rmf": "Open-RMF link",
+      "gateway": "Gateway",
+      "domain": "ROS domain {{id}}",
+      "taskEvents": "Task events",
+      "adapters": "Fleet adapters",
+      "noAdapters": "No fleet adapter found yet.",
+      "uptime": "Up {{time}}",
+      "robots": "{{online}} of {{registered}} robots online",
+      "mqttOk": "MQTT connected",
+      "mqttLost": "MQTT lost",
+      "rx": "{{count}} messages in",
+      "dropped": "{{count}} dropped",
+      "reported": "Reported {{ago}} ago, every {{interval}}",
+      "waiting": "Waiting for the first report",
+      "rate": "Messages/s",
+      "attention": "Needs attention",
+      "allGood": "No problems."
+    },
+    "adapterStatus": {
+      "ok": "OK",
+      "warning": "Warning",
+      "critical": "Critical",
+      "silent": "Silent",
+      "waiting": "Waiting",
+      "found": "Found",
+      "absent": "Absent"
+    },
+    "mode": {
+      "idle": "Idle",
+      "charging": "Charging",
+      "moving": "Moving",
+      "paused": "Paused",
+      "waiting": "Waiting",
+      "emergency": "Emergency stop",
+      "going_home": "Going home",
+      "docking": "Docking",
+      "adapter_error": "Adapter error",
+      "cleaning": "Cleaning",
+      "offline": "Offline"
+    },
+    "tasks": {
+      "title": "Tasks of every user",
+      "subtitle": "Deliveries, patrols and other task types on Open-RMF.",
+      "search": "Search by number, robot, requester, place",
+      "kind": "Task type",
+      "allKinds": "All types",
+      "empty": "No tasks.",
+      "requester": "Requester",
+      "rmfTask": "RMF task id",
+      "note": "Note",
+      "cancelTitle": "Cancel task #{{id}}?",
+      "cancelBody": "{{name}}'s task is cancelled on Open-RMF; the requester is notified.",
+      "cancelSent": "Cancel request for #{{id}} sent",
+      "group": {
+        "active": "Running",
+        "scheduled": "Scheduled",
+        "finished": "Finished",
+        "all": "All"
+      },
+      "unassigned": "Without a robot ({{count}})",
+      "noneUnassigned": "Every task has a robot.",
+      "late": "Late ({{count}})",
+      "lateHint": "Past the ETA by over 2 min",
+      "noneLate": "No late tasks.",
+      "lateBy": "{{min}} min late",
+      "kpi": {
+        "active": "Running",
+        "queued": "Waiting for a robot",
+        "late": "Late",
+        "completedToday": "Done today",
+        "failedToday": "Failed today",
+        "avgDuration": "Avg time today"
+      }
+    },
+    "overview": {
+      "robots": "Robots online",
+      "tasks": "Tasks running",
+      "alerts": "Open alerts",
+      "moving": "moving",
+      "idle": "idle",
+      "charging": "charging",
+      "paused": "paused",
+      "offline": "offline",
+      "queued": "waiting for a robot",
+      "scheduled": "scheduled",
+      "completedToday": "done today",
+      "failedToday": "failed today",
+      "critical": "critical",
+      "unacked": "unacknowledged",
+      "map": "Fleet map",
+      "attention": "Needs attention",
+      "health": "System health"
+    },
+    "health": {
+      "database": "Database",
+      "gateway": "Gateway (ROS domain {{domain}})",
+      "rmf": "Open-RMF",
+      "task_events": "Adapter task events",
+      "fleet": "Fleet {{name}} · {{online}}/{{total}} robots",
+      "adapter": "Fleet adapter {{name}}",
+      "mqtt": "MQTT of {{name}}"
+    },
+    "healthStatus": {
+      "ok": "OK",
+      "warning": "Warning",
+      "critical": "Down",
+      "unknown": "Unknown"
+    }
+  },
+  "theme": {
+    "label": "Appearance",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "System",
+    "hint": "System follows the light or dark setting of the computer or phone; the choice is saved on this device."
+  },
+  "alerts": {
+    "title": "Operations alerts",
+    "subtitle": "Open when a problem starts and close when it ends; acknowledge to show you are on it.",
+    "open": "Open",
+    "history": "History",
+    "none": "No alerts.",
+    "noHistory": "No alerts yet.",
+    "ack": "Acknowledge",
+    "resolve": "Close",
+    "ackAll": "Acknowledge all ({{count}})",
+    "activeFor": "Ongoing for {{time}}",
+    "openedAgo": "Opened {{time}} ago",
+    "ended": "Ended at {{at}}",
+    "closedBy": "Closed by {{name}} at {{at}}",
+    "ackedBy": "acknowledged by {{name}} at {{at}}",
+    "hours": "{{count}} h",
+    "severity": {
+      "critical": "Critical",
+      "warning": "Warning",
+      "info": "Info"
+    },
+    "code": {
+      "rmf": {
+        "unavailable": {
+          "title": "Open-RMF link lost",
+          "detail": "The gateway is not running or the backend cannot reach Redis."
+        },
+        "offline": {
+          "title": "No fleet reports its state",
+          "detail": "The gateway runs but receives no /fleet_states: the fleet adapter stopped or the ROS domain differs."
+        }
+      },
+      "robot": {
+        "offline": {
+          "title": "{{robot}} is offline",
+          "detail": "RMF no longer receives the robot's state."
+        },
+        "emergency": {
+          "title": "{{robot}} emergency stop",
+          "detail": "The fleet adapter reports emergency mode."
+        },
+        "adapter_error": {
+          "title": "{{robot}} adapter error",
+          "detail": "The fleet adapter reports an error for this robot."
+        },
+        "battery_low": {
+          "title": "{{robot}} battery low ({{battery}}%)",
+          "detail": "The robot is not charging."
+        }
+      },
+      "task": {
+        "waiting": {
+          "title": "Task #{{id}} waiting for a robot for {{minutes}} min",
+          "detail": "No robot has taken the task."
+        },
+        "failed": {
+          "title": "Task #{{id}} failed",
+          "detail": "{{error}}"
+        }
+      },
+      "adapter": {
+        "robots_offline": {
+          "title": "{{fleet}}: {{online}} of {{registered}} robots report their state",
+          "detail": "Longest silent: {{robot}} ({{age}} s). RMF keeps the robot's last position."
+        }
+      },
+      "fleet": {
+        "offline": {
+          "title": "Fleet {{fleet}} offline ({{robots}} robots)",
+          "detail": "No robot of the fleet reports its state: the fleet adapter stopped, lost its broker, or runs on another ROS domain."
+        }
+      },
+      "maintenance": {
+        "due": {
+          "title": "{{robot}}: {{title}} due",
+          "detail": "Planned maintenance is past its due date."
+        }
+      }
+    }
+  },
+  "adminNav": {
+    "overview": "Overview",
+    "configuration": "Configuration",
+    "robots": "Robots",
+    "fleets": "Fleets",
+    "maps": "Maps",
+    "infrastructure": "Infrastructure",
+    "integrations": "Integrations",
+    "access": "Access control",
+    "users": "Users",
+    "roles": "Roles",
+    "system": "System",
+    "diagnostics": "Diagnostics",
+    "diagnosticsShort": "Diagnose",
+    "audit": "Audit log",
+    "menu": "Menu",
+    "userPortal": "Robot Services",
+    "portal": "Master Control",
+    "analytics": "Analytics"
+  },
+  "charts": {
+    "table": "Table"
+  },
+  "account": {
+    "title": "Account",
+    "subtitle": "Your profile, language, notifications and the access an administrator granted you.",
+    "access": "Your access",
+    "accessHint": "Set by an administrator."
+  },
+  "activity": {
+    "created": "Created",
+    "running": "Running",
+    "completed": "Completed",
+    "failed": "Failed",
+    "empty": "No task activity in this period.",
+    "range": "Period",
+    "when": "Time",
+    "today": "Today",
+    "week": "Week",
+    "month": "Month"
+  },
+  "analytics": {
+    "svc": {
+      "created": "{{count}} tasks created",
+      "deliveries": "Deliveries",
+      "avgDelivery": "Avg. delivery time",
+      "distance": "Distance travelled",
+      "areaCleaned": "Area cleaned",
+      "cleaningDuration": "Cleaning duration",
+      "coverage": "Coverage",
+      "rounds": "Patrol rounds",
+      "zones": "Zones covered",
+      "avgRound": "Avg. round",
+      "noData": "No data yet"
+    }
+  },
+  "empty": {
+    "noAlerts": "All systems are operating normally.",
+    "noFleetView": "Your account cannot view the fleet. Contact an administrator.",
+    "noMatch": "Nothing matches these filters.",
+    "noRobots": "No robots are currently available for this service.",
+    "noRobotsBody": "Robots appear here once their fleet reports to the system.",
+    "noSchedule": "No robot tasks are scheduled.",
+    "noServices": {
+      "title": "No robot services have been assigned to your account.",
+      "body": "Contact an administrator."
+    },
+    "noTasks": "No robot tasks are currently active."
+  },
+  "filters": {
+    "all": "All",
+    "allServices": "All services",
+    "allRobots": "All robots",
+    "allZones": "All zones",
+    "service": "Service",
+    "status": "Status",
+    "robot": "Robot",
+    "zone": "Zone"
+  },
+  "fleet": {
+    "title": "Fleet",
+    "subtitle": "Every robot of your services: status, battery, task, location and connection.",
+    "tabRobots": "Robots",
+    "tabFleets": "Fleets & registration",
+    "search": "Search robots",
+    "col": {
+      "robot": "Robot",
+      "type": "Type",
+      "status": "Status",
+      "battery": "Battery",
+      "task": "Current task",
+      "location": "Location",
+      "runtime": "Runtime",
+      "connection": "Connection",
+      "fleet": "Fleet",
+      "actions": "Actions"
+    },
+    "details": "Details",
+    "eta": "ETA",
+    "health": "Health",
+    "lastUpdate": "Last update",
+    "noTask": "No task",
+    "robotGone": "This robot no longer reports.",
+    "robotOf": "{{service}} robot",
+    "serviceSection": "{{service}} details",
+    "viewRobot": "View robot",
+    "viewTask": "View task"
+  },
+  "integrations": {
+    "title": "Integrations",
+    "subtitle": "Open-RMF, the ROS 2 gateway, VDA5050 fleet adapters, MQTT and vendor APIs.",
+    "fleets": "Connected fleets",
+    "lastUpdate": "Last update",
+    "logs": "Logs",
+    "noLogs": "No entries.",
+    "name": {
+      "open_rmf": "Open-RMF",
+      "ros2_gateway": "ROS 2 Gateway",
+      "vda5050": "VDA5050 Fleet Adapters",
+      "mqtt": "MQTT Broker",
+      "vendor": "Vendor APIs"
+    },
+    "status": {
+      "ok": "Healthy",
+      "warning": "Degraded",
+      "critical": "Disconnected",
+      "unknown": "Unknown",
+      "not_configured": "Not configured"
+    }
+  },
+  "live": {
+    "title": "Live Operations",
+    "subtitle": "Where every robot is, what it is doing and what needs attention.",
+    "robots": "Robots"
+  },
+  "locations": {
+    "title": "Locations",
+    "subtitle": "Zones, places, cleaning areas, patrol routes, the floor map and the infrastructure.",
+    "tabCatalog": "Zones & places",
+    "tabMap": "Map & lanes",
+    "tabInfrastructure": "Infrastructure",
+    "zoneOpen": "Open to robot tasks",
+    "places": "Places ({{count}})",
+    "areas": "Cleaning areas",
+    "routes": "Patrol routes",
+    "catalogHint": "Places, areas and routes come from the site catalog (config/site.yaml); zones can be closed here."
+  },
+  "maintenance": {
+    "title": "Maintenance",
+    "subtitle": "Health, planned service and operating hours of every robot.",
+    "robots": "Robots",
+    "needsAttention": "Needs attention",
+    "col": {
+      "status": "Maintenance status",
+      "next": "Next service",
+      "hours": "Operating hours",
+      "issue": "Issue"
+    },
+    "status": {
+      "none": "No maintenance required",
+      "scheduled": "Scheduled",
+      "due_soon": "Due soon",
+      "due": "Due",
+      "in_progress": "In maintenance"
+    },
+    "noneRequired": "No maintenance required",
+    "hours_one": "{{count}} operating hour",
+    "hours_other": "{{count}} operating hours",
+    "hours": "{{count}} operating hours",
+    "plan": "Plan maintenance",
+    "planned": "Maintenance planned.",
+    "start": "Start",
+    "markDone": "Mark done",
+    "empty": "No robots to show.",
+    "itemTitle": "Maintenance task",
+    "itemTitleHint": "For example: Brush replacement, Camera inspection.",
+    "dueAt": "Due date",
+    "windowStart": "Start",
+    "windowEnd": "End",
+    "window": "Maintenance window",
+    "windowHint": "Optional. Define when the robot can be taken out of service.",
+    "error": {
+      "title": "Enter the maintenance task.",
+      "when": "Enter a due date or a maintenance window.",
+      "startMissing": "Enter a start time.",
+      "endMissing": "Enter an end time.",
+      "order": "End must be after start.",
+      "dueBeforeWindow": "The window must end on or before the due date."
+    },
+    "note": "Note",
+    "done": {
+      "in_progress": "Maintenance started; the robot takes no tasks.",
+      "done": "Maintenance done.",
+      "cancelled": "Maintenance cancelled.",
+      "planned": "Saved."
+    }
+  },
+  "overview": {
+    "title": "Robot Operations Overview",
+    "subtitle": "Smart robot operations for a connected and sustainable campus.",
+    "kpi": {
+      "robots": "Robots online",
+      "robotsLine": "{{online}} online · {{available}} available",
+      "tasks": "Active tasks",
+      "tasksLine": "{{completed}} completed today",
+      "battery": "Avg. battery",
+      "batteryLine": "Fleet average",
+      "attention": "Needs attention",
+      "attentionLine": "{{critical}} critical",
+      "online": "Robots online",
+      "onlineLine": "{{available}} available · {{offline}} offline",
+      "activeLine": "{{executing}} executing · {{scheduled}} scheduled",
+      "success": "{{rate}}% success",
+      "availability": "Fleet availability",
+      "availabilityLine": "{{ready}} of {{total}} robots ready for tasks",
+      "utilization": "Fleet utilization {{pct}}%",
+      "criticalCount": "{{count}} critical",
+      "unackedCount": "{{count}} not acknowledged",
+      "ready": "Robots available",
+      "onlineCount": "{{count}} online",
+      "offlineCount": "{{count}} offline",
+      "readyDetail": "{{charging}} charging · {{busy}} busy",
+      "readyHint": "Online, idle and able to take a task now"
+    },
+    "live": "Live Operations",
+    "openLive": "Open",
+    "attention": "Needs Attention",
+    "byService": "Robot Services",
+    "robotsCount_one": "{{count}} robot",
+    "robotsCount_other": "{{count}} robots",
+    "robotsCount": "{{count}} robots",
+    "noRobots": "No robots",
+    "tasksToday": "tasks today",
+    "metric": {
+      "completedToday": "completed",
+      "roundsToday": "rounds today",
+      "areaM2Today": "m² cleaned today"
+    },
+    "disabled": "Service disabled",
+    "activity": "Task Activity",
+    "today": "Today's Schedule",
+    "fleetStatus": "Fleet Status",
+    "systemHealth": "System Health",
+    "task": "Task",
+    "allServices": "All services",
+    "yourServices": "Your services",
+    "connecting": "Connecting…",
+    "updated": "Live · updated {{time}}",
+    "robotsOnMap_one": "{{count}} robot",
+    "robotsOnMap_other": "{{count}} robots",
+    "robotsOnMap": "{{count}} robots",
+    "legend": {
+      "route": "Active route (selected robot)",
+      "destination": "Destination",
+      "charger": "Charging station",
+      "remaining": "Remaining route",
+      "warning": "Warning",
+      "more": "More",
+      "less": "Less",
+      "routeShort": "Route"
+    },
+    "criticalCount": "{{count}} critical",
+    "openCount": "{{count}} open",
+    "attentionHint": "Select an alert to locate the robot on the map.",
+    "openFleet": "Open fleet",
+    "system": "System",
+    "tile": {
+      "active": "Active tasks",
+      "today": "Today",
+      "rounds": "Rounds today",
+      "done": "Completed",
+      "ready": "available",
+      "tasksToday_one": "{{count}} task today",
+      "tasksToday_other": "{{count}} tasks today",
+      "tasksToday": "{{count}} tasks today",
+      "roundsToday": "{{count}} rounds"
+    },
+    "activityToday": "Today's activity",
+    "rail": "Operations rail"
+  },
+  "schedule": {
+    "title": "Schedule",
+    "subtitle": "Robot tasks, charging and maintenance windows by day, week or month.",
+    "view": "View",
+    "day": "Day",
+    "week": "Week",
+    "month": "Month",
+    "today": "Today",
+    "previous": "Previous",
+    "next": "Next",
+    "charging": "{{robot}} charging",
+    "more": "+{{count}} more",
+    "weekday": {
+      "0": "Sun",
+      "1": "Mon",
+      "2": "Tue",
+      "3": "Wed",
+      "4": "Thu",
+      "5": "Fri",
+      "6": "Sat"
+    }
+  },
+  "service": {
+    "other": "Other",
+    "delivery": "Delivery",
+    "cleaning": "Cleaning",
+    "patrol": "Patrol"
+  },
+  "system": {
+    "normal": "Platform healthy",
+    "fleetUnavailable": "Robot fleet connection unavailable."
+  },
+  "taskForm": {
+    "templates": "Templates",
+    "when": "When",
+    "asap": "As soon as possible",
+    "schedule": "Schedule",
+    "scheduleAt": "Start time",
+    "repeat": "Repeat",
+    "advanced": "Advanced: choose a robot",
+    "robot": "Robot",
+    "robotHint": "Leave automatic to let the orchestrator choose a suitable robot.",
+    "autoAssign": "Automatic (recommended)",
+    "selectRobot": "Choose a robot",
+    "selectLocation": "Choose a location",
+    "selectZone": "Choose a zone",
+    "selectArea": "Choose an area",
+    "selectRoute": "Choose a route",
+    "pickZoneFirst": "Choose a zone first",
+    "addStop": "Add a stop",
+    "removeStop": "Remove {{name}}",
+    "notePlaceholder": "Anything the robot team should know",
+    "required": "Required",
+    "mustDiffer": "Must differ from {{other}}",
+    "noFleet": "No fleet can perform this service yet; the task will be refused until one is connected.",
+    "submit": "Create {{service}} Task",
+    "field": {
+      "pickup": "Pickup location",
+      "dropoff": "Drop-off location",
+      "itemType": "Item type",
+      "priority": "Priority",
+      "note": "Note",
+      "area": "Cleaning area",
+      "cleaningMode": "Cleaning mode",
+      "duration": "Expected duration",
+      "zone": "Patrol area",
+      "route": "Patrol route",
+      "rounds": "Number of rounds",
+      "stops": "Stops"
+    },
+    "option": {
+      "itemType": {
+        "documents": "Document",
+        "parcel": "Parcel",
+        "lab_equipment": "Lab equipment",
+        "food": "Food & drinks",
+        "general": "General item"
+      },
+      "priority": {
+        "normal": "Normal",
+        "high": "High"
+      },
+      "cleaningMode": {
+        "full_area": "Full area",
+        "spot": "Spot cleaning",
+        "custom_zone": "Custom zone"
+      }
+    },
+    "unit": {
+      "min": "min"
+    }
+  },
+  "repeat": {
+    "none": "Does not repeat",
+    "daily": "Every day",
+    "weekdays": "Every weekday",
+    "weekly": "Every week"
+  },
+  "tasks": {
+    "title": "Tasks",
+    "subtitle": "Robot tasks of every service you operate.",
+    "create": "Create Task",
+    "createTitle": "Create Robot Task",
+    "createService": "Create {{service}} Task",
+    "selectService": "Available services",
+    "noFleetShort": "No fleet connected",
+    "created": "Task {{code}} created.",
+    "details": "Task",
+    "search": "Search tasks, robots, places",
+    "mineOnly": "Only tasks I created",
+    "overview": "Overview",
+    "parameters": "Task parameters",
+    "activity": "Activity timeline",
+    "noActivity": "Nothing happened yet.",
+    "notAssigned": "Not assigned yet",
+    "requested": "Requested: {{robot}}",
+    "viewOnMap": "View on map",
+    "pause": "Pause",
+    "resume": "Resume",
+    "cancel": "Cancel task",
+    "reassign": "Reassign",
+    "reassignTitle": "Reassign {{code}}",
+    "reassignBody": "The task is cancelled and sent again to the robot you choose.",
+    "reassigned": "Sent again as {{code}} to {{robot}}.",
+    "actionSent": {
+      "cancel": "Cancellation sent.",
+      "pause": "Pause sent.",
+      "resume": "Resume sent.",
+      "reassign": "Reassigned."
+    },
+    "kpi": {
+      "active": "Active",
+      "queued": "Waiting for a robot",
+      "waitingSince": "Oldest: {{code}}",
+      "late": "Late",
+      "completedToday": "Completed today",
+      "avg": "Avg. {{min}} min",
+      "activeLine": "{{executing}} executing · {{paused}} paused",
+      "noneWaiting": "No tasks waiting",
+      "lateOldest": "Latest: {{code}}",
+      "noneLate": "No tasks past ETA",
+      "failedToday": "{{count}} failed"
+    },
+    "col": {
+      "id": "Task ID",
+      "service": "Service",
+      "robot": "Robot",
+      "requester": "Operator",
+      "createdBy": "Created by",
+      "origin": "Area / Origin",
+      "destination": "Destination",
+      "status": "Status",
+      "priority": "Priority",
+      "created": "Created",
+      "scheduled": "Scheduled",
+      "started": "Started",
+      "completed": "Completed",
+      "eta": "ETA",
+      "previous": "Replaces"
+    },
+    "event": {
+      "requested": "Task created",
+      "assigned": "Robot assigned {{detail}}",
+      "started": "Task started",
+      "arrived_pickup": "Pickup reached",
+      "picked_up": "Delivery started",
+      "arriving": "Arriving at destination",
+      "arrived": "Destination reached",
+      "completed": "Task completed",
+      "cancelled": "Task cancelled",
+      "failed": "Task failed",
+      "delayed": "Delayed",
+      "paused": "Paused",
+      "resumed": "Resumed",
+      "reassigned": "Reassigned as #{{detail}}",
+      "task_cancel": "Cancellation requested by {{detail}}",
+      "task_pause": "Pause requested by {{detail}}",
+      "task_resume": "Resume requested by {{detail}}"
+    }
+  },
+  "taskState": {
+    "SCHEDULED": "Scheduled",
+    "QUEUED": "Queued",
+    "ASSIGNED": "Assigned",
+    "EXECUTING": "Executing",
+    "PAUSED": "Paused",
+    "COMPLETED": "Completed",
+    "CANCELLED": "Cancelled",
+    "FAILED": "Failed"
+  },
+  "robotStatus": {
+    "IDLE": "Idle",
+    "NAVIGATING": "Navigating",
+    "EXECUTING": "Executing task",
+    "CHARGING": "Charging",
+    "PAUSED": "Paused",
+    "MAINTENANCE": "Maintenance",
+    "OFFLINE": "Offline",
+    "ERROR": "Error"
+  },
+  "robotGroup": {
+    "active": "active",
+    "idle": "idle",
+    "charging": "charging",
+    "paused": "paused",
+    "maintenance": "maintenance",
+    "offline": "offline",
+    "error": "error"
+  },
+  "scheduleStatus": {
+    "completed": "Completed",
+    "in_progress": "In progress",
+    "scheduled": "Scheduled",
+    "pending": "Pending",
+    "failed": "Failed",
+    "cancelled": "Cancelled"
+  },
+  "health": {
+    "healthy": "Healthy",
+    "warning": "Warning",
+    "critical": "Critical"
+  },
+  "connection": {
+    "online": "Online",
+    "offline": "Offline"
+  },
+  "telemetry": {
+    "notReported": "Not reported",
+    "idle": "No active task",
+    "noTask": "No task",
+    "payload": "Payload",
+    "compartment": "Compartment",
+    "pickup": "Pickup",
+    "dropoff": "Drop-off",
+    "qr_pin": "QR / PIN",
+    "route": "Current route",
+    "water_tank": "Water tank",
+    "waste_tank": "Waste tank",
+    "brush_health": "Brush health",
+    "cleaning_mode": "Cleaning mode",
+    "coverage": "Coverage",
+    "area": "Current cleaning area",
+    "patrol_route": "Patrol route",
+    "checkpoint": "Current checkpoint",
+    "rounds": "Rounds completed",
+    "camera": "Camera",
+    "zone": "Current area",
+    "value": {
+      "ok": "OK",
+      "closed": "Closed",
+      "locked": "Locked",
+      "open": "Open",
+      "empty": "Empty",
+      "not_used": "Not used",
+      "idle": "Idle",
+      "full_area": "Full area",
+      "spot": "Spot",
+      "custom_zone": "Custom zone"
+    }
+  },
+  "users": {
+    "title": "Users & Access",
+    "subtitle": "Operator accounts and the services, zones and permissions each one may use.",
+    "newOperator": "New Operator",
+    "createOperator": "Create Operator",
+    "editAccess": "Edit Access",
+    "created": "Operator created.",
+    "updated": "Operator access updated successfully.",
+    "col": {
+      "user": "User",
+      "email": "Email",
+      "role": "Role",
+      "department": "Department",
+      "services": "Allowed services",
+      "zones": "Allowed zones",
+      "status": "Account active",
+      "lastActive": "Last active"
+    },
+    "all": "All services",
+    "allZones": "All zones",
+    "none": "None",
+    "services": "Robot services",
+    "zones": "Allowed areas",
+    "zonesHint": "No area ticked = every area.",
+    "permissions": "Permissions",
+    "serviceDisabled": "Service disabled",
+    "noServiceWarning": "Without a service the operator cannot create tasks.",
+    "adminHasAll": "Admins have every service, zone and permission.",
+    "roleHint": {
+      "operator": "Runs the robot services an admin assigns.",
+      "admin": "Full access, including users, integrations and settings."
+    },
+    "permissionGroup": {
+      "task": "Task permissions",
+      "fleet": "Fleet permissions",
+      "insight": "Insight"
+    }
+  },
+  "permission": {
+    "task": {
+      "create": "Create task",
+      "cancel": "Cancel task",
+      "schedule": "Schedule task",
+      "pause": "Pause / resume task",
+      "reassign": "Force reassign robot"
+    },
+    "fleet": {
+      "view": "View fleet",
+      "view_all": "View all services",
+      "assign": "Manual robot assignment",
+      "control": "Robot controls"
+    },
+    "alerts": {
+      "ack": "Acknowledge alerts"
+    },
+    "analytics": {
+      "view": "View analytics"
+    },
+    "maintenance": {
+      "view": "View maintenance",
+      "manage": "Manage maintenance"
+    },
+    "users": {
+      "manage": "Manage users"
+    },
+    "robots": {
+      "manage": "Manage robots"
+    },
+    "locations": {
+      "manage": "Manage locations"
+    },
+    "integrations": {
+      "manage": "Manage integrations"
+    },
+    "settings": {
+      "manage": "Manage settings"
+    },
+    "system": {
+      "diagnostics": "System diagnostics"
+    }
+  },
+  "permissionHint": {
+    "task": {
+      "create": "Request tasks of the allowed services.",
+      "cancel": "Cancel tasks that have not passed the point of no return.",
+      "schedule": "Set a start time and a repeat.",
+      "pause": "Interrupt a running task and resume it.",
+      "reassign": "Send a task that has not started to another robot."
+    },
+    "fleet": {
+      "view": "See the robots of the allowed services.",
+      "view_all": "Also see robots and alerts of other services, read-only.",
+      "assign": "Choose the robot when creating a task.",
+      "control": "Pause, resume, speed limit, set position."
+    },
+    "alerts": {
+      "ack": "Acknowledge and close alerts."
+    },
+    "analytics": {
+      "view": "Open the analytics page."
+    },
+    "maintenance": {
+      "view": "Open the maintenance page."
+    }
+  }
+}

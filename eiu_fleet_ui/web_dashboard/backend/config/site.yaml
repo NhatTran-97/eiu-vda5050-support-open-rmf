@@ -1,0 +1,127 @@
+# Campus catalog: floors, zones, locations linked to nav graph waypoints, cleaning areas, patrol routes, templates.
+
+levels:
+  tb3_world: {vi: "Tầng 1", en: "1F"}
+
+zones:
+  - id: building_a
+    name: {vi: "Tòa nhà A", en: "Building A"}
+    level: tb3_world
+
+locations:
+  - id: fablab
+    name: {vi: "FABLAB (Tầng dưới)", en: "FABLAB (Lower Level)"}
+    building: {vi: "Tòa nhà A", en: "Building A"}
+    zone: building_a
+    category: lab
+    level: tb3_world
+    waypoint: Patrol_A2
+  - id: library
+    name: {vi: "Thư viện", en: "Library"}
+    building: {vi: "Tòa nhà A", en: "Building A"}
+    zone: building_a
+    category: library
+    level: tb3_world
+    waypoint: Patrol_B1
+  - id: student_center
+    name: {vi: "Trung tâm Sinh viên", en: "Student Center"}
+    building: {vi: "Tòa nhà A", en: "Building A"}
+    zone: building_a
+    category: center
+    level: tb3_world
+    waypoint: Patrol_C1
+  - id: cafeteria
+    name: {vi: "Căng tin", en: "Cafeteria"}
+    building: {vi: "Tòa nhà A", en: "Building A"}
+    zone: building_a
+    category: cafeteria
+    level: tb3_world
+    waypoint: Patrol_E1
+  - id: room_204
+    name: {vi: "Phòng 204", en: "Room 204"}
+    building: {vi: "Tòa nhà A", en: "Building A"}
+    zone: building_a
+    category: room
+    level: tb3_world
+    waypoint: Patrol_F3
+  - id: room_118
+    name: {vi: "Phòng 118", en: "Room 118"}
+    building: {vi: "Tòa nhà A", en: "Building A"}
+    zone: building_a
+    category: room
+    level: tb3_world
+    waypoint: Patrol_D3
+  - id: room_312
+    name: {vi: "Phòng 312", en: "Room 312"}
+    building: {vi: "Tòa nhà A", en: "Building A"}
+    zone: building_a
+    category: room
+    level: tb3_world
+    waypoint: Patrol_C3
+  - id: admin_office
+    name: {vi: "Phòng Hành chính", en: "Admin Office"}
+    building: {vi: "Tòa nhà A", en: "Building A"}
+    zone: building_a
+    category: office
+    level: tb3_world
+    waypoint: Patrol_F1
+
+areas:
+  - id: hall_a
+    name: {vi: "Sảnh A", en: "Hall A"}
+    zone: building_a
+    rmf_zone: Patrol_C1
+  - id: library_floor
+    name: {vi: "Khu đọc Thư viện", en: "Library reading area"}
+    zone: building_a
+    rmf_zone: Patrol_B1
+
+routes:
+  - id: corridor_a
+    name: {vi: "Hành lang Tòa A", en: "Building A corridor"}
+    zone: building_a
+    stops: [library, student_center, cafeteria]
+  - id: rooms_a
+    name: {vi: "Dãy phòng Tòa A", en: "Building A rooms"}
+    zone: building_a
+    stops: [room_118, room_312, room_204]
+
+templates:
+  - id: t-books
+    icon: books
+    kind: delivery
+    pickup: library
+    dropoff: room_204
+    package_type: documents
+    name: {vi: "Thư viện → Phòng 204", en: "Library to Room 204"}
+    subtitle: {vi: "Sách & tài liệu", en: "Books & Materials"}
+  - id: t-lab
+    icon: lab
+    kind: delivery
+    pickup: fablab
+    dropoff: student_center
+    package_type: lab_equipment
+    name: {vi: "FABLAB → Trung tâm SV", en: "FABLAB to Student Center"}
+    subtitle: {vi: "Thiết bị thí nghiệm", en: "Lab Equipment"}
+  - id: t-food
+    icon: food
+    kind: delivery
+    pickup: cafeteria
+    dropoff: room_118
+    package_type: food
+    name: {vi: "Căng tin → Phòng 118", en: "Cafeteria to Room 118"}
+    subtitle: {vi: "Đồ ăn & thức uống", en: "Food & Drinks"}
+  - id: t-patrol
+    icon: patrol
+    kind: patrol
+    stops: [library, student_center, cafeteria]
+    route: corridor_a
+    rounds: 2
+    name: {vi: "Tuần tra hành lang", en: "Corridor patrol"}
+    subtitle: {vi: "3 điểm, 2 vòng", en: "3 stops, 2 rounds"}
+  - id: t-qr
+    icon: qr
+    kind: delivery
+    available: false
+    name: {vi: "Giao bằng QR / PIN", en: "QR / PIN Delivery"}
+    subtitle: {vi: "Người nhận dùng mã", en: "Recipient pickup code"}

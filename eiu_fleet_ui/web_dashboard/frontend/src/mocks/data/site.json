@@ -1,0 +1,229 @@
+{
+  "source": {
+    "mapYaml": "map.yaml",
+    "navGraph": "nav_graph.yaml"
+  },
+  "levels": [
+    {
+      "id": "tb3_world",
+      "image": "demo/maps/tb3_world.png",
+      "origin": [
+        0.0,
+        -13.537659901792518
+      ],
+      "resolution": 0.04977080846247249,
+      "widthPx": 639,
+      "heightPx": 191,
+      "graph": {
+        "vertices": [
+          {
+            "name": "Patrol_A1",
+            "x": 10.4984,
+            "y": -6.5654,
+            "charger": false
+          },
+          {
+            "name": "Patrol_B1",
+            "x": 15.8769,
+            "y": -6.6547,
+            "charger": false
+          },
+          {
+            "name": "Patrol_C1",
+            "x": 20.2256,
+            "y": -6.6765,
+            "charger": false
+          },
+          {
+            "name": "Patrol_E1",
+            "x": 25.3836,
+            "y": -6.6556,
+            "charger": false
+          },
+          {
+            "name": "Patrol_F1",
+            "x": 28.7757,
+            "y": -6.6543,
+            "charger": false
+          },
+          {
+            "name": "Patrol_F3",
+            "x": 28.7757,
+            "y": -11.318,
+            "charger": false
+          },
+          {
+            "name": "Patrol_D3",
+            "x": 21.8024,
+            "y": -11.2291,
+            "charger": false
+          },
+          {
+            "name": "Patrol_C3",
+            "x": 20.1367,
+            "y": -11.2069,
+            "charger": false
+          },
+          {
+            "name": "Patrol_C2",
+            "x": 20.1145,
+            "y": -8.231,
+            "charger": false
+          },
+          {
+            "name": "Patrol_B2",
+            "x": 15.8633,
+            "y": -8.2157,
+            "charger": false
+          },
+          {
+            "name": "Patrol_A2",
+            "x": 10.454,
+            "y": -8.2088,
+            "charger": false
+          },
+          {
+            "name": "charger_1",
+            "x": 5.3683,
+            "y": -6.6543,
+            "charger": true
+          },
+          {
+            "name": "charger_2",
+            "x": 10.4096,
+            "y": -9.5413,
+            "charger": true
+          },
+          {
+            "name": "charger_3",
+            "x": 8.951,
+            "y": -8.1741,
+            "charger": true
+          }
+        ],
+        "lanes": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            0
+          ],
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            2
+          ],
+          [
+            3,
+            4
+          ],
+          [
+            4,
+            3
+          ],
+          [
+            4,
+            5
+          ],
+          [
+            5,
+            4
+          ],
+          [
+            5,
+            6
+          ],
+          [
+            6,
+            5
+          ],
+          [
+            6,
+            7
+          ],
+          [
+            7,
+            6
+          ],
+          [
+            7,
+            8
+          ],
+          [
+            8,
+            7
+          ],
+          [
+            8,
+            9
+          ],
+          [
+            9,
+            8
+          ],
+          [
+            9,
+            10
+          ],
+          [
+            10,
+            9
+          ],
+          [
+            11,
+            0
+          ],
+          [
+            0,
+            11
+          ],
+          [
+            12,
+            10
+          ],
+          [
+            10,
+            12
+          ],
+          [
+            10,
+            0
+          ],
+          [
+            0,
+            10
+          ],
+          [
+            2,
+            8
+          ],
+          [
+            8,
+            2
+          ],
+          [
+            10,
+            13
+          ],
+          [
+            13,
+            10
+          ]
+        ]
+      }
+    }
+  ]
+}

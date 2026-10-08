@@ -12,7 +12,7 @@ The system runs on two machines:
 - The ground station runs the dashboard, Open-RMF and the fleet adapter in one container, on one ROS domain.
 - Each robot runs its VDA5050 client, the TurtleBot3 bridge and Nav2.
 
-The MQTT broker connects them. The dashboard talks to Open-RMF and the fleet adapter over ROS 2, reads the VDA5050 messages from the broker, and receives task events from the fleet adapter over an optional WebSocket. The dashboard merges two views of each robot: RMF's view from `/fleet_states`, and the robot's own view from its VDA5050 `state`. It combines them field by field, so neither view replaces the other (`display_robots` in `dashboard_model.py`).
+The MQTT broker connects them. The dashboard talks to Open-RMF and the fleet adapter over ROS 2, reads the VDA5050 messages from the broker, and receives task events from the fleet adapter over an optional WebSocket. The web dashboard is a second client of Open-RMF and the fleet adapters: its backend (`web_dashboard/backend`) has no ROS node and goes through `eiu_rmf_gateway`, a ROS 2 node on the same domain, over Redis. It uses the same operator interfaces of the fleet adapter as this dashboard (pause, resume, speed limit, init position, registration, lane closures, metrics) and the same `metrics_model.py` and `task_state.py`; its operations alerts take the adapter items of `metrics_model.attention()`. It is independent of this dashboard and described in [web_dashboard/docs/interfaces.md](../web_dashboard/docs/interfaces.md). A fleet adapter sends its task events to one address, so only this dashboard or the gateway receives them. The dashboard merges two views of each robot: RMF's view from `/fleet_states`, and the robot's own view from its VDA5050 `state`. It combines them field by field, so neither view replaces the other (`display_robots` in `dashboard_model.py`).
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,12 @@ flowchart LR
         end
         RMF["Open-RMF core\ntraffic_schedule · task_dispatcher\nmutex_group_supervisor"]
         FA["vda5050_fleet_adapter_full_control"]
+        GW["eiu_rmf_gateway\nROS 2 node"]
+        RD[("Redis")]
+        WEB["web_dashboard/backend\nFastAPI, no ROS"]
     end
+
+    BRW["🌐 Browsers\nweb dashboard"]
 
     MQ[("Mosquitto\nVDA5050 order/state JSON")]
 
@@ -46,6 +51,11 @@ flowchart LR
     MQ <--> CA
     FA -.->|"websocket task events\n(optional, if configured)"| PY
     PY -.->|"MQTT, read only: state, connection,\nfactsheet, order, instantActions"| MQ
+    BRW <-->|"HTTPS REST · WebSocket"| WEB
+    WEB <-->|"commands · events · state"| RD
+    RD <--> GW
+    GW <-->|"ROS 2: /task_api_*, /dispatch_states,\n/fleet_states, workcell states"| RMF
+    GW <-->|"ROS 2: pause/resume, speed_limit, init_position,\nregistration, lane closures, metrics"| FA
 ```
 
 ## Component view
