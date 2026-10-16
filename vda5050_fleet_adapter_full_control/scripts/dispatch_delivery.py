@@ -7,8 +7,8 @@ import time
 import uuid
 
 import rclpy
-from rclpy.qos import (QoSProfile, QoSDurabilityPolicy,
-                       QoSReliabilityPolicy, QoSHistoryPolicy)
+from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy,
+                       QoSProfile, QoSReliabilityPolicy)
 from rmf_task_msgs.msg import ApiRequest, ApiResponse
 
 
@@ -39,9 +39,9 @@ def main():
         "category": "delivery",
         "description": {
             "pickup": {"place": args.pickup_place, "handler": args.pickup_handler,
-                      "payload": payload},
-            "dropoff": {"place": args.dropoff_place, "handler": args.dropoff_handler,
                        "payload": payload},
+            "dropoff": {"place": args.dropoff_place, "handler": args.dropoff_handler,
+                        "payload": payload},
         },
         "unix_millis_earliest_start_time": 0,
         "requester": "cli",

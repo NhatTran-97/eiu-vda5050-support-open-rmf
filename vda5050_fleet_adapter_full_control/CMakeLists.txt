@@ -117,10 +117,15 @@ install(PROGRAMS
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
-  set(ament_cmake_copyright_FOUND TRUE)
-
-  set(ament_cmake_cpplint_FOUND TRUE)
+  # C++ style is checked by scripts/static_analysis.sh; flake8 runs with the project's flake8.cfg.
+  list(APPEND AMENT_LINT_AUTO_EXCLUDE
+    ament_cmake_copyright
+    ament_cmake_cpplint
+    ament_cmake_uncrustify
+    ament_cmake_flake8)
   ament_lint_auto_find_test_dependencies()
+  find_package(ament_cmake_flake8 REQUIRED)
+  ament_flake8(CONFIG_FILE ${CMAKE_CURRENT_SOURCE_DIR}/flake8.cfg)
 
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_order_validation test/test_order_validation.cpp)

@@ -57,8 +57,25 @@ Module diagram: [docs/architecture.md § Component view](docs/architecture.md#co
 - A running MQTT broker (Mosquitto) and `mutex_group_supervisor` (stock RMF,
   needed for mutex-protected corridors)
 
-`docker/` has a Jazzy image with all of the above, plus `eiu_fleet_ui`, for
-development without touching the host's ROS install.
+`docker/` has a Jazzy image with all of the above, plus `eiu_fleet_ui`, `eiu_rmf_gateway`
+with a local Redis, and the web dashboard backend (`eiu_fleet_ui/web_dashboard/backend`),
+for development without touching the host's ROS install.
+
+| Image layer | Contents |
+|---|---|
+| Open-RMF and build | `rmf_fleet_adapter`, `rmf_traffic_ros2`, `rmf_task_ros2`, Paho MQTT, yaml-cpp, colcon |
+| `eiu_fleet_ui` | PySide6 and the Qt/X11 libraries |
+| RMF gateway (`eiu_rmf_gateway`) | `redis-server`, `python3-redis` (apt), `websockets` (pip) |
+| Web dashboard backend | Everything in `eiu_fleet_ui/web_dashboard/backend/requirements.txt` (pip), copied from the named build context `backend`; its tests use the pytest of apt and `httpx` from `requirements-dev.txt` when needed |
+
+`docker/run.sh` builds the image `rmf_jazzy_vda` only when it does not exist. `docker/build.sh` builds it with two contexts, `docker/` and the web backend folder, so the backend's `requirements.txt` is the one list of its libraries for the image and for a local virtual environment. To rebuild it from scratch:
+
+```bash
+docker rm -f rmf_jazzy_vda_dev 2>/dev/null
+docker rmi rmf_jazzy_vda
+src/vda5050_fleet_adapter_full_control/docker/build.sh --no-cache
+src/vda5050_fleet_adapter_full_control/docker/run.sh
+```
 
 ## Build & run
 
@@ -197,7 +214,7 @@ The tables list every key the adapter reads, with its default and allowed range.
 | Key | Default | Description |
 |:---:|:---:|---|
 | `vda5050.metrics_period_s` | 60 | Time between metrics reports on `~/metrics` and in the log; 0 turns them off (0–3600) |
-| `vda5050.ui_websocket_uri` | — | WebSocket address for RMF task events, e.g. for `eiu_fleet_ui` |
+| `vda5050.ui_websocket_uri` | — | WebSocket address for RMF task events: `eiu_fleet_ui`, or `eiu_rmf_gateway` (`ws://127.0.0.1:8100`) for the web dashboard; one address per adapter |
 | `rmf_fleet.account_for_battery_drain` | false | When off, the battery is reported to RMF as full (SoC 1.0), so RMF never plans a recharge by itself |
 | `rmf_fleet.max_merge_waypoint_distance`, `max_merge_lane_distance` | 0.001, 0.3 | How close a robot on a path must be to a waypoint or lane for its position to be reported on it |
 
@@ -257,6 +274,8 @@ Unit tests run without a broker or robots:
 ```bash
 colcon test --packages-select vda5050_fleet_adapter_full_control
 ```
+
+`colcon test` also runs the ROS linters, configured to the project's style in `CMakeLists.txt`. `flake8` uses [flake8.cfg](flake8.cfg), which is ament's default with double quotes allowed and lines up to 140 characters. `pep257`, `lint_cmake` and `xmllint` run with their defaults. `uncrustify`, `cpplint` and `copyright` are off, because `scripts/static_analysis.sh` checks the C++ code with cppcheck and clang-tidy. ament skips its own `cppcheck` on Jazzy, since cppcheck 2.13 is too slow.
 
 | Test or tool | What it checks |
 |:---:|---|

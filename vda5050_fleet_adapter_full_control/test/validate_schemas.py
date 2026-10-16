@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Validate VDA5050 message samples against the official JSON schemas.
+"""
+Validate VDA5050 message samples against the official JSON schemas.
 
 Usage: validate_schemas.py <schema dir> <samples dir>
 A sample file is named <schema>__<case>.json, e.g. order__new_route.json.
@@ -15,7 +16,8 @@ SKIPPED = 77
 
 
 def apply_errata(kind, schema):
-    """Fix known defects of the published 2.1.0 schemas.
+    """
+    Fix known defects of the published 2.1.0 schemas.
 
     factsheet: blockingTypes puts its enum on the array instead of its items, so no array can
     match; the specification defines it as an array of NONE, SOFT and HARD.

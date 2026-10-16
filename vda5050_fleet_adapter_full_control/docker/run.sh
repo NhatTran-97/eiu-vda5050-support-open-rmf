@@ -9,7 +9,7 @@ DOMAIN=10
 
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
   echo ">> building image $IMAGE ..."
-  docker build -t "$IMAGE" "$(dirname "${BASH_SOURCE[0]}")"
+  "$(dirname "${BASH_SOURCE[0]}")/build.sh"
 fi
 
 

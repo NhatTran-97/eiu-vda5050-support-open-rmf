@@ -18,12 +18,12 @@ sizes come from the fleet configs and the nav graph, so nothing here is tied to 
 import argparse
 import json
 import os
+from pathlib import Path
 import shutil
 import signal
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 import yaml
 

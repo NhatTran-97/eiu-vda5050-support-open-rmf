@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Runs one load scenario: N simulated AGVs publish to a broker and the Connector reads them.
+"""
+Run one load scenario: N simulated AGVs publish to a broker and the Connector reads them.
 
 Start a broker first (for example mosquitto on --port), build the package with tests so that
 load_probe exists, then:
@@ -61,7 +62,7 @@ def mean(distributions, field):
 
 
 def summarize(samples, stderr, generator_lines, expected_rx_per_s):
-    """The numbers of the samples taken after the warm-up."""
+    """Return the numbers of the samples taken after the warm-up."""
     steady = [s for s in samples if s["wall_s"] > WARMUP_S]
     if len(steady) < 2:
         return None

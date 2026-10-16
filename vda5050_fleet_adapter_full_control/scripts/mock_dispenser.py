@@ -33,6 +33,7 @@ class MockDispenser(Node):
         self._publish_result(msg.request_guid, DispenserResult.ACKNOWLEDGED)
 
         timer = None
+
         def finish():
             timer.cancel()
             self._finish(msg.request_guid)
