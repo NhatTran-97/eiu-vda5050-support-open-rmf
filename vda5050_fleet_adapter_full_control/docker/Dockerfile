@@ -1,5 +1,5 @@
 # Build environment for the Jazzy VDA5050 fleet adapter.
-# Build with ./build.sh (it adds the web backend folder as the build context "backend").
+# Build with ./build.sh (it adds the web backend folder, or an empty folder, as the build context "backend").
 
 FROM ros:jazzy-ros-base
 
@@ -50,20 +50,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --break-system-packages PySide6
 
-# Install the RMF gateway dependencies (eiu_rmf_gateway) and a local Redis server.
+# Install Redis and its Python client for the optional web dashboard.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       redis-server \
       python3-redis \
     && rm -rf /var/lib/apt/lists/*
 
-# Install the RMF gateway's WebSocket library.
+# Install the WebSocket library for the optional web dashboard.
 RUN pip install --no-cache-dir --break-system-packages "websockets>=12"
 
-# Install the EIU web dashboard backend dependencies from its requirements file.
-# The backend folder is the build context "backend" (see build.sh).
-COPY --from=backend requirements.txt /tmp/eiu_web_requirements.txt
-RUN pip install --no-cache-dir --break-system-packages -r /tmp/eiu_web_requirements.txt \
- && rm /tmp/eiu_web_requirements.txt
+# Install the web dashboard backend dependencies when the build context "backend" has a requirements.txt.
+# The context is mounted for this step only, so no backend file is kept in the image.
+RUN --mount=type=bind,from=backend,target=/tmp/eiu_web_backend \
+    if [ -f /tmp/eiu_web_backend/requirements.txt ]; then \
+      pip install --no-cache-dir --break-system-packages -r /tmp/eiu_web_backend/requirements.txt; \
+    fi
 
 # Source ROS and the mounted workspace overlay in each shell.
 RUN echo 'source /opt/ros/jazzy/setup.bash' >> /root/.bashrc \
