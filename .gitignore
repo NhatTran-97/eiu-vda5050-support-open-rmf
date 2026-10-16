@@ -23,3 +23,7 @@ eiu_fleet_ui/dist_build/
 
 # Robots added at runtime by the fleet adapters (state, not configuration)
 *.runtime_robots.yaml*
+
+# Not published: web dashboard and its RMF gateway
+eiu_rmf_gateway/
+eiu_fleet_ui/web_dashboard/
