@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>eiu_fleet_ui</name>
-  <version>3.0.0</version>
+  <version>1.0.0</version>
   <description>EIU Fleet Management UI — PySide6 + QML</description>
   <maintainer email="nhat.tranduy1997@gmail.com">NhatTran</maintainer>
   <license>Apache-2.0</license>

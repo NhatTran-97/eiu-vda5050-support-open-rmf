@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>vda5050_msgs</name>
-  <version>3.0.0</version>
+  <version>1.0.0</version>
   <description>VDA5050 ROS 2 message definitions</description>
 
   <maintainer email="maintainer@example.com">maintainer</maintainer>
