@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>vda5050_fleet_adapter</name>
+  <version>3.0.0</version>
+  <description>
+    C++ Open-RMF EasyFullControl fleet adapter that drives VDA5050 AGVs over
+    MQTT. RMF Core is unchanged; this node maps each RMF navigation/action
+    request to a VDA5050 order/instantAction and feeds the AGV's VDA5050 state
+    back into RMF. Pairs with the robot-side vda5050_client_adapter.
+  </description>
+  <maintainer email="dnnevertogiveup@gmail.com">duynhat</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rmf_fleet_adapter</depend>
+  <depend>rmf_traffic</depend>
+  <depend>rmf_battery</depend>
+  <depend>eigen</depend>
+  <depend>yaml-cpp</depend>
+  <depend>nlohmann-json-dev</depend>
+  <depend>geometry_msgs</depend>
+  <depend>rcl_interfaces</depend>
+  <depend>rmf_fleet_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

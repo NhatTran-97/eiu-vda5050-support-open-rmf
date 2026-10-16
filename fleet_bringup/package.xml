@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>fleet_bringup</name>
-  <version>0.1.0</version>
+  <version>3.0.0</version>
   <description>Bundled launch for the fleet-management side (RMF core, VDA5050 fleet adapter, mock workcells, UI)</description>
   <maintainer email="nhat.tranduy1997@gmail.com">NhatTran</maintainer>
   <license>Apache-2.0</license>

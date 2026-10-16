@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>vda5050_fleet_adapter_full_control</name>
-  <version>0.1.0</version>
+  <version>3.0.0</version>
   <description>
     Open-RMF fleet adapter for VDA5050 AGVs. Speaks VDA5050 2.1.0 over MQTT
     on the robot side and RMF's FullControl (RobotCommandHandle) interface

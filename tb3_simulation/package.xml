@@ -2,10 +2,10 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>tb3_simulation</name>
-  <version>1.0.0</version>
+  <version>3.0.0</version>
   <description>TurtleBot3 Gazebo (Harmonic) + Nav2 simulation, tách riêng từ tb3_fleet. Chạy mô phỏng và điều hướng Nav2, giữ pipeline generate world từ traffic-editor (.building.yaml).</description>
   <maintainer email="eiu@todo.todo">eiu</maintainer>
-  <license>MIT</license>
+  <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 

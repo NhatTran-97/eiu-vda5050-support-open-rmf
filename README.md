@@ -161,7 +161,8 @@ Tests the fleet adapter against a client other than `vda5050_client_adapter`: 3 
 
 <table width="100%" style="width:100%; table-layout:fixed">
 <tr><th width="22%">Package</th><th width="13%">Layer</th><th>Description</th></tr>
-<tr><td><code>eiu_fleet_ui</code></td><td>Dashboard</td><td style="text-align: justify">A PySide6 and QML desktop app. It monitors robot status, dispatches and cancels tasks for a chosen robot or for RMF to assign, draws no-go zones, edits the nav graph, and gives direct per-robot control: pause, resume, speed limit and re-localize. It shows each robot's live VDA5050 order and message traffic, and each fleet adapter's health and metrics. It reports a new robot found on the broker, and registers or restores it into a fleet once the fleet adapter has checked it. It can follow several fleet adapters at once.</td></tr>
+<tr><td><code>eiu_fleet_ui</code></td><td>Dashboard</td><td style="text-align: justify">A PySide6 and QML desktop app. It monitors robot status, dispatches and cancels tasks for a chosen robot or for RMF to assign, draws no-go zones, edits the nav graph, and gives direct per-robot control: pause, resume, speed limit and re-localize. It shows each robot's live VDA5050 order and message traffic, and each fleet adapter's health and metrics. It reports a new robot found on the broker, and registers or restores it into a fleet once the fleet adapter has checked it. It can follow several fleet adapters at once. Its <code>web_dashboard</code> folder holds the multi-user web client (React) and its backend (FastAPI, no ROS). The backend sends delivery, cleaning and patrol tasks to Open-RMF and streams the robots' positions to the browsers. It is one operations platform with two roles: operators run the robot services, zones and actions an admin assigned (overview, live operations, tasks, fleet, schedule, maintenance, analytics, notifications); admins also manage users and access, locations and the nav graph, integrations and settings, with the same per-robot controls and robot registration as the desktop dashboard. It has a light and a dark theme.</td></tr>
+<tr><td><code>eiu_rmf_gateway</code></td><td>Gateway</td><td style="text-align: justify">The only ROS 2 node of the web dashboard. It carries out the commands that applications put on Redis — Open-RMF task requests, robot controls, robot registration, lane closures and nav graph saves — and writes back RMF's answers, task events, fleet, workcell, lane, registry and discovery states and adapter metrics, so the web backend runs without ROS. Its Redis contract is versioned and carries Open-RMF's own task JSON; the fleet adapter decides every operator request.</td></tr>
 <tr><td><code>vda5050_fleet_adapter_full_control</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>RobotCommandHandle</code> and <code>FleetUpdateHandle</code> (full control, not EasyFullControl). It sends a planned multi-waypoint route as one VDA5050 order. Each robot type, TB3 or AMR, runs as its own config file and process. A robot can be added to, removed from and restored to a running fleet, checked against the fleet's type, limits, nav graph and chargers, and saved for the next start.</td></tr>
 <tr><td><code>vda5050_fleet_adapter</code></td><td>Fleet adapter</td><td style="text-align: justify">Open-RMF fleet adapter built on <code>EasyFullControl</code>, sending one VDA5050 order per destination. It handles the factsheet, commissioning, pause and resume, re-localizing and lane closures the same way as the full-control adapter, but without multi-node orders, horizon release or stitching. TB3 and AMR run as separate config files and processes.</td></tr>
 <tr><td><code>fleet_bringup</code></td><td>Ground-station bringup</td><td style="text-align: justify">One launch file for the whole ground-station side. It starts <code>rmf_traffic_schedule</code>, <code>rmf_task_dispatcher</code>, the fleet adapter, the mock dispenser and ingestor, and <code>eiu_fleet_ui</code> in one process group.</td></tr>
@@ -175,7 +176,8 @@ Tests the fleet adapter against a client other than `vda5050_client_adapter`: 3 
 
 ```
 ros2_ws/src/
-  eiu_fleet_ui/                        # Dashboard UI (PySide6 + QML)
+  eiu_fleet_ui/                        # Dashboard UI (PySide6 + QML) and web dashboard (web_dashboard/)
+  eiu_rmf_gateway/                     # ROS 2 <-> Redis gateway for the web dashboard
   vda5050_fleet_adapter_full_control/  # Fleet adapter (one process per robot type)
   vda5050_fleet_adapter/              # Fleet adapter (EasyFullControl, one destination per order)
   fleet_bringup/                       # Ground-station bringup (single launch file)
@@ -190,7 +192,7 @@ ros2_ws/src/
 
 ### System overview
 
-The system has one ground station and one process per robot. The ground station runs Open-RMF core, the fleet adapter and the dashboard together in one Docker container and process group (`fleet_bringup`), so the ground-station side needs no cross-domain ROS 2 setup: everything on it shares one ROS domain. Each robot runs its own client adapter and navigation stack. Only the MQTT broker crosses over to the robot side.
+The system has one ground station and one process per robot. The ground station runs Open-RMF core, the fleet adapter and the dashboard together in one Docker container and process group (`fleet_bringup`), so the ground-station side needs no cross-domain ROS 2 setup: everything on it shares one ROS domain. The web dashboard adds `eiu_rmf_gateway`, the only ROS 2 node of the web stack, and Redis; the web backend has no ROS node and talks to the gateway through Redis. Browsers reach the backend over HTTP and WebSocket and never connect to ROS 2 or MQTT. Each robot runs its own client adapter and navigation stack. Only the MQTT broker crosses over to the robot side.
 
 <div align="center">
 
@@ -198,10 +200,15 @@ The system has one ground station and one process per robot. The ground station 
 flowchart TB
     subgraph pc ["🖥️  Ground-station PC — one Docker container (fleet_bringup)"]
         ui("eiu_fleet_ui\nPySide6 + QML")
+        gw("eiu_rmf_gateway\nROS 2 node")
+        redis[("Redis")]
+        web("eiu_web_backend\nFastAPI, no ROS")
         rmf("Open-RMF\nschedule + dispatcher")
         fa("vda5050_fleet_adapter_full_control\none process per robot type")
         broker[("Mosquitto\nlocalhost:1883")]
     end
+
+    browser("🌐  Browsers\nweb dashboard (React)")
 
     subgraph robot_tb3 ["🤖  TurtleBot3 (tb3_fleet)"]
         ca1("vda5050_client_adapter")
@@ -220,6 +227,11 @@ flowchart TB
     ui   <-->|"ROS 2\n/fleet_states · /task_api_*"| rmf
     ui   <-->|"ROS 2\nrobot control · registration · lane closures"| fa
     ui   -.->|"MQTT, read only"| broker
+    browser <-->|"HTTPS REST · WebSocket"| web
+    web  <-->|"commands · events · state"| redis
+    redis <--> gw
+    gw   <-->|"ROS 2\n/task_api_* · /dispatch_states · /fleet_states"| rmf
+    gw   <-->|"ROS 2\nrobot control · registration · lane closures · metrics"| fa
     rmf  <-->|"FullControl API"| fa
     fa   <-->|"VDA5050 JSON\norder · state · viz"| broker
     broker <-->|"VDA5050 JSON"| ca1
@@ -281,6 +293,25 @@ ros2 launch fleet_bringup fleet_bringup.launch.py
 python3 src/vda5050_fleet_adapter_full_control/scripts/dispatch_patrol.py charger_1
 ```
 
+### Web dashboard
+
+```bash
+# Inside the ground-station container: Redis, the gateway, then the backend
+redis-server --bind 127.0.0.1 --port 6379 --daemonize yes
+colcon build --packages-select eiu_rmf_gateway && source install/setup.bash
+ros2 launch eiu_rmf_gateway gateway.launch.py &
+cd /ros2_ws/src/eiu_fleet_ui/web_dashboard/backend
+python3 -m eiu_web_backend create-user --email admin@eiu.edu.vn --name "Admin Name" --role admin   # once
+python3 -m eiu_web_backend serve
+
+# On the host (Node.js 20.19 or newer): the frontend, proxied to the backend
+cd ~/ros2_ws/src/eiu_fleet_ui/web_dashboard/frontend
+npm ci && npm run dev:backend      # http://127.0.0.1:5173
+# npm run dev:lan                  # same, reachable from the LAN at http://<host IP>:5173
+```
+
+See [web_dashboard/README.md](eiu_fleet_ui/web_dashboard/README.md), its [interfaces](eiu_fleet_ui/web_dashboard/docs/interfaces.md) and [eiu_rmf_gateway](eiu_rmf_gateway/README.md).
+
 By default, `fleet_bringup` starts one `vda5050_fleet_adapter_full_control` process for the TB3 fleet.
 To run a second robot type, such as the AMR, at the same time, launch a second fleet adapter process against its own config file.
 See [that package's README](vda5050_fleet_adapter_full_control/README.md#build--run).
@@ -330,9 +361,15 @@ The fleet adapter identifies a robot by `vda5050.robots.<name>`, and the robot's
 ## Documentation
 
 - [EIU Fleet UI](eiu_fleet_ui/README.md)
+- [EIU RMF Gateway](eiu_rmf_gateway/README.md)
 - [VDA5050 Fleet Adapter (Full Control)](vda5050_fleet_adapter_full_control/README.md) · [Architecture](vda5050_fleet_adapter_full_control/docs/architecture.md)
 - [VDA5050 Fleet Adapter (EasyFullControl)](vda5050_fleet_adapter/README.md) · [Architecture](vda5050_fleet_adapter/docs/architecture.md)
 - [Fleet Bringup](fleet_bringup/README.md)
 - [VDA5050 Client Adapter](vda5050_client_adapter/README.md) · [Architecture](vda5050_client_adapter/docs/architecture.md)
 - [TB3 VDA5050 Bridge](tb3_vda5050_bridge/README.md) · [Architecture](tb3_vda5050_bridge/docs/architecture.md)
 - [MQTT Test Guide](vda5050_client_adapter/docs/mqtt_test_guide.md) · [Docker Guide](vda5050_client_adapter/docs/docker_guide.md)
+
+## License
+
+All packages in this repository are released under the [Apache License 2.0](LICENSE). The current release is 3.0.0.
+The official VDA5050 2.1 JSON schemas in `vda5050_fleet_adapter_full_control/test/schemas/vda5050_2.1` keep their own MIT license ([LICENSE.txt](vda5050_fleet_adapter_full_control/test/schemas/vda5050_2.1/LICENSE.txt)).
