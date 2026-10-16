@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <limits>
+#include <string>
+#include <vector>
 
 #include <mqtt/message.h>
 #include <rclcpp/logger.hpp>
@@ -11,6 +13,27 @@ using vda5050_fleet_adapter::Transform;
 using vda5050_fleet_adapter::Vda5050Connector;
 
 namespace {
+
+// Records published topics instead of sending them; `fail_publish` makes every publish fail.
+class RecordingConnector : public Vda5050Connector
+{
+public:
+  using Vda5050Connector::Vda5050Connector;
+
+  bool fail_publish = false;
+  std::vector<std::string> published;
+
+protected:
+  bool publish_raw(const std::string& topic, const std::string& /*payload*/) override
+  {
+    if (fail_publish)
+    {
+      return false;
+    }
+    published.push_back(topic);
+    return true;
+  }
+};
 
 constexpr const char* kBase = "EFCT/v2/TEST/0001/";
 
@@ -39,7 +62,7 @@ protected:
     feed("state", state);
   }
 
-  Vda5050Connector connector;
+  RecordingConnector connector;
 };
 
 }  // namespace
@@ -84,6 +107,7 @@ TEST_F(ConnectorTest, ReadinessFollowsConnectionAndState)
 TEST_F(ConnectorTest, UnknownRobotIsNotReady)
 {
   EXPECT_EQ(connector.readiness("nobody").reason, "unknown robot");
+  EXPECT_EQ(connector.navigate("nobody", "B", 5.0, 6.0, 0.0, "m"), vda5050_fleet_adapter::NavigateStatus::rejected);
   EXPECT_FALSE(connector.set_speed_limit("nobody", 0.2));
   EXPECT_TRUE(connector.set_speed_limit("r", 0.2));
 }
@@ -123,14 +147,16 @@ TEST_F(ConnectorTest, ActiveOrderIsMatchedByDestinationAndOrderId)
 
 TEST_F(ConnectorTest, RejectsOrderWithNonFinitePose)
 {
-  connector.navigate("r", "B", std::numeric_limits<double>::quiet_NaN(), 6.0, 0.0, "m");
+  EXPECT_EQ(connector.navigate("r", "B", std::numeric_limits<double>::quiet_NaN(), 6.0, 0.0, "m"),
+            vda5050_fleet_adapter::NavigateStatus::rejected);
   EXPECT_TRUE(connector.current_order_id("r").empty());
 }
 
 TEST_F(ConnectorTest, RejectsOrderOnUnknownMap)
 {
   feed_state({{"maps", nlohmann::json::array({{{"mapId", "m"}}})}});
-  connector.navigate("r", "B", 5.0, 6.0, 0.0, "other_map");
+  EXPECT_EQ(connector.navigate("r", "B", 5.0, 6.0, 0.0, "other_map"),
+            vda5050_fleet_adapter::NavigateStatus::rejected);
   EXPECT_TRUE(connector.current_order_id("r").empty());
 }
 
@@ -139,7 +165,7 @@ TEST_F(ConnectorTest, SoftViolationWarnsButStillSends)
   feed("factsheet", {{"protocolLimits", {{"timing", {{"minOrderInterval", 5.0}}}}}});
   connector.navigate("r", "A", 1.0, 1.0, 0.0, "m");
   ASSERT_FALSE(connector.current_order_id("r").empty());
-  // Sent again immediately, under minOrderInterval -- soft, not rejected.
+  // Second order inside minOrderInterval: soft violation, still sent.
   connector.navigate("r", "B", 2.0, 2.0, 0.0, "m");
   EXPECT_FALSE(connector.current_order_id("r").empty());
 }
@@ -188,6 +214,31 @@ TEST_F(ConnectorTest, StitchingDeclinesWithoutAValidPose)
   connector.navigate("r", "B", 2.0, 2.0, 0.0, "m");
   EXPECT_NE(connector.current_order_id("r"), first);
   EXPECT_EQ(connector.current_order_update_id("r"), 0);
+}
+
+TEST_F(ConnectorTest, RejectedReplacementCancelsTheLiveOrder)
+{
+  connector.navigate("r", "A", 1.0, 1.0, 0.0, "m");
+  const std::string first = connector.current_order_id("r");
+  feed_state({{"orderId", first}, {"driving", true}});
+  connector.published.clear();
+
+  EXPECT_EQ(connector.navigate("r", "B", std::numeric_limits<double>::quiet_NaN(), 2.0, 0.0, "m"),
+            vda5050_fleet_adapter::NavigateStatus::rejected);
+  ASSERT_EQ(connector.published.size(), 1u);
+  EXPECT_EQ(connector.published[0], std::string(kBase) + "instantActions");
+  EXPECT_TRUE(connector.current_order_id("r").empty());
+}
+
+TEST_F(ConnectorTest, UnpublishedOrderIsNotTracked)
+{
+  connector.navigate("r", "A", 1.0, 1.0, 0.0, "m");
+  const std::string first = connector.current_order_id("r");
+
+  connector.fail_publish = true;
+  EXPECT_EQ(connector.navigate("r", "B", 2.0, 2.0, 0.0, "m"),
+            vda5050_fleet_adapter::NavigateStatus::transport_failed);
+  EXPECT_EQ(connector.current_order_id("r"), first);
 }
 
 int main(int argc, char** argv)

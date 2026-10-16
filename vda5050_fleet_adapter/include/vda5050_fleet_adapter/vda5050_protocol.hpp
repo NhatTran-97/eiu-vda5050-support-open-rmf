@@ -6,8 +6,7 @@
 
 #include <nlohmann/json.hpp>
 
-/// Transport-agnostic VDA5050 v2.x message helpers (build + parse). All wire
-/// format knowledge lives here so the rest of the adapter stays clean.
+/// VDA5050 2.x message building and state parsing, without MQTT or RMF.
 namespace vda5050_fleet_adapter::protocol {
 
 inline constexpr const char* VERSION = "2.1.0";
@@ -94,7 +93,7 @@ std::string make_uuid();
 
 // ─── State parsing (AGV -> RMF) ───────────────────────────────────────────────
 
-/// Lightweight, read-only view over an incoming VDA5050 'state' message.
+/// Fields of a VDA5050 'state' message.
 class ParsedState
 {
 public:

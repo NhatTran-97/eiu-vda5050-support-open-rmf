@@ -6,8 +6,8 @@
 
 namespace vda5050_fleet_adapter {
 
-RobotAdapter::RobotAdapter(rclcpp::Logger logger, std::string name,Vda5050Connector& connector) 
-                                  :  _logger(logger), _name(std::move(name)),_sm(logger, connector, _name)
+RobotAdapter::RobotAdapter(rclcpp::Logger logger, std::string name,Vda5050Connector& connector, double replan_after_s) 
+                                  :  _logger(logger), _name(std::move(name)),_sm(logger, connector, _name, replan_after_s)
 {
 }
 
@@ -47,6 +47,15 @@ void RobotAdapter::update(const EasyFullControl::RobotState& state)
     
   const auto activity = _sm.on_state_update();
   _update_handle->update(state, activity);
+
+  if (_sm.take_replan_request())
+  {
+    if (const auto handle = _update_handle->more())
+    {
+      RCLCPP_WARN(_logger, "[%s] the last command could not be sent -- asking RMF to replan", _name.c_str());
+      handle->replan();
+    }
+  }
 }
 
 void RobotAdapter::apply_readiness(const Readiness& readiness)

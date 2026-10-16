@@ -9,8 +9,7 @@ namespace vda5050_fleet_adapter {
   2D affine transform between the RMF nav-graph frame and a robot map frame:
   robot = scale * R(rotation) * rmf + translation
 
-  Configure per robot in the fleet config file. Identity by default (frames equal).
-  Ported from the reference RobotClientAPI.py `Transform`.
+  Set per robot in the fleet config (`vda5050.robots.<name>.transform`); identity by default.
 */
 class Transform
 {

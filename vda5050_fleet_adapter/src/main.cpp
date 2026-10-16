@@ -107,6 +107,12 @@ int main(int argc, char** argv)
                  update_rate_hz);
     return 1;
   }
+  const double replan_after_s = vda["replan_after_s"] ? vda["replan_after_s"].as<double>() : 10.0;
+  if (!(replan_after_s >= 0.0))
+  {
+    RCLCPP_FATAL(logger, "vda5050.replan_after_s must be >= 0 (got %f)", replan_after_s);
+    return 1;
+  }
 
   const YAML::Node mqtt = vda["mqtt"];
   const std::string host = (mqtt && mqtt["host"]) ? mqtt["host"].as<std::string>() : "localhost";
@@ -179,7 +185,7 @@ int main(int argc, char** argv)
     }
 
     connector->add_robot(name, manufacturer, serial, tf);
-    robots[name] = std::make_shared<RobotAdapter>(logger, name, *connector);
+    robots[name] = std::make_shared<RobotAdapter>(logger, name, *connector, replan_after_s);
   }
 
   // Operator controls: init_position, pause, resume and a per-robot speed cap.

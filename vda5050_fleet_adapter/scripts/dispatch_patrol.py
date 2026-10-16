@@ -18,8 +18,8 @@ import time
 import uuid
 
 import rclpy
-from rclpy.qos import (QoSProfile, QoSDurabilityPolicy,
-                       QoSReliabilityPolicy, QoSHistoryPolicy)
+from rclpy.qos import (QoSDurabilityPolicy, QoSHistoryPolicy,
+                       QoSProfile, QoSReliabilityPolicy)
 from rmf_task_msgs.msg import ApiRequest, ApiResponse
 
 

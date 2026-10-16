@@ -19,7 +19,7 @@ class RobotAdapter
 public:
   using EasyFullControl = rmf_fleet_adapter::agv::EasyFullControl;
 
-  RobotAdapter(rclcpp::Logger logger, std::string name,Vda5050Connector& connector);
+  RobotAdapter(rclcpp::Logger logger, std::string name,Vda5050Connector& connector, double replan_after_s);
 
   EasyFullControl::RobotCallbacks make_callbacks();
 

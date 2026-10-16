@@ -10,19 +10,19 @@ rmf_fleet:
     angular: [1.0, 3.2]      # [w_max, alpha_max] rad/s, rad/s^2
 
   profile:
-    footprint: 0.15   # bán kính (radius, m) hình tròn xấp xỉ thân robot
-    vicinity: 0.30    # bán kính vùng "riêng tư"
+    footprint: 0.15   
+    vicinity: 0.30   
   reversible: true
 
 
   battery_system:
-    voltage: 11.1        # V -- stock 3S Li-Po
-    capacity: 1.8         # Ah -- stock 1800mAh Li-Po
-    charging_current: 1.0 # A -- rough estimate, 
+    voltage: 11.1        # V
+    capacity: 1.8         # Ah
+    charging_current: 1.0 # A
 
   mechanical_system:
-    mass: 1.0              # kg -- stock TB3 Burger weight
-    moment_of_inertia: 0.005 # kg*m^2 -- rough estimate, not measured
+    mass: 1.0              # kg
+    moment_of_inertia: 0.005 # kg*m^2
     friction_coefficient: 0.22
 
   ambient_system: {power: 20.0}
@@ -34,9 +34,8 @@ rmf_fleet:
   account_for_battery_drain: false
 
   task_capabilities:
-    loop: true # Patrol Tassk
-    delivery: true # Delivery Task
-  #actions: ["dock"]
+    loop: true # patrol
+    delivery: true
 
   finishing_request: "park"   # Post-task action: park, charge, or nothing
 
@@ -58,6 +57,7 @@ vda5050:
   strict_validation: true
   # Extend a still-live order with a new destination instead of cancelling it.
   stitch_on_replan: false
+  replan_after_s: 10.0  # s
   mqtt:
     host: "192.168.10.97"
     port: 1883

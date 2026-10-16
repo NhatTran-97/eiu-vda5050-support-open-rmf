@@ -1,4 +1,5 @@
-"""Launch the C++ VDA5050 EasyFullControl fleet adapter.
+"""
+Launch the C++ VDA5050 EasyFullControl fleet adapter.
 
 Override paths if needed:
   ros2 launch vda5050_fleet_adapter fleet_adapter.launch.py \

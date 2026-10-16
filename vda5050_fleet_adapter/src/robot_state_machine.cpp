@@ -20,8 +20,8 @@ constexpr double kHoldTimeoutSec = 10.0;
 constexpr double kResumeGraceSec = 3.0;
 }  // namespace
 
-RobotStateMachine::RobotStateMachine(rclcpp::Logger logger, Vda5050Connector& connector, std::string robot_name)
-: _logger(std::move(logger)), _connector(connector), _name(std::move(robot_name))
+RobotStateMachine::RobotStateMachine(rclcpp::Logger logger, Vda5050Connector& connector, std::string robot_name, double replan_after_s)
+: _logger(std::move(logger)), _connector(connector), _name(std::move(robot_name)), _replan_after_s(replan_after_s)
 {
   
 }
@@ -71,6 +71,8 @@ void RobotStateMachine::on_navigate(
 
   const bool was_holding = _state == State::HOLDING;
   _hold_deadline.reset();
+  _order_unsent = false;
+  _replan_at.reset();
 
   _nav_exec = std::move(execution);
   _state = State::NAVIGATING;
@@ -87,7 +89,23 @@ void RobotStateMachine::on_navigate(
   RCLCPP_INFO(_logger, "[%s] navigate -> (%.2f, %.2f, %.2f) node '%s' map '%s'",
               _name.c_str(), p.x(), p.y(), p.z(), node_id.c_str(), destination.map().c_str());
 
-  _connector.navigate(_name, node_id, p.x(), p.y(), p.z(), destination.map(), destination.speed_limit());
+  const NavigateStatus status =
+    _connector.navigate(_name, node_id, p.x(), p.y(), p.z(), destination.map(), destination.speed_limit());
+  if (status != NavigateStatus::queued)
+  {
+    RCLCPP_ERROR(_logger, "[%s] order was not published (%s) -- replanning in %.0f s", _name.c_str(),
+                 status == NavigateStatus::rejected ? "rejected by validation" : "transport failure", _replan_after_s);
+    _order_unsent = true;
+    _replan_at = _nav_started +
+      std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(_replan_after_s));
+    if (was_holding)
+    {
+      // The held order still leads to the previous destination; cancel it unless the connector already did.
+      release_hold_locked(!_connector.current_order_id(_name).empty());
+      _state = State::NAVIGATING;
+    }
+    return;
+  }
   if (was_holding)
   {
     resume_unless_operator_paused_locked();
@@ -124,6 +142,14 @@ void RobotStateMachine::on_stop(ConstActivityIdentifierPtr activity)
     return; 
 
   _nav_exec.reset();
+  if (_order_unsent)
+  {
+    // No order of this command reached the AGV, so there is nothing to pause.
+    _order_unsent = false;
+    _replan_at.reset();
+    _state = State::IDLE;
+    return;
+  }
   if (_connector.pause(_name))
   {
     RCLCPP_INFO(_logger, "[%s] stop (startPause, awaiting a new command or cancel)", _name.c_str());
@@ -188,6 +214,16 @@ RobotStateMachine::on_state_update()
 
   if (_state == State::NAVIGATING && _nav_exec.has_value()) 
   {
+    if (_order_unsent)
+    {
+      if (_replan_at && std::chrono::steady_clock::now() >= *_replan_at)
+      {
+        _replan_at.reset();
+        _replan_requested = true;
+      }
+      return _nav_exec->identifier();
+    }
+
     if (_connector.is_command_completed(_name)) {
       RCLCPP_INFO(_logger, "[%s] navigation completed", _name.c_str());
       _nav_exec->finished();
@@ -244,6 +280,12 @@ RobotStateMachine::State RobotStateMachine::state()
   return _state;
 }
 
+bool RobotStateMachine::take_replan_request()
+{
+  std::lock_guard<std::mutex> lock(_mutex);
+  return std::exchange(_replan_requested, false);
+}
+
 bool RobotStateMachine::pause_expected()
 {
   std::lock_guard<std::mutex> lock(_mutex);
@@ -270,6 +312,12 @@ std::string RobotStateMachine::resume()
 {
   std::lock_guard<std::mutex> lock(_mutex);
   _operator_paused = false;
+  if (_state == State::HOLDING)
+  {
+    // RMF's traffic hold keeps the AGV paused; it is released with the next RMF command.
+    RCLCPP_INFO(_logger, "[%s] operator pause lifted -- the AGV stays held until RMF sends a new command", _name.c_str());
+    return {};
+  }
   if (!_connector.resume(_name))
   {
     return "stopPause was not published";

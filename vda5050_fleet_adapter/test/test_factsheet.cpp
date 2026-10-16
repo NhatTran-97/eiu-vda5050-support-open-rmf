@@ -117,7 +117,7 @@ TEST(OrderValidation, MapAmongKnownMapsIsAllowed)
   shape.base_pose = {0.0, 0.0, 0.0};
   shape.dest_pose = {1.0, 1.0, 0.0};
   EXPECT_TRUE(proto::check_order(shape, std::nullopt, {"m1", "m2"}).empty());
-  // An empty known-maps list means the AGV never reported any -- nothing to check against.
+  // No reported maps: the map check is skipped.
   EXPECT_TRUE(proto::check_order(shape, std::nullopt, {}).empty());
 }
 

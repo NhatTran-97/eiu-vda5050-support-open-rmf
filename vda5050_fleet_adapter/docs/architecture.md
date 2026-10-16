@@ -1,13 +1,18 @@
 # vda5050_fleet_adapter — Architecture
 
-Bridges Open-RMF to VDA5050 AGVs over MQTT through the EasyFullControl
-API. RMF sees a normal EasyFullControl fleet adapter; the robots see a
-normal VDA5050 master controller.
+Bridges Open-RMF to a VDA5050 fleet over MQTT. RMF sees an EasyFullControl fleet adapter (`RobotCallbacks`, `EasyRobotUpdateHandle`); the robots see a VDA5050 master controller.
 
-See [README.md § Features](../README.md#features) for the feature list —
-kept in one place to avoid the two drifting apart.
+The main features are listed in [README.md § Key features](../README.md#key-features); this document covers how they are built.
 
 ## System architecture
+
+The system has four parts:
+- Open-RMF plans routes, manages traffic and assigns tasks.
+- This adapter turns RMF commands into VDA5050 orders and instant actions, and reports each robot's state back to RMF.
+- An MQTT broker (Mosquitto) carries the VDA5050 messages.
+- Each robot runs a VDA5050 client. On the TB3 robots this is `vda5050_client_adapter`, which drives Nav2 through `tb3_vda5050_bridge`.
+
+Stock RMF handles traffic negotiation (`rmf_traffic_schedule`). The adapter executes the destinations RMF gives it.
 
 ```mermaid
 flowchart LR
@@ -17,68 +22,87 @@ flowchart LR
         direction TB
         RA["RobotAdapter\n(per robot)"]
         SM["RobotStateMachine\n(per robot)"]
-        CN["Vda5050Connector\n1 MQTT connection · N robots"]
+        CN["Vda5050Connector\none MQTT connection, all robots"]
         OI["OperatorInterface\npause/resume/speed/init_position"]
         RA --> SM --> CN
+        RA --> CN
         OI --> RA
         OI --> CN
     end
 
     MQ[("Mosquitto\nVDA5050 JSON")]
     UI["eiu_fleet_ui\n(operator dashboard)"]
-    CA["vda5050_client_adapter\n(on the robot)"]
+
+    subgraph ROBOT ["🤖 Robot"]
+        CA["vda5050_client_adapter"]
+        BR["tb3_vda5050_bridge"]
+        N2["Nav2"]
+        CA <--> BR
+        BR --> N2
+    end
 
     RMF <-->|"EasyFullControl API\nnavigate · stop · action · update"| RA
-    CN <-->|"order, state, connection,\ninstantActions, factsheet"| MQ
+    CN <-->|"order, instantActions,\nstate, connection, factsheet"| MQ
     MQ <--> CA
     UI -->|"pause/resume/speed_limit/\ninit_position"| OI
     UI -->|lane_closure_requests| FA
 ```
 
-RMF never talks MQTT and the robot never talks ROS — this process is the
-only thing that understands both.
+### Interfaces
 
-EasyFullControl hands the adapter **one destination at a time**: one
-VDA5050 order per destination (base node = current pose, end node =
-destination), each with a fresh `orderId`. Multi-node orders, horizon
-release and stitching belong to `vda5050_fleet_adapter_full_control`.
+| Other side | Messages | Protocol |
+|:---:|---|:---:|
+| RMF core | `navigate`, `stop`, `action` callbacks in; `update`, `replan`, `set_commission` out | In-process RMF API |
+| AGVs (via the broker) | `order`, `instantActions` out; `state`, `connection`, `factsheet`, `visualization` in | MQTT |
+| `eiu_fleet_ui` | In: `<robot>/pause`, `<robot>/resume` (`std_srvs/Trigger`), parameter `speed_limit.<robot>`, `<robot>/init_position`, `/lane_closure_requests`. Out: `<robot>/init_position_result` | ROS 2 |
+
+Operator topics and services are under the node name, for example `vda5050_fleet_adapter_tb3/tb3_1/pause`.
 
 ## Component view
 
+An arrow points from a component to a component it uses.
+
 ```mermaid
 flowchart TB
-    main["main.cpp\nAdapter::make · add_easy_fleet · update loop"]
-    main --> ra["RobotAdapter\nEasyFullControl callbacks · commission"]
+    main["main.cpp\nconfig, fleet, lane closures, update loop"]
+    main --> ra["RobotAdapter\nEasyFullControl callbacks, commission, replan"]
     main --> oi["OperatorInterface"]
+    main --> conn
     ra --> sm["RobotStateMachine\nIDLE · NAVIGATING · EXECUTING_ACTION · HOLDING"]
-    ra --> conn["Vda5050Connector\nMQTT ↔ per-robot state"]
-    sm --> conn
+    sm --> conn["Vda5050Connector\nMQTT <-> per-robot state"]
     oi --> ra
     oi --> conn
-    conn --- proto["vda5050_protocol\nbuild/parse JSON"]
-    conn --- fs["factsheet\nactions · blocking types"]
-    conn --- rd["readiness\ncommission decision"]
-    conn --- tf["transform\nRMF ↔ robot frame"]
+    conn --> proto["vda5050_protocol\nmessage building, state parsing"]
+    conn --> fs["factsheet\nfactsheet parsing, order and action checks"]
+    conn --> rd["readiness\ncommission decision"]
+    conn --> tf["transform\nRMF <-> robot frame"]
 ```
 
 | File | Role |
 |:---:|---|
-| `src/main.cpp` | Entry point: parse config, create the Adapter and fleet, build the robots, lane closures, run the update loop |
-| `vda5050_protocol.*` | Pure message layer: build `order` / `instantActions`, parse `state` into `ParsedState` (pose, order progress, safety, operating mode, errors). No MQTT, no RMF |
-| `factsheet.*` | Pure: factsheet parser (actions, blocking types, speed, array limits), custom-action check, action conflict check, order validation (`check_order`) |
-| `readiness.*` | Pure: whether an AGV can take tasks, from connectivity and state |
-| `transform.hpp` | 2D affine transform between the RMF frame and the robot map frame |
-| `vda5050_connector.*` | Owns one paho MQTT connection and one `RobotContext` per robot. Downlink: `navigate`, `stop`, `pause`, `resume`, `init_position`, `execute_instant_action`, `poll` (factsheetRequest). Uplink: `get_data`, `readiness`, `is_command_completed`, `get_action_state` |
-| `robot_state_machine.*` | Per-robot lifecycle; holds the active `CommandExecution`, fires `finished()`, runs the hold |
-| `robot_adapter.*` | Bridges one EasyFullControl robot to the connector and state machine; applies commission changes |
-| `operator_interface.*` | ROS topics, services and parameters for `init_position`, pause, resume and speed limit |
-| `config/` · `maps/` · `launch/` · `docker/` | Fleet configs, RMF nav graph (waypoint names become VDA5050 nodeIds), launch files, Jazzy build image |
-| `scripts/` | `dispatch_patrol.py`, `cancel_task.py`, `mock_mqtt_robot.py`, `run_mock_fleets.py`, `test_dispatch_e2e.py` |
-| `test/` | Unit tests: `test_protocol`, `test_factsheet`, `test_readiness`, `test_connector` (no broker), `test_transform`, `test_state_machine` |
+| `main.cpp` | Reads the config, creates the fleet with `Adapter::add_easy_fleet`, adds the robots once they report a pose, applies lane requests, runs the update loop |
+| `robot_adapter.*` | EasyFullControl callbacks of one robot; passes RMF updates, commission changes and replan requests to RMF |
+| `robot_state_machine.*` | Holds the active `CommandExecution` or `ActionExecution`, reports completion, runs the traffic hold |
+| `vda5050_connector.*` | One Paho connection and one `RobotContext` per robot. Downlink: `navigate`, `stop`, `pause`, `resume`, `init_position`, `execute_instant_action`, `poll`. Uplink: `get_data`, `readiness`, `is_command_completed`, `get_action_state` |
+| `vda5050_protocol.*` | Builds `order` and `instantActions`; parses `state` into `ParsedState`. No MQTT, no RMF |
+| `factsheet.*` | Parses the factsheet; `check_order`, `check_instant_action`, `action_conflicts` |
+| `readiness.*` | `evaluate_readiness`: whether a robot may take tasks |
+| `operator_interface.*` | ROS services, topics and parameters of the operator controls |
 
 ## Key flows
 
-### Navigation dispatch and completion
+### Order dispatch and completion
+
+RMF calls `navigate` with one destination. The adapter sends one order and reports completion when the AGV's state shows the order finished at the destination.
+
+Steps:
+1. The nodeId of the destination is its waypoint name, else `wp_<graph index>`, else `<x>_<y>`.
+2. `Vda5050Connector::navigate` builds the order: base node at the AGV's reported pose (`lastNodeId`, or `<serial>_start`), end node at the destination, one edge. The edge `maxSpeed` is the lower of RMF's speed limit and the operator's speed limit.
+3. If an order is still running, it is cancelled first, or the new destination is sent as an order update (see [Order replacement](#order-replacement)).
+4. The order is checked ([Factsheet and validation](#factsheet-and-validation)) and published. It is tracked only after MQTT accepts it.
+5. On each update pass, `is_command_completed` checks the state: same `orderId`, not driving, `lastNodeId` equal to the destination, no `nodeStates` or `edgeStates` left. Then `CommandExecution::finished()` is called.
+
+When the order is rejected or not published, nothing is tracked, the completion check is skipped, and RMF is asked to replan after `replan_after_s`.
 
 ```mermaid
 sequenceDiagram
@@ -86,79 +110,138 @@ sequenceDiagram
     participant RA as RobotAdapter
     participant SM as RobotStateMachine
     participant CN as Vda5050Connector
-    participant Robot
+    participant AGV
 
     RMF->>SM: navigate(destination, execution)
-    SM->>CN: navigate() — one order, speed capped by the operator limit
-    CN->>CN: check_order() — reject a hard violation, warn on a soft one
-    CN->>Robot: order (MQTT) — stitched onto a live order if stitch_on_replan
-    loop every update tick
-        Robot-->>CN: state (lastNodeId, driving, errors...)
-        RA->>CN: get_data() · readiness()
-        RA->>RMF: update(state, activity) · commission if it changed
-        SM->>CN: is_command_completed()
+    SM->>CN: navigate()
+    CN->>CN: check_order()
+    alt rejected or not published
+        CN->>AGV: cancelOrder for the running order (rejected only)
+        CN-->>SM: rejected / transport_failed
+        Note over SM: replan_after_s
+        RA->>RMF: replan()
+    else queued
+        CN->>AGV: order
+        loop update loop
+            AGV-->>CN: state
+            RA->>RMF: update(position, battery, activity)
+            SM->>CN: is_command_completed()
+        end
+        SM->>RMF: execution.finished()
     end
-    SM->>RMF: execution.finished()
 ```
 
-### Hold instead of cancel
+A drained order whose `lastNodeId` differs from the destination is logged once, since it never completes.
 
-RMF's `stop` does not cancel the order. The robot is paused and the order
-kept, so a replan that keeps the destination costs nothing.
+### Order replacement
 
-| State | Trigger in | Trigger out |
-|:---:|:---:|---|
-| `IDLE` | startup / `finished()` / cancel | `on_navigate` → NAVIGATING, `on_action` → EXECUTING_ACTION |
-| `NAVIGATING` | `on_navigate` | `is_command_completed` fires `finished()` → IDLE; `on_stop` → HOLDING |
-| `EXECUTING_ACTION` | `on_action` | action FINISHED/FAILED → IDLE |
-| `HOLDING` | `on_stop` (`startPause` sent) | `on_navigate` to the same destination → `stopPause`; to another → order update or new order (`stitch_on_replan`) + `stopPause`; no command within `kHoldTimeoutSec` (10 s) → `cancelOrder` + `stopPause` → IDLE |
+An order counts as running while the AGV reports its `orderId` and has not finished it at its destination.
 
-- A pause requested by the operator is never released by the hold logic.
-- For a few seconds after the adapter's own `stopPause`, a pause still
-  reported by the AGV does not decommission it.
+```mermaid
+flowchart TB
+    A["navigate(new destination)"] --> B{"order running?"}
+    B -- no --> N["new order"]
+    B -- yes --> C{"stitch_on_replan,\nAGV pose valid,\norder valid?"}
+    C -- yes --> S["order update:\nsame orderId, orderUpdateId + 1"]
+    C -- no --> X["cancelOrder, then new order\n(rejected: cancelOrder only)"]
+```
+
+The new order follows the `cancelOrder` at once; the adapter does not wait for the AGV's answer.
+
+### Traffic hold
+
+RMF calls `stop` when a robot must wait. The adapter pauses the AGV instead of cancelling the order.
+
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> NAVIGATING: navigate
+    IDLE --> EXECUTING_ACTION: action
+    NAVIGATING --> IDLE: order finished / finished()
+    NAVIGATING --> HOLDING: stop / startPause
+    NAVIGATING --> IDLE: stop, no order sent
+    NAVIGATING --> IDLE: stop, startPause not sent / cancelOrder
+    HOLDING --> NAVIGATING: navigate, same destination / stopPause
+    HOLDING --> NAVIGATING: navigate, other destination / new order or update, stopPause
+    HOLDING --> NAVIGATING: navigate, order not sent / cancelOrder, stopPause, replan
+    HOLDING --> IDLE: no command for 10 s / cancelOrder, stopPause
+    HOLDING --> EXECUTING_ACTION: action / cancelOrder, stopPause
+    EXECUTING_ACTION --> IDLE: FINISHED, FAILED or stop
+```
+
+Rules:
+- `stopPause` is not sent while the operator has paused the robot.
+- An operator resume during `HOLDING` sends no `stopPause`. It clears the operator pause; the hold ends with the next RMF command or the 10 s timeout.
+- The AGV's `paused` does not decommission the robot during `HOLDING` and for 3 s after the adapter's own `stopPause`.
+- A `navigate` during `EXECUTING_ACTION` fails the action (`ActionExecution::error`). A `stop` releases it, but the AGV keeps running the action: VDA5050 cannot cancel a running instant action.
+
+### Factsheet and validation
+
+The adapter reads the AGV's retained `factsheet`. Without one, `poll` sends `factsheetRequest` 5 s after the robot comes online, then every 20 s, up to 3 times.
+
+| Factsheet field | Used for |
+|:---:|---|
+| `protocolFeatures.agvActions` | Blocking type of each action; actions the AGV accepts |
+| `protocolLimits.maxArrayLens` | `order.nodes`, `order.edges` limits |
+| `protocolLimits.timing.minOrderInterval` | Shortest time between two orders |
+
+Checks before an order or instant action is published:
+
+| Severity | Condition | Effect |
+|:---:|---|:---:|
+| Hard | a pose is not finite | order rejected |
+| Hard | the `mapId` is not among the maps the AGV reports | order rejected |
+| Hard | 2 nodes or 1 edge exceed `maxArrayLens` | order rejected |
+| Hard | a custom action is missing from the factsheet | action not sent |
+| Soft | order inside `minOrderInterval`; a core action (`cancelOrder`, `startPause`, `stopPause`, `stateRequest`, `initPosition`, `factsheetRequest`) missing from the factsheet | warning |
+| Soft | a non-`NONE` action while the AGV drives; any action while a HARD-only action runs | warning |
+
+With `strict_validation: false`, hard violations are logged only. Without a factsheet, the factsheet checks are skipped and the blocking type is the adapter's default.
 
 ### Commission state
 
-`evaluate_readiness(online, state, tolerate_pause)` decides whether the AGV
-can take tasks; the conditions are listed under Commissioning in the
-[README](../README.md#features). `RobotAdapter::apply_readiness` turns a
-change into `set_commission(...)`. RMF registers a robot asynchronously, so
-the call is retried on the next tick until its handle exists.
+`evaluate_readiness` decides after each update pass whether RMF may give the robot tasks. `RobotAdapter::apply_readiness` applies a change with `set_commission`. A robot is commissioned while:
+- it is online: the last `connection` is `ONLINE` (or none was received) and the last state is at most 10 s old;
+- its pose is initialized;
+- its operating mode is `AUTOMATIC` or `SEMIAUTOMATIC`;
+- it reports no eStop, field violation or FATAL error;
+- it is not paused, except by the adapter's own hold.
 
-## Configuration (`config_tb3.yaml` / `config_amr.yaml`)
+The reason of a decommission is logged. RMF registers a robot asynchronously, so a change is retried on the next pass until the robot's handle exists.
 
-One `rmf_fleet:` block applies its `profile`/`limits` to every robot listed
-under it, so each robot type gets its own config file and its own adapter
-process (`config_tb3.yaml` → `tb3_fleet`, `config_amr.yaml` → `amr_fleet`) —
-see [README.md](../README.md#multiple-fleets). The keys below apply to either file.
+### Set position (`initPosition`)
 
-| Key | Default | Effect |
-|:---:|:---:|---|
-| `rmf_fleet.name` | — | RMF fleet name |
-| `rmf_fleet.robots.<name>.charger` | — | Charger waypoint name for the robot |
-| `vda5050.interface_name` | `uagv` | VDA5050 topic prefix segment |
-| `vda5050.mqtt.host/port/username/password` | `localhost:1883` | Broker connection |
-| `vda5050.robots.<name>.manufacturer/serial` | `unknown` / robot name | Robot identity in the topics |
-| `vda5050.robots.<name>.transform` | identity | RMF frame → robot map frame (`rotation`, `scale`, `translation`) |
-| `vda5050.update_rate_hz` | 10 | RMF update-loop frequency; must be > 0 |
-| `vda5050.strict_validation` | true | Reject custom actions and orders that fail a hard check (factsheet, pose, map, array limits) |
-| `vda5050.stitch_on_replan` | false | Replan onto a live order via an update (`orderUpdateId`+1) instead of cancelling it first |
-| `rmf_fleet.account_for_battery_drain` | false | Off = report SoC 1.0 to RMF regardless of the real battery |
+A pose on `<robot>/init_position` is transformed to the robot frame and sent as `initPosition` on the map the AGV last reported. The result is published on `<robot>/init_position_result`: `ok`, the AGV's `resultDescription` on `FAILED`, or an error after 10 s without an answer.
 
-## Process boundaries
+## Runtime behaviour
 
-| Boundary | Crossed by | Protocol |
-|:---:|---|:---:|
-| This adapter ↔ RMF core | `RobotCallbacks` / `EasyRobotUpdateHandle` (EasyFullControl) | In-process RMF API |
-| This adapter ↔ robot | `order`, `state`, `connection`, `instantActions`, `factsheet`, `visualization` | MQTT |
-| This adapter ← operator / UI | `<node>/<robot>/pause`, `resume`, `init_position`, parameter `speed_limit.<robot>` | ROS 2, same domain |
-| This adapter ← operator / UI | `/lane_closure_requests` (fleet-wide) | ROS 2, same domain |
+### Update loop
 
-Threads: RMF callbacks arrive on RMF's executor, MQTT callbacks on paho's
-thread, and the update loop runs on its own thread. `Vda5050Connector` guards
-its per-robot state with one mutex and calls paho outside it;
-`RobotStateMachine` has its own mutex.
+The loop runs at `update_rate_hz`. For each robot:
 
-Traffic negotiation is handled entirely by stock RMF
-(`rmf_traffic_schedule`) — this adapter just executes each destination RMF
-hands it.
+```mermaid
+flowchart TB
+    A["readiness() -> apply_readiness()"] --> B{"online?"}
+    B -- no --> B2["next robot"]
+    B -- yes --> C["poll(): factsheetRequest"]
+    C --> D{"valid pose?"}
+    D -- no --> D2["next robot"]
+    D -- yes --> E{"added to RMF?"}
+    E -- no --> E2["fleet->add_robot()"]
+    E -- yes --> F["RobotAdapter::update():\nstate machine, update(), replan()"]
+```
+
+### Inbound messages
+
+`Vda5050Connector::message_arrived` parses each message as JSON and drops invalid JSON. It matches the robot by `/<manufacturer>/<serial>/` in the topic and ignores other robots.
+
+| Topic | Effect |
+|:---:|---|
+| `state` | Replaces the robot's state; logs changes of errors, pause, safety state and operating mode |
+| `connection` | Online or offline; `ONLINE` restarts the factsheet requests |
+| `factsheet` | Replaces the parsed factsheet |
+| `visualization` | Subscribed, not used |
+
+### Threads
+
+RMF callbacks run on RMF's executor, MQTT callbacks on Paho's thread, the update loop on its own thread. `Vda5050Connector` guards its robot state with one mutex and calls Paho outside it. `RobotStateMachine` has its own mutex; `replan()` is called outside it.

@@ -46,7 +46,7 @@ def load_chargers(nav_graph_path):
 
 
 def load_robots(config_path, nav_graph_path):
-    """The robots of one fleet config, with identity, broker and start pose."""
+    """Return the robots of one fleet config, with identity, broker and start pose."""
     with open(config_path) as f:
         config = yaml.safe_load(f)
     map_name, points = load_chargers(nav_graph_path)
@@ -78,7 +78,7 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
 def check_local_broker(host):
-    """Mocks reuse real robot identities, so refuse a non-local broker by default."""
+    """Refuse a non-local broker by default, since mocks reuse real robot identities."""
     if host not in LOCAL_HOSTS:
         raise SystemExit(
             f"refusing to publish mock robots to '{host}': their identities match real "

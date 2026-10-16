@@ -25,7 +25,7 @@ public:
   // HOLDING: RMF stopped the robot; its order stays paused until a new command or a timeout.
   enum class State { IDLE, NAVIGATING, EXECUTING_ACTION, HOLDING };
 
-  RobotStateMachine(rclcpp::Logger logger, Vda5050Connector& connector, std::string robot_name);
+  RobotStateMachine(rclcpp::Logger logger, Vda5050Connector& connector, std::string robot_name, double replan_after_s);
 
   /// RMF asks the robot to navigate to a single destination.
   void on_navigate(const EasyFullControl::Destination& destination, EasyFullControl::CommandExecution execution);
@@ -41,6 +41,9 @@ public:
   ConstActivityIdentifierPtr on_state_update();
 
   State state();
+
+  /// Whether RMF must replan because the last navigate command was not sent; clears the request.
+  bool take_replan_request();
 
   /// Whether a pause reported by the AGV comes from the adapter's own hold or a resume it just sent, not from the operator.
   bool pause_expected();
@@ -66,6 +69,12 @@ private:
   std::optional<std::chrono::steady_clock::time_point> _hold_deadline;
   std::chrono::steady_clock::time_point _resume_grace_until{};
   bool _operator_paused = false;
+
+  // The current navigate command published no order; RMF is asked to replan at `_replan_at`.
+  double _replan_after_s;
+  bool _order_unsent = false;
+  std::optional<std::chrono::steady_clock::time_point> _replan_at;
+  bool _replan_requested = false;
 
   /// Cancel the held order (when `cancel`) and unpause unless the operator paused.
   void release_hold_locked(bool cancel);

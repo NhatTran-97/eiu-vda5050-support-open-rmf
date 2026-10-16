@@ -259,7 +259,7 @@ Vda5050Connector::RobotContext* Vda5050Connector::match_robot(
 
 // ─── RMF -> AGV (downlink) ──────────────────────────────────────────────────────
 
-void Vda5050Connector::navigate(const std::string& name,
+NavigateStatus Vda5050Connector::navigate(const std::string& name,
                                 const std::string& dest_node_id, double x,
                                 double y, double theta,
                                 const std::string& map_id,
@@ -272,6 +272,7 @@ void Vda5050Connector::navigate(const std::string& name,
   int header_id = 0;
   int order_update_id = 0;
   bool stitched = false;
+  bool rejected = false;
   std::string cancel_topic, cancel_payload;
   std::optional<double> edge_speed = speed_limit;
 
@@ -282,7 +283,7 @@ void Vda5050Connector::navigate(const std::string& name,
     {
       RCLCPP_ERROR(_logger, "[VDA5050] navigate: unknown robot '%s'",
                    name.c_str());
-      return;
+      return NavigateStatus::rejected;
     }
     RobotContext& ctx = *it->second;
 
@@ -357,17 +358,18 @@ void Vda5050Connector::navigate(const std::string& name,
     {
       RCLCPP_ERROR(_logger, "[VDA5050] %s: order NOT sent -- it violates the AGV's declared limits",
                    name.c_str());
-      return;
+      rejected = true;
     }
 
-    if (can_stitch)
+    if (can_stitch && !rejected)
     {
       order_id = ctx.current_order_id;
-      order_update_id = ++ctx.order_update_id;
+      order_update_id = ctx.order_update_id + 1;
       stitched = true;
     }
     else
     {
+      // The order this one replaces is cancelled, also when the replacement is rejected.
       if (has_live_order)
       {
         nlohmann::json actions = nlohmann::json::array();
@@ -378,15 +380,12 @@ void Vda5050Connector::navigate(const std::string& name,
       }
       order_id = proto::make_uuid();
       order_update_id = 0;
-      ctx.order_update_id = 0;
-      ctx.base_node_id = base_id;
-      ctx.base_pose = base;
     }
 
-    ctx.current_order_id = order_id;
-    ctx.target_node_id = dest_node_id;
-    ctx.last_order_time = std::chrono::steady_clock::now();
-    header_id = ctx.next_order_header();
+    if (!rejected)
+    {
+      header_id = ctx.next_order_header();
+    }
     manufacturer = ctx.manufacturer;
     serial = ctx.serial;
     interface_name = ctx.interface_name;
@@ -394,9 +393,22 @@ void Vda5050Connector::navigate(const std::string& name,
 
   if (!cancel_topic.empty())
   {
-    RCLCPP_INFO(_logger, "[VDA5050] %s: superseding an order still in progress -- "
-                "cancelling it before publishing the replacement", name.c_str());
-    publish_raw(cancel_topic, cancel_payload);
+    RCLCPP_INFO(_logger, "[VDA5050] %s: %s -- cancelling the order still in progress", name.c_str(),
+                rejected ? "the replacement order is rejected" : "superseding it with a new order");
+    if (publish_raw(cancel_topic, cancel_payload))
+    {
+      std::lock_guard<std::mutex> lock(_mutex);
+      auto it = _robots.find(name);
+      if (it != _robots.end())
+      {
+        it->second->current_order_id.clear();
+        it->second->target_node_id.clear();
+      }
+    }
+  }
+  if (rejected)
+  {
+    return NavigateStatus::rejected;
   }
 
   nlohmann::json nodes = nlohmann::json::array();
@@ -411,10 +423,35 @@ void Vda5050Connector::navigate(const std::string& name,
                                        edges, order_id, order_update_id);
 
   const std::string order_topic = proto::topic(interface_name, manufacturer, serial, proto::TOPIC_ORDER);
-  publish_raw(order_topic, order.dump());
+  if (!publish_raw(order_topic, order.dump()))
+  {
+    RCLCPP_ERROR(_logger, "[VDA5050] %s -> order '%s' NOT published (transport failure) -- not tracking it",
+                 name.c_str(), order_id.c_str());
+    return NavigateStatus::transport_failed;
+  }
+
+  // Track the order only after MQTT accepts the publish request.
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    auto it = _robots.find(name);
+    if (it != _robots.end())
+    {
+      RobotContext& ctx = *it->second;
+      if (!stitched)
+      {
+        ctx.base_node_id = base_id;
+        ctx.base_pose = base;
+      }
+      ctx.order_update_id = order_update_id;
+      ctx.current_order_id = order_id;
+      ctx.target_node_id = dest_node_id;
+      ctx.last_order_time = std::chrono::steady_clock::now();
+    }
+  }
   const std::string suffix = stitched ? (" update " + std::to_string(order_update_id)) : std::string{};
   RCLCPP_INFO(_logger, "[VDA5050] %s -> order '%s'%s to node '%s' (%.2f, %.2f)",
               name.c_str(), order_id.c_str(), suffix.c_str(), dest_node_id.c_str(), dest[0],dest[1]);
+  return NavigateStatus::queued;
 }
 
 void Vda5050Connector::stop(const std::string& name)
@@ -743,7 +780,7 @@ bool Vda5050Connector::is_command_completed(const std::string& name)
     return true;
   }
 
-  // The order has drained and the robot has stopped, but its lastNodeId differs from the target: report the mismatch once.
+  // Order drained with a lastNodeId other than the destination: log once.
   if (s.node_states.empty() && s.edge_states.empty() &&
       !ctx.target_node_id.empty() && s.last_node_id != ctx.target_node_id)
   {

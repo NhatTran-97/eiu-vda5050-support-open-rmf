@@ -4,8 +4,7 @@
 
 using vda5050_fleet_adapter::RobotStateMachine;
 
-// The command-execution transitions need live RMF handles (not constructible in
-// a unit test), so here we cover the pure destination -> VDA5050 nodeId mapping.
+// CommandExecution needs a live RMF handle; only the destination -> nodeId mapping is tested.
 TEST(StateMachine, DeriveNodeIdPrefersName)
 {
   EXPECT_EQ(RobotStateMachine::derive_node_id("wp6", 3, 1.0, 2.0), "wp6");

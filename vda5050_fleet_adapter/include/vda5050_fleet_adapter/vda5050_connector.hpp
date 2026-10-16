@@ -19,6 +19,9 @@
 
 namespace vda5050_fleet_adapter {
 
+/// Outcome of navigate(): the order was queued, or why it was not sent.
+enum class NavigateStatus { queued, rejected, transport_failed };
+
 /// Per-robot position/battery snapshot in RMF coordinates (uplink to RMF).
 struct RobotData
 {
@@ -27,13 +30,8 @@ struct RobotData
   double battery_soc;
 };
 
-/// Owns ONE MQTT connection to the broker and tracks the latest VDA5050 'state'
-/// for every robot. The fleet adapter calls:
-///   navigate()            -> publishes an 'order'           (RMF -> AGV)
-///   stop()                -> publishes 'instantActions'      (cancelOrder)
-///   execute_instant_action-> publishes 'instantActions'      (custom action)
-///   get_data()            -> reads the cached 'state'        (AGV -> RMF)
-///   is_command_completed()-> checks the cached state vs the last order
+/// One MQTT connection for all robots of the fleet; keeps the latest VDA5050 state of each robot.
+/// Downlink: order and instantActions. Uplink: state, connection, factsheet.
 
 class Vda5050Connector : public virtual mqtt::callback
 {
@@ -54,7 +52,7 @@ public:
   // ── RMF -> AGV (downlink) ───────────────────────────────────────────────────
   /// Publish a single-destination order (base node = current pose, end node =
   /// destination). Coordinates are RMF; transformed to the robot frame here.
-  void navigate(const std::string& name, const std::string& dest_node_id,
+  NavigateStatus navigate(const std::string& name, const std::string& dest_node_id,
                 double x, double y, double theta, const std::string& map_id,
                 std::optional<double> speed_limit = std::nullopt);
 
@@ -66,15 +64,13 @@ public:
     const std::string& name, const std::string& action_type,
     const std::vector<std::pair<std::string, std::string>>& parameters = {});
 
-  /// Publish a `stateRequest` instantAction to prompt the robot to publish its
-  /// state immediately, so the fleet adapter can add_robot() promptly instead of
-  /// waiting for the next periodic state (avoids "no robots" on early dispatch).
+  /// Publish a `stateRequest` instantAction so the AGV reports its state at once.
   void request_state(const std::string& name);
 
   /// Reject custom actions and orders that fail a hard check (default); off only warns.
   void set_strict_validation(bool strict);
 
-  /// Extend a still-live order with a new destination (same orderId, bumped orderUpdateId) instead of cancelling it and sending a fresh one.
+  /// Send a new destination as an update of the live order (same orderId, next orderUpdateId).
   void set_stitch_on_replan(bool enabled);
 
   /// Publish startPause; false when nothing was queued.
@@ -114,8 +110,7 @@ public:
   /// The orderId last published for `name`; empty when none is tracked.
   std::string current_order_id(const std::string& name);
 
-  /// The orderUpdateId last published for `name`'s current order; 0 for a
-  /// fresh order that was never stitched onto.
+  /// The orderUpdateId last published for `name`'s current order; 0 for a new order.
   int current_order_update_id(const std::string& name);
 
   /// True while `name` still runs an unfinished order to `dest_node_id`.
@@ -134,8 +129,7 @@ private:
     std::string serial;
     std::string interface_name;
     Transform transform;
-    // VDA5050 defines headerId per topic (monotonically +1 per message sent
-    // on that topic); order and instantActions are separate topics, so they need separate counters or each stream develops gaps in its own sequence.
+    // headerId counts per topic (VDA5050), so order and instantActions have separate counters.
     int order_header_id = 0;
     int instant_actions_header_id = 0;
     std::string current_order_id;
@@ -155,7 +149,7 @@ private:
     std::chrono::steady_clock::time_point factsheet_wait_since{};
     std::optional<double> speed_limit;
 
-    // Log throttles: remember what was last reported so a 10 Hz state stream produces one line per change instead of one line per tick.
+    // Last logged values; a change is logged once.
     std::string last_incomplete_key;
     std::string last_errors_key;
     std::string last_safety_key;
@@ -165,10 +159,14 @@ private:
     int next_instant_actions_header() { return instant_actions_header_id++; }
   };
 
-  /// Subscribe to a robot's uplink topics. Call OUTSIDE _mutex: paho client calls can deadlock against the message-arrived callback if the lock is held.
+  /// Subscribe to a robot's uplink topics. Call without holding _mutex (Paho calls message_arrived).
   void subscribe_robot(const RobotContext& ctx);
-  /// Publish a fully-formed payload to a topic; false when it was not queued. Call OUTSIDE _mutex.
-  bool publish_raw(const std::string& topic, const std::string& payload);
+
+protected:
+  /// Publish a payload to a topic; false when it was not queued. Call without holding _mutex.
+  virtual bool publish_raw(const std::string& topic, const std::string& payload);
+
+private:
 
   /// Blocking type for an action: the factsheet's choice, else `preferred`.
   static std::string blocking_type_for(const RobotContext& ctx, const std::string& action_type, const std::string& preferred);
